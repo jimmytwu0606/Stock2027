@@ -1,0 +1,383 @@
+/* css/deng.css
+ * ============================================================================
+ * Phase 7.1 — 燈燈樣式 + 動畫
+ * 沿用 main.css 的 CSS variables
+ * ============================================================================ */
+
+/* ─── 燈燈 SVG 容器 ─── */
+.deng-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ─── Avatar 共用 ─── */
+.deng-avatar {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+.deng-avatar-small {
+  width: 48px;
+  height: 48px;
+}
+
+/* ─── 表情切換動畫 ─── */
+.deng-avatar .deng-eyes {
+  transition: opacity 0.2s;
+}
+
+/* ─── 眨眼動畫(預設眼睛) ─── */
+@keyframes dengBlink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  94%, 98%      { transform: scaleY(0.1); }
+}
+.deng-avatar.deng-blink-loop .deng-eyes-default .deng-eye {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: dengBlink 4s infinite ease-in-out;
+}
+/* 圓眼也會眨 */
+.deng-avatar.deng-blink-loop .deng-eyes-curious circle {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: dengBlink 4s infinite ease-in-out;
+}
+
+/* ─── 尾巴搖 ─── */
+@keyframes dengTailWag {
+  0%, 100% { transform: rotate(0deg);  }
+  25%      { transform: rotate(-8deg); }
+  75%      { transform: rotate(8deg);  }
+}
+.deng-avatar.deng-tail-wag .deng-tail {
+  transform-origin: 95px 78px;
+  animation: dengTailWag 2s infinite ease-in-out;
+}
+
+/* ─── 嘴巴開合(說話中) ─── */
+@keyframes dengTalk {
+  0%, 100% { transform: scaleY(1);   }
+  50%      { transform: scaleY(1.4); }
+}
+.deng-avatar.deng-talk .deng-mouth {
+  transform-origin: 60px 60px;
+  transform-box: fill-box;
+  animation: dengTalk 0.6s infinite ease-in-out;
+}
+
+/* ─── 鬍鬚輕微抖動(hover 時) ─── */
+@keyframes dengWhiskers {
+  0%, 100% { transform: rotate(0deg);   }
+  50%      { transform: rotate(0.5deg); }
+}
+.deng-avatar:hover .deng-whiskers {
+  transform-origin: center;
+  animation: dengWhiskers 0.3s ease-in-out 3;
+}
+
+/* ─── 1. Overlay 樣式(全螢幕) ─── */
+.deng-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(14, 15, 17, 0.78);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s;
+}
+.deng-overlay.deng-shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+.deng-overlay.deng-hiding {
+  opacity: 0;
+}
+.deng-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 32px;
+  max-width: 360px;
+  text-align: center;
+  animation: dengCardPop 0.4s ease-out;
+}
+@keyframes dengCardPop {
+  0%   { transform: scale(0.85); opacity: 0; }
+  60%  { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+.deng-overlay .deng-avatar {
+  width: 140px;
+  height: 140px;
+}
+
+/* ─── 2. Inline 樣式 ─── */
+.deng-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--bg2, #1c1f24);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 10px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.22s, transform 0.22s;
+}
+.deng-inline.deng-shown {
+  opacity: 1;
+  transform: translateY(0);
+}
+.deng-inline.deng-hiding {
+  opacity: 0;
+}
+.deng-inline .deng-avatar {
+  width: 64px;
+  height: 64px;
+}
+
+/* ─── 3. Toast 樣式(右下浮層) ─── */
+.deng-toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  z-index: 9998;
+  pointer-events: none;
+}
+.deng-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 10px;
+  background: var(--bg2, #1c1f24);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+  max-width: 360px;
+  min-width: 240px;
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 0.3s, transform 0.3s;
+  pointer-events: auto;
+  position: relative;
+}
+.deng-toast.deng-shown {
+  opacity: 1;
+  transform: translateX(0);
+}
+.deng-toast.deng-hiding {
+  opacity: 0;
+  transform: translateX(60px);
+}
+.deng-toast-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.deng-toast .deng-message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text, #e8eaed);
+}
+.deng-toast-action {
+  align-self: flex-start;
+  padding: 4px 10px;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.deng-toast-action:hover { background: #2563eb; }
+.deng-toast-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--muted, #8a8f99);
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+.deng-toast-close:hover { color: var(--text, #e8eaed); }
+
+/* ─── 對話泡泡(overlay / inline 共用) ─── */
+.deng-bubble {
+  position: relative;
+  background: var(--bg3, #2a2e35);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 12px;
+  padding: 12px 16px;
+  min-width: 200px;
+  max-width: 300px;
+}
+.deng-overlay .deng-bubble {
+  max-width: 320px;
+}
+.deng-inline .deng-bubble {
+  flex: 1;
+  padding: 8px 12px;
+  min-width: 0;
+}
+.deng-bubble::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 24px;
+  width: 12px;
+  height: 12px;
+  background: var(--bg3, #2a2e35);
+  border-left: 1px solid var(--border, rgba(255,255,255,.08));
+  border-top: 1px solid var(--border, rgba(255,255,255,.08));
+  transform: rotate(45deg);
+}
+.deng-overlay .deng-bubble::before {
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+}
+.deng-message {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text, #e8eaed);
+  transition: opacity 0.18s;
+}
+.deng-inline .deng-message {
+  font-size: 13px;
+}
+
+/* ─── 三點 loading ─── */
+.deng-dots {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  height: 6px;
+}
+.deng-dots span {
+  width: 6px;
+  height: 6px;
+  background: var(--muted, #8a8f99);
+  border-radius: 50%;
+  opacity: 0.4;
+  animation: dengDots 1.4s infinite ease-in-out;
+}
+.deng-dots span:nth-child(2) { animation-delay: 0.2s; }
+.deng-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dengDots {
+  0%, 60%, 100% { opacity: 0.4; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-3px); }
+}
+.deng-toast .deng-dots { display: none; }
+
+/* ─── 不同 mood 的視覺強化 ─── */
+.deng-mood-savage .deng-bubble {
+  border-color: rgba(245, 166, 35, 0.4);
+}
+.deng-mood-sad .deng-bubble {
+  border-color: rgba(107, 182, 255, 0.4);
+}
+
+/* ─── 手機適配 ─── */
+@media (max-width: 768px) {
+  .deng-overlay-card {
+    padding: 16px 20px;
+    max-width: 320px;
+  }
+  .deng-overlay .deng-avatar { width: 100px; height: 100px; }
+  .deng-toast-container {
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+  }
+  .deng-toast {
+    max-width: none;
+    min-width: 0;
+  }
+  .deng-inline {
+    padding: 10px 12px;
+  }
+  .deng-inline .deng-avatar { width: 48px; height: 48px; }
+}
+
+/* ─── 減少動畫(尊重 prefers-reduced-motion) ─── */
+@media (prefers-reduced-motion: reduce) {
+  .deng-avatar.deng-blink-loop .deng-eye,
+  .deng-avatar.deng-blink-loop .deng-eyes-curious circle,
+  .deng-avatar.deng-tail-wag .deng-tail,
+  .deng-avatar.deng-talk .deng-mouth,
+  .deng-dots span {
+    animation: none !important;
+  }
+  .deng-overlay-card,
+  .deng-toast,
+  .deng-inline,
+  .deng-bubble {
+    animation: none !important;
+    transition: opacity 0.1s !important;
+  }
+}
+
+/* ─── 燈燈新版 SVG 補充樣式 ─── */
+
+/* SVG 本體撐滿 avatar 容器 */
+.deng-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+/* 眨眼：對 .deng-eye（瞳孔橢圓）做 scaleY 壓縮 */
+@keyframes dengBlinkNew {
+  0%, 90%, 100% { transform: scaleY(1);   }
+  93%, 97%      { transform: scaleY(0.08); }
+}
+.deng-blink-loop .deng-eye {
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: dengBlinkNew 5s infinite ease-in-out;
+}
+
+/* 尾巴搖（以尾根為旋轉中心） */
+@keyframes dengTailNew {
+  0%, 100% { transform: rotate(0deg);  }
+  30%      { transform: rotate(-6deg); }
+  70%      { transform: rotate(6deg);  }
+}
+.deng-tail-wag .deng-tail {
+  transform-origin: 75px 155px;
+  transform-box: fill-box;
+  animation: dengTailNew 2.2s infinite ease-in-out;
+}
+
+/* 說話時整體輕微彈跳 */
+@keyframes dengBounce {
+  0%, 100% { transform: translateY(0px);  }
+  50%      { transform: translateY(-3px); }
+}
+.deng-talk .deng-svg {
+  animation: dengBounce 0.65s infinite ease-in-out;
+}
+
+/* mood 視覺：savage 加橘色邊框感 */
+.deng-mood-savage .deng-bubble { border-color: rgba(245, 158, 11, 0.5); }
+.deng-mood-sad    .deng-bubble { border-color: rgba(96, 165, 250, 0.4); }
+.deng-mood-sleepy .deng-svg    { opacity: 0.85; filter: saturate(0.7); }

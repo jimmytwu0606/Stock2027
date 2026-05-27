@@ -1,0 +1,863 @@
+/* ═══════════════════════════════════════════════════════════════
+   additions.css
+   新增樣式：群組自選清單 / 篩選結果滾動 / 儲存 modal / sidebar 拖曳
+   在 main.css 之後 <link> 載入
+═══════════════════════════════════════════════════════════════ */
+
+/* ─── 1. 自選清單群組 ─────────────────────────────────────────── */
+
+#watchlistContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;        /* 必要：flex 子元素才能收縮並出現捲軸 */
+}
+
+.wl-group {
+  border-radius: 6px;
+  overflow: visible;    /* 不裁切子元素高度，圓角由 header/body 各自處理 */
+}
+
+.wl-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  background: var(--bg2);
+  user-select: none;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.wl-group-header:hover { background: var(--bg3); }
+
+.wl-chevron { font-size: 13px; color: var(--muted); flex-shrink: 0; }
+
+.wl-group-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wl-group-count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg3);
+  border-radius: 10px;
+  padding: 1px 6px;
+}
+
+.wl-group-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.wl-group-header:hover .wl-group-actions { opacity: 1; }
+
+.wl-icon-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 3px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  transition: color 0.15s, background 0.15s;
+}
+.wl-icon-btn:hover { color: var(--text); background: var(--border); }
+
+.wl-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 4px 0;
+  transition: none;
+}
+.wl-group-body.collapsed { display: none; }
+.wl-group-body.drag-over { outline: 2px dashed var(--accent); border-radius: 4px; }
+
+/* 個股列 */
+.wl-item {
+  display: flex;
+  flex-wrap: wrap;          /* 訊號標籤換行，不擠壓右側價格欄 */
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px 7px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.1s;
+}
+.wl-item:hover  { background: var(--bg3); }
+.wl-item.dragging { opacity: 0.4; }
+
+.wl-item-left  { flex: 1; min-width: 0; }
+.wl-item-right { text-align: right; flex-shrink: 0; align-self: flex-start; }
+
+.wl-code  { display: block; font-size: 14px; font-weight: 500; color: var(--text); }
+.wl-name  { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-price { display: block; font-size: 13px; color: var(--text); }
+.wl-chg   { display: block; font-size: 11px; }
+.wl-chg.up   { color: var(--up);   }
+.wl-chg.down { color: var(--down); }
+
+.wl-remove-btn {
+  background: none;
+  border: none;
+  color: var(--hint);
+  padding: 3px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  display: flex; align-items: center;
+}
+.wl-item:hover .wl-remove-btn { opacity: 1; }
+.wl-remove-btn:hover { color: var(--up); }
+
+/* 新增群組按鈕（sidebar 頂部工具列） */
+#watchlistAddGroup {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.15s, border-color 0.15s;
+}
+#watchlistAddGroup:hover { color: var(--text); border-color: var(--border2); }
+
+
+/* ─── 2. 篩選結果可滾動 ──────────────────────────────────────── */
+
+#screenerResults {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;       /* flex 子元素需要此項才能收縮 */
+  scrollbar-gutter: stable;
+}
+
+/* 手機版：結果區固定高度 */
+@media (max-width: 768px) {
+  #screenerResults {
+    max-height: calc(100vh - 280px);
+  }
+}
+
+/* 儲存結果按鈕（嵌在結果列表頂部工具列） */
+#screenerSaveResultBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: color 0.15s, border-color 0.15s;
+}
+#screenerSaveResultBtn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 已儲存清單 */
+.saved-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+.saved-result-row:hover { background: var(--bg3); }
+.saved-result-name { display: block; font-size: 13px; color: var(--text); }
+.saved-result-meta { display: block; font-size: 11px; color: var(--muted); }
+.saved-result-actions { display: flex; gap: 4px; }
+
+.sd-icon-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+.sd-icon-btn:hover { color: var(--text); }
+
+.sd-empty { font-size: 13px; color: var(--muted); padding: 16px 0; text-align: center; }
+
+
+/* ─── 3. 儲存結果 Modal ──────────────────────────────────────── */
+
+.sd-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  padding: 16px;
+}
+
+.sd-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sd-modal-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+}
+
+.sd-modal-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: -8px 0 0;
+}
+
+.sd-modal-input {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 14px;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.sd-modal-input:focus { border-color: var(--accent); }
+
+.sd-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sd-btn {
+  border: none;
+  border-radius: 7px;
+  padding: 8px 20px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.sd-btn:hover { opacity: 0.85; }
+.sd-btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.sd-btn-ghost {
+  background: var(--bg3);
+  color: var(--muted);
+}
+
+/* 手機：modal 全寬靠底 */
+@media (max-width: 480px) {
+  .sd-modal-overlay { align-items: flex-end; padding: 0; }
+  .sd-modal {
+    border-radius: 16px 16px 0 0;
+    max-width: 100%;
+    padding: 20px 20px 32px;
+  }
+}
+
+
+/* ─── 4. Sidebar 拖曳分隔線 ──────────────────────────────────── */
+
+/* Sidebar 寬度由 layout.js 透過 --sidebar-w 控制，main.css grid 自動響應 */
+#sidebar {
+  position: relative;   /* resizer 絕對定位的基準 */
+  min-width: 150px;
+  max-width: 480px;
+  overflow: visible;    /* 讓 resizer 可以突出右邊緣 */
+}
+
+/* Resizer：絕對定位貼在 sidebar 右邊緣 */
+
+#sidebarResizer {
+  position: absolute;
+  top: 0;
+  right: -3px;         /* 貼在 sidebar 右邊緣，向右突出 3px */
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 100;
+  transition: background 0.2s;
+}
+#sidebarResizer:hover,
+body.resizing #sidebarResizer {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* 手機：隱藏拖曳分隔線，改用滑桿 */
+@media (max-width: 768px) {
+  #sidebarResizer { display: none; }
+}
+
+/* 手機設定抽屜：sidebar 寬度滑桿 */
+.setting-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.setting-slider-row input[type=range] { flex: 1; }
+#sidebarWidthLabel {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 36px;
+  text-align: right;
+}
+
+
+/* ─── 5. 篩選結果工具列（標題 + 儲存按鈕同行）────────────────── */
+
+.sc-result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sc-result-toolbar .sc-panel-title { margin: 0; }
+
+#screenerSaveResultBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+#screenerSaveResultBtn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* 已儲存篩選結果摺疊區 */
+.saved-results-section {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.saved-results-section summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 0;
+  user-select: none;
+  list-style: none;
+}
+.saved-results-section summary::before {
+  content: '▶ ';
+  font-size: 10px;
+}
+.saved-results-section[open] summary::before {
+  content: '▼ ';
+}
+
+/* ─── 6. 種子選股 Tab 預留佔位 ──────────────────────────────── */
+
+.seed-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  gap: 12px;
+  color: var(--muted);
+}
+.seed-placeholder-icon { font-size: 48px; }
+.seed-placeholder-title { font-size: 18px; font-weight: 500; color: var(--text); }
+.seed-placeholder-hint  { font-size: 13px; color: var(--muted); }
+
+/* ─── 7. 響應式：手機隱藏 mobile-only 以外的 sidebar 設定 ───── */
+
+.mobile-only { display: none; }
+@media (max-width: 768px) {
+  .mobile-only { display: flex; }
+}
+/* ─── 8. 基本面子 Tab ────────────────────────────────────────── */
+
+/* 子 Tab Bar：完全比照 .stock-tabbar 寫法 */
+.fund-subtab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.fund-subtab-bar::-webkit-scrollbar { display: none; }
+
+/* 子 Tab 按鈕：完全比照 .stock-tab 寫法 */
+.fund-subtab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 9px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+  margin-bottom: -1px;
+}
+.fund-subtab:hover  { color: var(--text); }
+.fund-subtab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+/* 子面板：預設隱藏，.active 才顯示 */
+.fund-subpanel {
+  display: none !important;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.fund-subpanel.active {
+  display: flex !important;
+}
+
+/* 總覽來源說明列 */
+.fund-overview-note {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--hint);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* 表格外框：獨立橫向捲動 */
+.fund-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+}
+
+/* 財務歷史表格 */
+.fund-table {
+  width: 100%;
+  min-width: 280px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.fund-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 7px 16px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.fund-table tbody td {
+  padding: 7px 16px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.fund-table tbody tr:last-child td { border-bottom: none; }
+.fund-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.fund-table tbody tr:hover td { background: var(--bg3) !important; }
+
+/* 漲跌顏色 */
+.fund-table span.up,
+.fund-table td.up   { color: var(--up);   }
+.fund-table span.down,
+.fund-table td.down { color: var(--down); }
+.fund-muted         { color: var(--hint); }
+
+/* 無 Token 提示區 */
+.fund-notoken {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 40px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  flex: 1;
+}
+.fund-notoken p { margin: 0; }
+.fund-notoken button {
+  padding: 6px 18px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--accent);
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.fund-notoken button:hover { background: rgba(59,130,246,0.22); }
+
+/* 手機 */
+@media (max-width: 768px) {
+  .fund-subtab          { padding: 8px 12px; font-size: 12px; }
+  .fund-table thead th,
+  .fund-table tbody td  { padding: 6px 10px; font-size: 12px; }
+}
+
+/* ─── 基本面重新整理按鈕 ─────────────────────── */
+.fund-refresh-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--hint);
+  font-size: 15px;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: color 0.15s, transform 0.3s;
+  line-height: 1;
+  align-self: center;
+}
+.fund-refresh-btn:hover {
+  color: var(--accent);
+  transform: rotate(180deg);
+}
+
+/* ─── 策略套用提示列 ─────────────────────────── */
+#strategyActiveBanner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgba(59,130,246,0.08);
+  border-bottom: 1px solid rgba(59,130,246,0.2);
+  font-size: 12px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.strategy-banner-icon { font-size: 15px; }
+.strategy-banner-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+.strategy-banner-desc { color: var(--muted); }
+.strategy-banner-filter {
+  margin-left: auto;
+  color: var(--hint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.strategy-banner-clear {
+  background: none;
+  border: none;
+  color: var(--hint);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.strategy-banner-clear:hover { color: var(--down); }
+
+/* ─── 9. 篩選結果備份區 ─────────────────────────────────────── */
+
+/* 命名輸入列 / 已載入提示列（screenerSaveResultArea 內容） */
+.sc-save-result-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.sc-save-result-bar--loaded {
+  border-color: rgba(59,130,246,0.35);
+  background: rgba(59,130,246,0.06);
+}
+.sc-save-result-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sc-save-result-loaded-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.sc-save-result-input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 10px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.sc-save-result-input:focus { border-color: var(--accent); }
+.sc-save-result-confirm {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.sc-save-result-confirm:hover { opacity: 0.85; }
+.sc-save-result-cancel {
+  background: none;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--muted);
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sc-save-result-cancel:hover { color: var(--down); border-color: var(--down); }
+
+/* 歷史備份清單 */
+.sc-saved-result-item {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  transition: border-color 0.15s;
+}
+.sc-saved-result-item:hover { border-color: var(--border2); }
+
+.sc-ri-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+}
+.sc-ri-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sc-ri-strategy {
+  font-size: 11px;
+  background: rgba(59,130,246,0.15);
+  color: #3b82f6;
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.sc-ri-date {
+  font-size: 11px;
+  color: var(--hint);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.sc-ri-count {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sc-ri-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.sc-ri-btn-load,
+.sc-ri-btn-del {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--muted);
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sc-ri-btn-load:hover { color: var(--accent); border-color: var(--accent); }
+.sc-ri-btn-del:hover  { color: var(--down);   border-color: var(--down);   }
+
+.sc-ri-conds {
+  font-size: 11px;
+  color: var(--hint);
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-ri-stocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sc-ri-stock-tag {
+  font-size: 11px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--muted);
+}
+.sc-ri-stock-more {
+  font-size: 11px;
+  color: var(--hint);
+  padding: 1px 4px;
+}
+
+@media (max-width: 768px) {
+  .sc-save-result-bar { gap: 6px; padding: 6px 10px; }
+  .sc-save-result-input { min-width: 100px; font-size: 12px; }
+  .sc-ri-date { margin-left: 0; }
+}
+
+/* ─── 10. 策略庫：搜尋列 + 分類折疊 ────────────────────────── */
+
+/* 搜尋列外框 */
+.sc-strategy-search-wrap {
+  position: relative;
+  margin-bottom: 10px;
+}
+.sc-strategy-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 7px 32px 7px 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.sc-strategy-search:focus { border-color: var(--accent); }
+.sc-strategy-search-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* 分類標題（可點擊折疊） */
+.sc-strategy-cat-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--bg2);
+  border: none;
+  border-radius: 7px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.sc-strategy-cat-header:hover { background: var(--bg3); }
+
+.sc-strategy-cat-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.sc-strategy-cat-count {
+  font-size: 11px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 1px 7px;
+  opacity: 0.8;
+}
+.sc-strategy-cat-chevron {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.2s;
+}
+
+/* 分類卡片容器 */
+.sc-strategy-cat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+
+/* 分類之間的間距 */
+.sc-strategy-category + .sc-strategy-category {
+  margin-top: 4px;
+}
+
+/* 節號 11 已移至 stock-signals.css */
+/* 節號 12~17 已移至 chart-ui.css */
+/* MC/X系列/策略Modal 已移至 mc-styles.css */

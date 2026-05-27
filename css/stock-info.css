@@ -1,0 +1,318 @@
+/* ============================================================================
+   stock-info.css — Advanced 2 + Advanced 3 個股補充資訊 UI
+   ============================================================================ */
+
+.si-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* ── 載入中 ── */
+.si-loading {
+  padding: 32px;
+  text-align: center;
+  color: var(--muted, #8a8f99);
+  font-size: 13px;
+}
+
+/* ── 標題列 ── */
+.si-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.si-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.si-saved-at {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+}
+
+/* ── 空白狀態 ── */
+.si-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  color: var(--muted, #8a8f99);
+}
+.si-empty-icon { font-size: 32px; }
+.si-empty-text { font-size: 14px; font-weight: 500; color: var(--text); }
+.si-empty-hint { font-size: 12px; }
+
+/* ============================================================================
+   Advanced 3 — 自動資料區塊
+   ============================================================================ */
+
+.si-auto-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.si-auto-section {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.si-auto-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg3, rgba(255,255,255,0.03));
+  border-bottom: 1px solid var(--border);
+}
+
+.si-auto-badge {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.si-auto-badge.auto {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.si-auto-date {
+  font-size: 10px;
+  color: var(--muted, #8a8f99);
+  margin-left: auto;
+}
+
+/* ── 自動資料表格 ── */
+.si-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.si-table thead tr {
+  background: var(--bg3, rgba(255,255,255,0.03));
+}
+.si-table th {
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted, #8a8f99);
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.si-table td {
+  padding: 5px 10px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.si-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.si-table tbody tr:hover {
+  background: rgba(255,255,255,0.03);
+}
+.si-warn-row td {
+  background: rgba(245, 158, 11, 0.07);
+}
+
+/* ── 資訊卡片（手動資料，A2 原版） ── */
+.si-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+.si-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.si-card.warn {
+  border-color: #f59e0b;
+  background: rgba(245,158,11,0.06);
+}
+.si-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted, #8a8f99);
+  margin-bottom: 6px;
+  letter-spacing: 0.03em;
+}
+.si-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+  color: var(--text);
+}
+.si-card-note {
+  color: var(--text);
+  line-height: 1.5;
+  font-size: 12px;
+}
+.si-days {
+  font-size: 10px;
+  color: #f59e0b;
+  margin-left: 4px;
+}
+.si-up   { color: var(--up,   #26a69a); font-weight: 600; }
+.si-down { color: var(--down, #ef5350); font-weight: 600; }
+
+/* ── 操作區 ── */
+.si-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.si-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.si-step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.si-step-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.si-step-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.si-step-desc {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+}
+
+/* ── 按鈕 ── */
+.si-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.si-btn-primary {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border-color: var(--accent, #3b82f6);
+}
+.si-btn-primary:hover { opacity: 0.85; }
+.si-btn-danger {
+  background: transparent;
+  color: var(--down, #ef5350);
+  border-color: var(--down, #ef5350);
+}
+.si-btn-danger:hover { background: rgba(239,83,80,0.1); }
+.si-btn-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── JSON textarea ── */
+.si-json-input {
+  width: 100%;
+  background: var(--bg3, #1a1b1f);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'Menlo', 'Monaco', monospace;
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.si-json-input:focus {
+  outline: none;
+  border-color: var(--accent, #3b82f6);
+}
+
+/* ── 手機版 ── */
+@media (max-width: 480px) {
+  .si-cards {
+    grid-template-columns: 1fr 1fr;
+  }
+  .si-table th,
+  .si-table td {
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+}
+
+/* ── 過期警示橫幅 ── */
+.si-expiry-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.10);
+  border-left: 3px solid #f59e0b;
+  border-radius: 6px;
+  font-size: 12px;
+  animation: siExpirySlidein 0.2s ease;
+}
+@keyframes siExpirySlidein {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.si-expiry-icon { font-size: 14px; flex-shrink: 0; }
+.si-expiry-msg  { flex: 1; color: var(--text); }
+.si-expiry-btn  {
+  padding: 3px 10px;
+  background: #f59e0b;
+  color: #000;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.si-expiry-btn:hover { opacity: 0.85; }
+.si-expiry-close {
+  background: none;
+  border: none;
+  color: var(--muted, #8a8f99);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.si-expiry-close:hover { color: var(--text); }

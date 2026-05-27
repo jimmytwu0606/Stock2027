@@ -1,0 +1,652 @@
+/* portfolio.css — 庫存 Tab 樣式 */
+
+#tabPortfolio {
+  padding: 16px 20px;
+}
+
+/* ─── Toolbar ───────────────────────────────────────── */
+.pf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.pf-toolbar-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-right: auto;
+}
+.pf-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  transition: all 0.15s;
+}
+.pf-btn:hover {
+  background: var(--bg3);
+  border-color: var(--border2);
+}
+.pf-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.pf-btn.primary:hover { opacity: 0.88; }
+.pf-btn.danger {
+  background: transparent;
+  border-color: var(--down);
+  color: var(--down);
+}
+.pf-btn.danger:hover { background: rgba(239,83,80,0.1); }
+
+/* ─── 表格 ─────────────────────────────────────────── */
+.pf-table-wrap {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: auto;          /* 允許垂直滾動 */
+  max-height: calc(100vh - 280px); /* 留出 toolbar + tab bar 空間 */
+}
+.pf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.pf-table thead tr {
+  background: var(--bg3);
+}
+.pf-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.pf-table td {
+  padding: 10px 12px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.pf-table tbody tr.pf-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.pf-table tbody tr.pf-row:hover {
+  background: rgba(59,130,246,0.07);
+}
+.pf-table tbody tr:last-child td { border-bottom: none; }
+
+.pf-name { font-weight: 600; min-width: 100px; }
+.pf-code { color: var(--muted); font-size: 12px; }
+.pf-price, .pf-shares, .pf-avg { font-variant-numeric: tabular-nums; }
+.pf-pl { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pf-pl.up   { color: var(--up); }
+.pf-pl.down { color: var(--down); }
+.pf-pl-pct { font-size: 11px; font-weight: 500; opacity: 0.85; }
+
+.pf-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+}
+.pf-hint { color: var(--hint); }
+
+/* 健康度 badge — 5 色（台股語義：紅強 橘中強 灰中性 青中弱 綠弱） */
+.pf-health-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* 80-100 強勢 — 紅 */
+.pf-health-badge.strong    { background: rgba(239,83,80,0.18);    color: #ef5350; }
+/* 60-79  中性偏強 — 橘 */
+.pf-health-badge.mid-strong{ background: rgba(245,158,11,0.15);   color: #f59e0b; }
+/* 40-59  中性 — 灰 */
+.pf-health-badge.neutral   { background: rgba(255,255,255,0.07);  color: var(--muted); }
+/* 20-39  中性偏弱 — 青 */
+.pf-health-badge.mid-weak  { background: rgba(6,182,212,0.15);    color: #06b6d4; }
+/* 0-19   弱勢 — 綠 */
+.pf-health-badge.weak      { background: rgba(38,166,154,0.18);   color: var(--up); }
+
+/* 操作按鈕 */
+.pf-icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.pf-icon-btn:hover { background: var(--bg3); border-color: var(--border2); }
+
+/* ─── 彙總列 ───────────────────────────────────────── */
+.pf-totals {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+.pf-total-cell {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.pf-total-label {
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.pf-total-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.pf-total-pl.up   .pf-total-value { color: var(--up); }
+.pf-total-pl.down .pf-total-value { color: var(--down); }
+.pf-total-pl.up   { border-color: rgba(38,166,154,0.4); background: rgba(38,166,154,0.05); }
+.pf-total-pl.down { border-color: rgba(239,83,80,0.4);  background: rgba(239,83,80,0.05); }
+.pf-total-pct {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+
+/* ─── Modal ─────────────────────────────────────────── */
+#pfModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#pfModal.open {
+  display: flex;
+  animation: pfFadeIn 0.15s ease-out;
+}
+@keyframes pfFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.pf-modal-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 720px;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pf-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.pf-modal-title { font-size: 16px; font-weight: 700; color: var(--text); flex: 1; }
+.pf-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+.pf-modal-close:hover { color: var(--text); }
+
+.pf-modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.pf-mod-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.pf-mod-row label {
+  font-size: 12px;
+  color: var(--muted);
+  width: 56px;
+  flex-shrink: 0;
+}
+.pf-mod-row input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+.pf-mod-row input:read-only {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pf-mod-section-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 8px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.pf-mod-hint {
+  padding: 16px;
+  text-align: center;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+/* 交易列 */
+.pf-tx-row {
+  display: grid;
+  grid-template-columns: 70px 130px 100px 100px 1fr 32px;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.pf-tx-row select, .pf-tx-row input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
+  color: var(--text);
+  font-size: 12px;
+  min-width: 0;
+}
+.pf-tx-del {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--down);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pf-tx-del:hover { background: rgba(239,83,80,0.1); }
+
+/* 總覽小區 */
+.pf-sum-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: var(--bg3);
+  padding: 12px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+.pf-sum-grid > div {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+}
+.pf-sum-grid span { color: var(--muted); margin-bottom: 2px; }
+.pf-sum-grid b {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.pf-sum-grid .up b   { color: var(--up); }
+.pf-sum-grid .down b { color: var(--down); }
+
+.pf-modal-foot {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.pf-modal-foot .pf-btn.danger { margin-right: auto; }
+
+/* 手機 */
+@media (max-width: 768px) {
+  .pf-totals { grid-template-columns: 1fr; }
+  .pf-tx-row { grid-template-columns: 60px 110px 80px 80px 1fr 28px; font-size: 11px; }
+  .pf-table th, .pf-table td { padding: 8px; font-size: 12px; }
+  .pf-name { min-width: 80px; }
+}
+
+/* ─── 批次匯入 Modal ──────────────────────────────── */
+#pfBatchModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#pfBatchModal.open {
+  display: flex;
+  animation: pfFadeIn 0.15s ease-out;
+}
+
+.pf-batch-help {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.pf-batch-help-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.pf-batch-help-fmt {
+  font-family: 'Menlo','Monaco','Consolas',monospace;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: pre;
+}
+.pf-batch-help-note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.pf-batch-help-note code {
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.pf-batch-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--text);
+  font-family: 'Menlo','Monaco','Consolas',monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+  min-height: 140px;
+}
+.pf-batch-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pf-batch-preview {
+  margin-top: 12px;
+}
+.pf-batch-preview:empty { display: none; }
+
+.pf-batch-preview-stat {
+  padding: 8px 12px;
+  background: var(--bg3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.pf-batch-preview-stat b {
+  color: var(--accent);
+  font-weight: 700;
+}
+.pf-batch-preview-stat b.down { color: var(--down); }
+
+.pf-batch-errors {
+  background: rgba(239,83,80,0.08);
+  border: 1px solid rgba(239,83,80,0.3);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.pf-batch-errors b {
+  color: var(--down);
+}
+.pf-batch-errors ul {
+  margin: 6px 0 0 18px;
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pf-batch-errors code {
+  background: rgba(0,0,0,0.3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'Menlo','Monaco',monospace;
+  font-size: 10px;
+}
+
+.pf-batch-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.pf-batch-tbl th {
+  background: var(--bg3);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.pf-batch-tbl td {
+  padding: 5px 10px;
+  color: var(--text);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-variant-numeric: tabular-nums;
+}
+.pf-batch-tbl td.up   { color: var(--up); font-weight: 600; }
+.pf-batch-tbl td.down { color: var(--down); font-weight: 600; }
+.pf-batch-tbl tbody tr:last-child td { border-bottom: none; }
+
+/* ─── 批次新增代號預覽 ────────────────────────────── */
+.pf-batch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.pf-batch-chip {
+  background: rgba(38,166,154,0.15);
+  border: 1px solid rgba(38,166,154,0.4);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.pf-batch-chip em {
+  font-style: normal;
+  color: var(--muted);
+  margin-left: 4px;
+  font-size: 11px;
+}
+.pf-batch-skip {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 5px;
+  margin-bottom: 6px;
+}
+
+/* ─── 二級 Tab(持股/追蹤)──────────────────────────── */
+.pf-kind-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.pf-kind-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.pf-kind-tab:hover { color: var(--text); }
+.pf-kind-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ─── 清單選擇器 ───────────────────────────────────── */
+.pf-list-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pf-list-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.pf-list-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+  min-width: 160px;
+}
+.pf-list-select:focus { outline: none; border-color: var(--accent); }
+
+/* ─── 追蹤/載入自選/Prompt 三個 Modal 共用 ────────── */
+#pfWatchModal, #pfLoadModal, #pfPromptModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 9999;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#pfWatchModal.open, #pfLoadModal.open, #pfPromptModal.open {
+  display: flex;
+  animation: pfFadeIn 0.15s ease-out;
+}
+
+/* ─── Prompt Modal ───────────────────────────────── */
+.pf-prompt-msg {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.pf-prompt-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.pf-prompt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ─── 搜尋 Bar ─────────────────────────────────────── */
+.pf-search-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  color: var(--text);
+  font-size: 13px;
+  width: 180px;
+  transition: border-color 0.15s;
+}
+.pf-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pf-search-input::placeholder { color: var(--hint); }
+
+/* ─── 排序 th ──────────────────────────────────────── */
+.pf-th-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.pf-th-sort:hover { color: var(--text); }
+.pf-th-sort.active { color: var(--accent); }
+
+/* ─── 分頁列 ────────────────────────────────────────── */
+.pf-pagination {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 4px;
+  flex-wrap: wrap;
+}
+.pf-page-info {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 6px;
+}
+.pf-page-btn {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 30px;
+  text-align: center;
+  transition: all 0.12s;
+}
+.pf-page-btn:hover:not([disabled]) { background: var(--bg3); border-color: var(--accent); }
+.pf-page-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.pf-page-btn[disabled] { opacity: 0.3; cursor: not-allowed; }

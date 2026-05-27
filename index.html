@@ -1,0 +1,2267 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>選股台 — 台股盤後工具</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/responsive.css" />
+  <link rel="stylesheet" href="css/stock-tabs.css" />
+  <link rel="stylesheet" href="css/stock-info.css" />
+  <link rel="stylesheet" href="css/personas.css" />
+  <link rel="stylesheet" href="css/auth-tier.css" />
+  <link rel="stylesheet" href="css/stock-signals.css" />
+  <link rel="stylesheet" href="css/chart-ui.css" />
+  <link rel="stylesheet" href="css/mc-styles.css" />
+  <link rel="stylesheet" href="css/portfolio.css" />
+  <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="css/screener.css" />
+  <link rel="stylesheet" href="css/pattern.css" />
+  <link rel="stylesheet" href="css/seed.css" />
+  <link rel="stylesheet" href="css/search-card.css" />
+  <link rel="stylesheet" href="css/additions.css" />
+  <link rel="stylesheet" href="css/chart-edit.css" />
+  <link rel="stylesheet" href="css/deng.css" />
+  <link rel="stylesheet" href="css/signal-overlay.css" />
+  <link rel="stylesheet" href="css/analysis-panel.css" />
+  <link rel="stylesheet" href="css/analysis-ai-prompt.css" />
+  <link rel="stylesheet" href="css/multi-period.css" />
+  <style>
+/* ── Modal 雙 Tab 版 ────────────────────────── */
+.modal--wide { width: min(480px, 92vw); }
+
+.modal-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin: 0 -20px 16px;
+  padding: 0 20px;
+}
+.modal-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 16px 8px;
+  margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+}
+.modal-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* 單筆搜尋建議 */
+.modal-search-wrap { position: relative; }
+.modal-suggest-list {
+  position: absolute;
+  top: 100%; left: 0; right: 0;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.modal-suggest-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background .1s;
+}
+.modal-suggest-item:hover,
+.modal-suggest-item.focused { background: var(--bg2); }
+.sug-code { color: var(--accent); font-weight: 600; min-width: 48px; }
+.sug-name { color: var(--text); }
+
+/* 批次面板 */
+.modal-batch-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.modal-new-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.modal-new-group-row input {
+  flex: 1;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 10px;
+}
+.modal-batch-textarea {
+  width: 100%;
+  height: 180px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.modal-batch-textarea:focus { border-color: var(--accent); outline: none; }
+
+/* 批次預覽 */
+.modal-batch-preview {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.batch-preview-stats {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.batch-err { color: var(--down); }
+.batch-preview-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.batch-tag {
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+}
+.batch-tag.ok  { background: rgba(59,130,246,.15); color: var(--accent); }
+.batch-tag.err { background: rgba(239,83,80,.15);  color: var(--down); }
+
+/* ── 強勢族群 toggle 撥盤 ── */
+.hg-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 3px;
+}
+.hg-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  border-radius: 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  transition: all .18s;
+  white-space: nowrap;
+}
+.hg-toggle-btn.active[data-mode="up"] {
+  background: rgba(239,83,80,.18);
+  color: var(--down);
+}
+.hg-toggle-btn.active[data-mode="down"] {
+  background: rgba(38,166,154,.18);
+  color: var(--up);
+}
+
+/* ══ 強勢族群 Tab ══════════════════════════════════════════════ */
+.hotgroup-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  padding: 0;
+  box-sizing: border-box;
+  background: var(--bg);
+}
+
+/* 頂部標題列 */
+.hg-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 16px 20px 0;
+}
+.hg-header-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.hg-header-main {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+.hg-header-meta {
+  margin-left: auto;
+  text-align: right;
+  font-size: 11px;
+  color: var(--hint);
+  line-height: 1.6;
+}
+
+/* 盤面分析橫幅 */
+.hotgroup-commentary {
+  margin: 12px 20px 0;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+}
+.hg-commentary-loading,
+.hg-commentary-empty {
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.hg-commentary-body {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hg-commentary-text {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.65;
+}
+.hg-commentary-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hg-stat {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg3);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+.hg-stat.up   { color: var(--down); }
+.hg-stat.down { color: var(--up); }
+
+/* 主體：甜甜圈（大，置中） + 族群 chip 環繞下方 */
+/* Treemap 族群熱力圖 */
+.hg-treemap-wrap {
+  padding: 8px 16px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hg-treemap-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 3px;
+  width: 100%;
+}
+.hg-tm-cell {
+  border-radius: 4px;
+  padding: 9px 11px;
+  cursor: pointer;
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: opacity .12s;
+  overflow: hidden;
+}
+.hg-tm-cell:hover { opacity: .82; }
+.hg-tm-active {
+  outline: 2px solid rgba(255,255,255,.8);
+  outline-offset: -1px;
+}
+.hg-tm-name {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: keep-all;
+}
+.hg-tm-count {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  margin-top: 4px;
+}
+.hg-tm-sub {
+  font-size: 10px;
+  opacity: .65;
+  margin-top: 1px;
+}
+.hg-tm-xs { min-height: 52px; padding: 7px 8px; }
+.hg-tm-xs .hg-tm-name { font-size: 9px; }
+.hg-tm-xs .hg-tm-count { font-size: 15px; }
+.hg-tm-sm .hg-tm-name { font-size: 10px; }
+.hg-tm-sm .hg-tm-count { font-size: 18px; }
+
+/* 個股列表（點族群後展開） */
+.hg-stocks-section {
+  padding: 16px 20px 24px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.hg-stocks-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.hg-stocks-section-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.hg-stocks-section-count {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.hg-stock-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hg-stock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  font-size: 12px;
+}
+.hg-stock-chip:hover {
+  background: var(--bg3);
+  border-color: rgba(255,255,255,.15);
+}
+.hg-stock-chip-code {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 12px;
+}
+.hg-stock-chip-name {
+  color: var(--text);
+}
+.hg-stock-chip-chg {
+  font-weight: 700;
+  color: var(--down);   /* 漲停=紅 */
+  font-size: 11px;
+}
+.hg-stock-chip-market {
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+.hg-stock-chip-market.twse { background: rgba(239,83,80,.15); color: var(--down); }
+.hg-stock-chip-market.tpex { background: rgba(59,130,246,.15); color: var(--accent); }
+.hg-stocks-hint {
+  padding: 24px;
+  text-align: center;
+  color: var(--hint);
+  font-size: 13px;
+}
+.hg-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ── 強勢族群 section header ── */
+.hg-stocks-section-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 0 8px;
+}
+.hg-track-actions { margin-left: auto; display: flex; gap: 6px; }
+.hg-track-btn {
+  font-size: 11px; padding: 4px 10px; border-radius: 20px;
+  border: 1px solid var(--border2); background: var(--bg3);
+  color: var(--muted); cursor: pointer; transition: all .2s; white-space: nowrap;
+}
+.hg-track-btn:hover { color: var(--text); background: var(--bg2); }
+.hg-track-btn.subscribed { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,.12); }
+.hg-track-sub-info { font-size: 11px; color: var(--muted); padding: 2px 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+
+/* ── 勾選工具列 ── */
+.hg-track-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; background: var(--bg3); border-radius: 10px;
+  margin-bottom: 8px; border: 1px solid var(--border2);
+}
+.hg-track-check-all { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); cursor: pointer; user-select: none; }
+.hg-track-check-all input { accent-color: var(--accent); cursor: pointer; }
+.hg-track-selected-count { font-size: 12px; color: var(--muted); }
+.hg-track-confirm-btn {
+  margin-left: auto; padding: 5px 14px; border-radius: 20px; border: none;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.hg-track-confirm-btn:hover { opacity: .85; }
+.hg-track-cancel-btn {
+  padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border2);
+  background: transparent; color: var(--muted); font-size: 12px; cursor: pointer;
+}
+
+/* ── 個股表格 ── */
+.hg-tbl-wrap {
+  overflow-x: auto; border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.hg-tbl {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+.hg-tbl-th {
+  padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600;
+  color: var(--muted); background: var(--bg3); white-space: nowrap;
+  cursor: pointer; user-select: none; border-bottom: 1px solid var(--border);
+  transition: color .15s;
+}
+.hg-tbl-th:hover, .hg-tbl-th.active { color: var(--text); }
+.hg-tbl-th-track { cursor: default; }
+.hg-tbl-row {
+  border-bottom: 1px solid var(--border); transition: background .15s; cursor: pointer;
+}
+.hg-tbl-row:last-child { border-bottom: none; }
+.hg-tbl-row:hover { background: var(--bg3); }
+.hg-tbl-row.hg-row-select-mode:hover { background: rgba(59,130,246,.06); }
+.hg-tbl-row.hg-row-checking { background: rgba(59,130,246,.1) !important; outline: 1px solid var(--accent); }
+.hg-tbl-row td { padding: 9px 12px; vertical-align: middle; }
+.hg-tbl-code { font-weight: 700; color: var(--text); white-space: nowrap; }
+.hg-tbl-name { color: var(--muted); }
+.hg-tbl-price { font-weight: 600; color: var(--text); }
+.hg-tbl-chg  { font-weight: 700; white-space: nowrap; }
+.hg-tbl-health { text-align: center; }
+.hg-tbl-track  { text-align: center; white-space: nowrap; }
+.hg-tbl-market {
+  font-size: 9px; font-weight: 700; border-radius: 3px; padding: 1px 3px; margin-right: 4px;
+}
+.hg-tbl-market.twse { background: rgba(239,83,80,.15); color: var(--down); }
+.hg-tbl-market.tpex { background: rgba(59,130,246,.15); color: var(--accent); }
+
+/* 健康度 badge */
+.hg-health-badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+.hg-health-badge.good { background: rgba(38,166,154,.15); color: var(--up); }
+.hg-health-badge.mid  { background: rgba(245,158,11,.12); color: #f59e0b; }
+.hg-health-badge.bad  { background: rgba(239,83,80,.12);  color: var(--down); }
+.hg-health-empty { color: var(--hint); font-size: 11px; }
+
+/* 追蹤 badge */
+.hg-chip-tracked-badge {
+  font-size: 10px; color: var(--up); background: rgba(38,166,154,.15);
+  border-radius: 4px; padding: 2px 6px; font-weight: 600; white-space: nowrap;
+}
+.hg-chip-wl-badge {
+  font-size: 11px; color: var(--accent); background: rgba(59,130,246,.12); border-radius: 4px; padding: 2px 5px;
+}
+.hg-stock-check { accent-color: var(--accent); cursor: pointer; width: 15px; height: 15px; }
+
+/* ── 追蹤 Modal ── */
+#hgTrackModal {
+  display: none; position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.6); backdrop-filter: blur(4px);
+  align-items: center; justify-content: center;
+}
+#hgTrackModal.active { display: flex; }
+.hg-track-modal-box {
+  background: var(--bg2); border: 1px solid var(--border2); border-radius: 16px;
+  padding: 28px 24px; width: 360px; max-width: 92vw;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.hg-track-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.hg-track-modal-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.hg-track-modal-close { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.hg-track-modal-close:hover { color: var(--text); }
+.hg-track-modal-info { font-size: 12px; color: var(--muted); padding: 8px 12px; background: var(--bg3); border-radius: 8px; margin-bottom: 16px; }
+.hg-track-modal-row { margin-bottom: 14px; }
+.hg-track-modal-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+.hg-track-modal-row input[type="text"],
+.hg-track-modal-row select {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  border: 1px solid var(--border2); background: var(--bg3);
+  color: var(--text); font-size: 13px; box-sizing: border-box; outline: none; transition: border-color .2s;
+}
+.hg-track-modal-row input[type="text"]:focus,
+.hg-track-modal-row select:focus { border-color: var(--accent); }
+.hg-track-modal-row input[type="text"]:disabled { opacity: .5; }
+.hg-track-modal-row select option { background: var(--bg2); }
+.hg-track-modal-auto { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.hg-track-modal-auto input { accent-color: var(--accent); cursor: pointer; }
+.hg-track-modal-footer { display: flex; gap: 8px; margin-top: 20px; }
+.hg-track-modal-footer button { flex: 1; padding: 10px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; }
+#hgTrackModalConfirm { background: var(--accent); color: #fff; }
+#hgTrackModalConfirm:hover { opacity: .85; }
+#hgTrackModalCancel { background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); }
+  </style>
+  <link rel="stylesheet" href="css/monte-carlo.css">
+  <style>
+/* ── 搜尋 bar autocomplete dropdown ── */
+.search-box {
+  position: relative;
+}
+.search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #1a1c1f;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  z-index: 9999;
+  max-height: 320px;
+  overflow-y: auto;
+  display: none;
+}
+.search-dropdown.open { display: block; }
+.search-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background .1s;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.search-dd-item:last-child { border-bottom: none; }
+.search-dd-item:hover,
+.search-dd-item.focused { background: rgba(255,255,255,.07); }
+.search-dd-code {
+  font-size: 13px;
+  font-weight: 700;
+  color: #60a5fa;
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+.search-dd-name {
+  font-size: 13px;
+  color: #e2e8f0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-dd-mark {
+  font-size: 11px;
+  color: rgba(255,255,255,.3);
+}
+.search-dd-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: rgba(255,255,255,.3);
+  text-align: center;
+}
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════
+     Splash Screen — 燈燈開場
+     JS 會在 initDB() 完成後呼叫 window.__hideSplash()
+     ══════════════════════════════════════════════ -->
+<div id="dengSplash">
+<style>
+/* C3 分價量表 canvas overlay */
+.pvd-canvas {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+#dengSplash{
+  position:fixed;inset:0;z-index:99999;background:#0e0f11;
+  display:flex;align-items:center;justify-content:center;
+  font-family:-apple-system,'Segoe UI',sans-serif;overflow:hidden;
+}
+#dengSplash.ds-exit{
+  animation:dsExit .5s ease forwards;pointer-events:none;
+}
+#dengSplash.ds-gone{ display:none; }
+@keyframes dsExit{to{opacity:0;transform:scale(1.04)}}
+
+/* 背景曲線 */
+#dsBg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+
+/* 曲線跑馬燈 */
+.ds-ctick{position:absolute;left:0;right:0;pointer-events:none}
+.ds-ctick-top{top:calc(50% - 180px)}
+.ds-ctick-bot{bottom:calc(50% - 180px)}
+
+/* 直線跑馬燈 */
+.ds-ltick{position:absolute;left:0;right:0;overflow:hidden;display:flex;align-items:center}
+.ds-ltick-top{top:44px;height:28px}
+.ds-ltick-bot{bottom:44px;height:28px}
+.ds-li{display:flex;align-items:center;white-space:nowrap;will-change:transform}
+.ds-rtl{animation:dsRtl 44s linear infinite}
+.ds-ltr{animation:dsLtr 50s linear infinite}
+@keyframes dsRtl{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes dsLtr{from{transform:translateX(-50%)}to{transform:translateX(0)}}
+.ds-t{display:inline-flex;align-items:center;gap:5px;padding:0 15px;height:24px;font-size:11px;font-weight:500;color:rgba(255,255,255,.4);position:relative}
+.ds-t::after{content:'';position:absolute;right:0;top:50%;transform:translateY(-50%);width:1px;height:9px;background:rgba(255,255,255,.1)}
+.ds-up{color:#ef5350}.ds-dn{color:#26a69a}.ds-ac{color:rgba(96,165,250,.8)}
+.ds-mu{color:rgba(255,255,255,.22);font-size:10px}.ds-cd{font-weight:700;color:rgba(255,255,255,.62)}
+.ds-fl{position:absolute;top:0;bottom:0;width:65px;z-index:1;pointer-events:none}
+.ds-fll{left:0;background:linear-gradient(to right,#0e0f11,transparent)}
+.ds-flr{right:0;background:linear-gradient(to left,#0e0f11,transparent)}
+
+/* 中心區 */
+#dsCenterWrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:0;z-index:10}
+#dsDengWrap{position:relative;width:130px;height:130px}
+.ds-glow{position:absolute;inset:-24px;border-radius:50%;background:radial-gradient(ellipse,rgba(239,83,80,.16) 0%,transparent 68%);animation:dsGlow 3.2s ease-in-out infinite}
+@keyframes dsGlow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.1)}}
+@keyframes dsBlink{0%,88%,92%,100%{opacity:1}90%{opacity:0}}
+@keyframes dsTail{0%,100%{transform:rotate(0deg)}50%{transform:rotate(8deg)}}
+#dsBrand{font-size:13px;font-weight:700;letter-spacing:.18em;color:rgba(255,255,255,.28);text-transform:uppercase;margin-top:8px}
+#dsSub{font-size:11px;color:rgba(255,255,255,.16);letter-spacing:.1em;margin-top:4px}
+
+/* 說話泡泡 */
+#dsBubble{
+  position:absolute;top:-10px;right:-106px;
+  background:rgba(28,31,36,.92);border:1px solid rgba(255,255,255,.1);
+  border-radius:12px 12px 12px 2px;padding:7px 12px;
+  font-size:11px;color:rgba(255,255,255,.62);white-space:nowrap;z-index:20;
+  transition:opacity .3s ease,transform .3s ease;
+}
+#dsBubble::before{content:'';position:absolute;left:-5px;bottom:8px;width:8px;height:8px;background:rgba(28,31,36,.92);border-left:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);transform:rotate(45deg)}
+
+/* CTA */
+#dsCtaWrap{margin-top:22px;display:flex;flex-direction:column;align-items:center;gap:8px}
+#dsCtaBtn{
+  padding:11px 38px;border-radius:100px;border:none;cursor:pointer;
+  background:linear-gradient(135deg,#ef5350,#c62828);color:#fff;
+  font-size:13px;font-weight:700;letter-spacing:.06em;
+  box-shadow:0 0 24px rgba(239,83,80,.35);transition:all .2s ease;position:relative;overflow:hidden;
+}
+#dsCtaBtn:hover{transform:translateY(-1px);box-shadow:0 0 36px rgba(239,83,80,.5)}
+#dsCtaBtn:active{transform:translateY(0)}
+#dsCtaBtn::after{content:'';position:absolute;inset:0;background:linear-gradient(to bottom,rgba(255,255,255,.12),transparent)}
+#dsCtaHint{font-size:10px;color:rgba(255,255,255,.18);letter-spacing:.06em}
+#dsDateline{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(255,255,255,.12);letter-spacing:.12em}
+</style>
+
+<!-- 背景曲線 -->
+<svg id="dsBg" viewBox="0 0 1200 800" preserveAspectRatio="none">
+  <path d="M-100 600 C200 530 380 310 600 390 S880 190 1300 270" fill="none" stroke="rgba(59,130,246,.065)" stroke-width="2.5"/>
+  <path d="M-100 550 C200 480 380 260 600 340 S880 140 1300 220" fill="none" stroke="rgba(59,130,246,.04)" stroke-width="1.5"/>
+  <path d="M-100 650 C220 570 400 360 620 420 S900 230 1300 310" fill="none" stroke="rgba(59,130,246,.03)" stroke-width="1"/>
+  <path d="M-100 160 C200 220 380 430 600 370 S880 560 1300 480" fill="none" stroke="rgba(239,83,80,.065)" stroke-width="2.5"/>
+  <path d="M-100 110 C200 170 380 380 600 320 S880 510 1300 430" fill="none" stroke="rgba(239,83,80,.04)" stroke-width="1.5"/>
+  <path d="M-100 210 C220 270 400 490 620 420 S900 600 1300 530" fill="none" stroke="rgba(239,83,80,.03)" stroke-width="1"/>
+  <path d="M-80 400 C240 300 480 540 740 340 S1000 430 1300 400" fill="none" stroke="rgba(255,255,255,.025)" stroke-width="1"/>
+  <path d="M0 800 C300 680 600 570 1200 490" fill="none" stroke="rgba(38,166,154,.05)" stroke-width="1.5"/>
+  <path d="M0 0 C300 110 600 220 1200 290" fill="none" stroke="rgba(38,166,154,.04)" stroke-width="1.5"/>
+</svg>
+
+<!-- 曲線跑馬燈 上 -->
+<svg class="ds-ctick ds-ctick-top" style="height:60px;width:100%" viewBox="0 0 800 60" preserveAspectRatio="none">
+  <defs><path id="dsCp1" d="M-200 48 C100 22 250 56 420 30 S620 8 1000 42"/></defs>
+  <text font-size="10.5" fill="rgba(239,83,80,.45)" font-family="-apple-system,sans-serif" font-weight="600" letter-spacing="0.5">
+    <textPath href="#dsCp1" startOffset="0%">
+      <animate attributeName="startOffset" from="0%" to="-100%" dur="28s" repeatCount="indefinite"/>
+      ▲ 2492 華新科 +10.00%　·　▲ 2478 大毅 +9.55%　·　▲ 6574 萬方 +9.81%　·　▲ 8109 博大 +10.00%　·　▲ 6155 鈞貴 +9.82%　·　▲ 2330 台積電 +3.2%　·　▲ 6669 緯穎 +7.3%　·　▲ 2492 華新科 +10.00%　·　▲ 2478 大毅 +9.55%　·
+    </textPath>
+  </text>
+</svg>
+
+<!-- 曲線跑馬燈 下 -->
+<svg class="ds-ctick ds-ctick-bot" style="height:60px;width:100%" viewBox="0 0 800 60" preserveAspectRatio="none">
+  <defs><path id="dsCp2" d="M1000 18 C700 48 520 14 400 40 S200 60 -200 28"/></defs>
+  <text font-size="10.5" fill="rgba(38,166,154,.42)" font-family="-apple-system,sans-serif" font-weight="600" letter-spacing="0.5">
+    <textPath href="#dsCp2" startOffset="0%">
+      <animate attributeName="startOffset" from="0%" to="-100%" dur="34s" repeatCount="indefinite"/>
+      散熱 5檔　·　PCB 4檔　·　半導體設備 4檔　·　面板光電 3檔　·　精密零組件 3檔　·　漲停 39檔 上市20 上櫃19　·　外資買超 +42億　·　散熱 5檔　·　PCB 4檔　·
+    </textPath>
+  </text>
+</svg>
+
+<!-- 直線跑馬燈 上 RTL -->
+<div class="ds-ltick ds-ltick-top">
+  <div class="ds-li ds-rtl">
+    <span class="ds-t"><span class="ds-mu">加權</span><span class="ds-up">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac">散熱 · PCB · 半導體</span></span>
+    <span class="ds-t"><span class="ds-mu">漲家</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌家</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">費半</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">那指</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">16:45 更新</span></span>
+    <!-- 重複 -->
+    <span class="ds-t"><span class="ds-mu">加權</span><span class="ds-up">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac">散熱 · PCB · 半導體</span></span>
+    <span class="ds-t"><span class="ds-mu">漲家</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌家</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">費半</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">那指</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">16:45 更新</span></span>
+  </div>
+  <div class="ds-fl ds-fll"></div><div class="ds-fl ds-flr"></div>
+</div>
+
+<!-- 直線跑馬燈 下 LTR -->
+<div class="ds-ltick ds-ltick-bot">
+  <div class="ds-li ds-ltr">
+    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up">—</span></span>
+    <span class="ds-t"><span class="ds-mu">投信</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac">載入中…</span></span>
+    <span class="ds-t"><span class="ds-cd">2330</span><span class="ds-mu">台積電</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">每日盤後</span><span class="ds-ac">自動更新</span></span>
+    <span class="ds-t"><span class="ds-mu">資料來源</span><span>TWSE · Yahoo</span></span>
+    <!-- 重複 -->
+    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up">—</span></span>
+    <span class="ds-t"><span class="ds-mu">投信</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac">載入中…</span></span>
+    <span class="ds-t"><span class="ds-cd">2330</span><span class="ds-mu">台積電</span><span>—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">每日盤後</span><span class="ds-ac">自動更新</span></span>
+    <span class="ds-t"><span class="ds-mu">資料來源</span><span>TWSE · Yahoo</span></span>
+  </div>
+  <div class="ds-fl ds-fll"></div><div class="ds-fl ds-flr"></div>
+</div>
+
+<!-- 燈燈中心 -->
+<div id="dsCenterWrap">
+  <div id="dsDengWrap">
+    <div class="ds-glow"></div>
+    <div id="dsBubble">今天散熱很強，去看看 👀</div>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 225" width="130" height="146" aria-label="燈燈">
+  <defs>
+    <radialGradient id="dsHalo" cx="50%" cy="55%" r="45%"><stop offset="0%" stop-color="#ef5350" stop-opacity="0.15"/><stop offset="100%" stop-color="#ef5350" stop-opacity="0"/></radialGradient>
+    <radialGradient id="dsBody" cx="50%" cy="30%" r="60%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#dcdce8"/></radialGradient>
+    <radialGradient id="dsFace" cx="50%" cy="38%" r="55%"><stop offset="0%" stop-color="#ffffff"/><stop offset="100%" stop-color="#e8e8f2"/></radialGradient>
+    <radialGradient id="dsCoinSm" cx="35%" cy="25%" r="65%"><stop offset="0%" stop-color="#fff0a0"/><stop offset="55%" stop-color="#f0c030"/><stop offset="100%" stop-color="#b07800"/></radialGradient>
+    <radialGradient id="dsCoinBig" cx="30%" cy="25%" r="65%"><stop offset="0%" stop-color="#fff5b0"/><stop offset="50%" stop-color="#e8b820"/><stop offset="100%" stop-color="#a06800"/></radialGradient>
+    <radialGradient id="dsIngot" cx="30%" cy="25%" r="65%"><stop offset="0%" stop-color="#fff8c0"/><stop offset="60%" stop-color="#e8b820"/><stop offset="100%" stop-color="#a06800"/></radialGradient>
+    <style>
+      @keyframes dsPawWave{0%,100%{transform:rotate(0deg)}35%{transform:rotate(-20deg)}70%{transform:rotate(4deg)}}
+      .ds-paw{transform-origin:134px 152px;animation:dsPawWave 1.1s ease-in-out infinite}
+      @keyframes dsTailWag{0%,100%{transform:rotate(0deg)}30%{transform:rotate(-7deg)}70%{transform:rotate(7deg)}}
+      .ds-tail{transform-origin:58px 172px;animation:dsTailWag 2.2s ease-in-out infinite}
+      @keyframes dsCoin1{0%{transform:translateY(-30px);opacity:0}10%{opacity:1}80%{opacity:1}100%{transform:translateY(58px);opacity:0}}
+      @keyframes dsCoin2{0%{transform:translateY(-20px);opacity:0}10%{opacity:1}80%{opacity:1}100%{transform:translateY(52px);opacity:0}}
+      @keyframes dsCoin3{0%{transform:translateY(-35px);opacity:0}15%{opacity:1}80%{opacity:1}100%{transform:translateY(60px);opacity:0}}
+      @keyframes dsIngot{0%{transform:translateY(-28px);opacity:0}12%{opacity:1}80%{opacity:1}100%{transform:translateY(55px);opacity:0}}
+      .dsc1{animation:dsCoin1 2.0s ease-in infinite;animation-delay:0.0s}
+      .dsc2{animation:dsCoin2 2.0s ease-in infinite;animation-delay:0.7s}
+      .dsc3{animation:dsCoin3 2.0s ease-in infinite;animation-delay:1.3s}
+      .dsc4{animation:dsCoin1 2.0s ease-in infinite;animation-delay:0.4s}
+      .dsi1{animation:dsIngot 2.4s ease-in infinite;animation-delay:0.2s}
+      .dsi2{animation:dsIngot 2.4s ease-in infinite;animation-delay:1.5s}
+    </style>
+  </defs>
+  <circle cx="100" cy="118" r="82" fill="url(#dsHalo)"/>
+  <circle cx="100" cy="118" r="81" fill="none" stroke="#d4a843" stroke-width="0.7" stroke-dasharray="3 2" opacity="0.6"/>
+  <g fill="#ef5350" opacity="0.65">
+    <polygon points="100,4 97,14 103,14"/><line x1="100" y1="16" x2="100" y2="26" stroke="#ef5350" stroke-width="1.1"/>
+    <polygon points="128,10 125,20 131,20"/><line x1="128" y1="22" x2="128" y2="30" stroke="#ef5350" stroke-width="1.1"/>
+    <polygon points="160,16 157,26 163,26"/><line x1="160" y1="28" x2="160" y2="36" stroke="#ef5350" stroke-width="1.1"/>
+  </g>
+  <g class="ds-tail">
+    <path d="M 52,172 Q 28,182 26,164 Q 24,146 48,147 Q 64,146 64,162" fill="#d8d8e4" stroke="#b8b8c8" stroke-width="0.8"/>
+    <path d="M 54,170 Q 34,178 35,162 Q 36,150 50,152" fill="#eeeef6"/>
+  </g>
+  <ellipse cx="100" cy="168" rx="54" ry="40" fill="url(#dsBody)" stroke="#c0c0cc" stroke-width="0.6"/>
+  <ellipse cx="100" cy="175" rx="32" ry="24" fill="white" opacity="0.6"/>
+  <path d="M 60,154 Q 50,158 48,168" stroke="#d0d0dc" stroke-width="11" stroke-linecap="round" fill="none"/>
+  <path d="M 60,154 Q 50,158 48,168" stroke="#f2f2f8" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <ellipse cx="47" cy="170" rx="11" ry="8" fill="#f2f2f8" stroke="#c0c0cc" stroke-width="0.7"/>
+  <ellipse cx="36" cy="155" rx="22" ry="34" fill="url(#dsCoinBig)" stroke="#a07000" stroke-width="1.2"/>
+  <ellipse cx="36" cy="155" rx="17" ry="28" fill="none" stroke="#a07000" stroke-width="0.7" opacity="0.5"/>
+  <text x="36" y="142" text-anchor="middle" font-size="10" font-weight="bold" fill="#7a3a00" font-family="serif">千</text>
+  <text x="36" y="156" text-anchor="middle" font-size="10" font-weight="bold" fill="#7a3a00" font-family="serif">万</text>
+  <text x="36" y="170" text-anchor="middle" font-size="10" font-weight="bold" fill="#7a3a00" font-family="serif">兩</text>
+  <ellipse cx="100" cy="100" rx="48" ry="44" fill="url(#dsFace)" stroke="#c0c0cc" stroke-width="0.5"/>
+  <path d="M 68,62 Q 66,50 74,54 Q 72,42 80,50 Q 80,38 88,48 Q 90,36 96,46 Q 102,36 104,48 Q 112,38 112,50 Q 120,42 118,54 Q 126,50 124,62" fill="#eeeef6" stroke="#c8c8d4" stroke-width="0.5"/>
+  <path d="M 72,64 Q 71,54 78,57 Q 77,46 84,53 Q 84,42 91,51 Q 93,39 96,48 Q 99,39 101,51 Q 108,42 108,53 Q 115,46 114,57 Q 121,54 120,64" fill="#f8f8fc"/>
+  <path d="M 58,80 Q 48,58 62,52 Q 74,46 77,68 Q 70,74 64,80" fill="#d8d8e4" stroke="#b8b8c8" stroke-width="0.7"/>
+  <path d="M 61,78 Q 54,62 64,57 Q 73,52 76,68" fill="#f0c0c8" opacity="0.5"/>
+  <path d="M 142,80 Q 152,58 138,52 Q 126,46 123,68 Q 130,74 136,80" fill="#d8d8e4" stroke="#b8b8c8" stroke-width="0.7"/>
+  <path d="M 139,78 Q 146,62 136,57 Q 127,52 124,68" fill="#f0c0c8" opacity="0.5"/>
+  <ellipse cx="66" cy="108" rx="17" ry="13" fill="#f0f0f8" opacity="0.8"/>
+  <ellipse cx="134" cy="108" rx="17" ry="13" fill="#f0f0f8" opacity="0.8"/>
+  <ellipse cx="68" cy="113" rx="9" ry="5.5" fill="#f4b0b8" opacity="0.22"/>
+  <ellipse cx="132" cy="113" rx="9" ry="5.5" fill="#f4b0b8" opacity="0.22"/>
+  <g stroke="#d8d8e0" stroke-width="0.5" opacity="0.85">
+    <line x1="53" y1="107" x2="82" y2="110"/><line x1="52" y1="111" x2="81" y2="113"/><line x1="54" y1="115" x2="82" y2="116"/>
+    <line x1="118" y1="110" x2="147" y2="107"/><line x1="119" y1="113" x2="148" y2="111"/><line x1="118" y1="116" x2="146" y2="115"/>
+  </g>
+  <path d="M 76,100 Q 86,92 96,99" fill="none" stroke="#3a3a4a" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 78,99 Q 76,93 80,91" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 84,95 Q 83,89 87,88" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 91,94 Q 92,88 96,88" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 104,99 Q 114,92 124,99" fill="none" stroke="#3a3a4a" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 122,99 Q 124,93 120,91" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 116,95 Q 117,89 113,88" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 109,94 Q 108,88 104,88" fill="none" stroke="#3a3a4a" stroke-width="0.9" stroke-linecap="round"/>
+  <path d="M 97,112 Q 100,109 103,112 Q 101,115 100,116 Q 99,115 97,112Z" fill="#e8a0a8" stroke="#c07888" stroke-width="0.4"/>
+  <line x1="100" y1="116" x2="100" y2="119" stroke="#c09090" stroke-width="0.7"/>
+  <path d="M 91,121 Q 96,128 100,125 Q 104,128 109,121" fill="none" stroke="#a08080" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M 64,132 Q 100,141 136,132 Q 132,143 100,147 Q 68,143 64,132Z" fill="#ef5350" opacity="0.88"/>
+  <circle cx="100" cy="140" r="6" fill="url(#dsCoinSm)" stroke="#a07000" stroke-width="0.8"/>
+  <circle cx="100" cy="142" r="1.5" fill="#906000" opacity="0.5"/>
+  <ellipse cx="76" cy="198" rx="15" ry="8" fill="#f0f0f8" stroke="#c0c0cc" stroke-width="0.6"/>
+  <ellipse cx="124" cy="198" rx="15" ry="8" fill="#f0f0f8" stroke="#c0c0cc" stroke-width="0.6"/>
+  <path d="M 65,198 Q 67,203 72,202" fill="none" stroke="#a8a8b8" stroke-width="0.6"/>
+  <path d="M 72,201 Q 74,205 79,204" fill="none" stroke="#a8a8b8" stroke-width="0.6"/>
+  <path d="M 113,201 Q 115,205 120,204" fill="none" stroke="#a8a8b8" stroke-width="0.6"/>
+  <path d="M 120,198 Q 122,203 127,202" fill="none" stroke="#a8a8b8" stroke-width="0.6"/>
+  <g class="ds-paw">
+    <path d="M 134,152 Q 150,147 146,128" stroke="#d0d0dc" stroke-width="13" stroke-linecap="round" fill="none"/>
+    <path d="M 134,152 Q 150,147 146,128" stroke="#f2f2f8" stroke-width="8" stroke-linecap="round" fill="none"/>
+    <ellipse cx="144" cy="124" rx="12" ry="10" fill="#f2f2f8" stroke="#c0c0cc" stroke-width="0.8"/>
+    <ellipse cx="144" cy="126" rx="5.5" ry="4.5" fill="#f4c0c8" opacity="0.55"/>
+    <circle cx="138" cy="121" r="2" fill="#f4c0c8" opacity="0.5"/>
+    <circle cx="144" cy="119" r="2" fill="#f4c0c8" opacity="0.5"/>
+    <circle cx="150" cy="121" r="2" fill="#f4c0c8" opacity="0.5"/>
+  </g>
+  <g class="dsc1"><circle cx="168" cy="48" r="7" fill="url(#dsCoinSm)" stroke="#a07000" stroke-width="0.7"/><text x="168" y="51" text-anchor="middle" font-size="5" fill="#7a4a00" font-family="serif" font-weight="bold">財</text></g>
+  <g class="dsc2"><circle cx="26" cy="55" r="6" fill="url(#dsCoinSm)" stroke="#a07000" stroke-width="0.7"/><text x="26" y="58" text-anchor="middle" font-size="4.5" fill="#7a4a00" font-family="serif" font-weight="bold">財</text></g>
+  <g class="dsc3"><circle cx="174" cy="62" r="7" fill="url(#dsCoinSm)" stroke="#a07000" stroke-width="0.7"/><text x="174" y="65" text-anchor="middle" font-size="5" fill="#7a4a00" font-family="serif" font-weight="bold">財</text></g>
+  <g class="dsc4"><circle cx="20" cy="40" r="6" fill="url(#dsCoinSm)" stroke="#a07000" stroke-width="0.7"/><text x="20" y="43" text-anchor="middle" font-size="4.5" fill="#7a4a00" font-family="serif" font-weight="bold">財</text></g>
+  <g class="dsi1"><rect x="156" y="72" width="18" height="9" rx="2" fill="url(#dsIngot)" stroke="#a07000" stroke-width="0.6"/><ellipse cx="165" cy="72" rx="11" ry="5" fill="url(#dsIngot)" stroke="#a07000" stroke-width="0.6"/><ellipse cx="165" cy="71" rx="7" ry="3" fill="#fff8c0" opacity="0.5"/></g>
+  <g class="dsi2"><rect x="22" y="66" width="18" height="9" rx="2" fill="url(#dsIngot)" stroke="#a07000" stroke-width="0.6"/><ellipse cx="31" cy="66" rx="11" ry="5" fill="url(#dsIngot)" stroke="#a07000" stroke-width="0.6"/><ellipse cx="31" cy="65" rx="7" ry="3" fill="#fff8c0" opacity="0.5"/></g>
+  </div>
+
+  <div id="dsBrand">燈燈台股觀測站</div>
+  <div id="dsSub">dengdeng.tw · 每日盤後自動更新</div>
+
+  <div id="dsCtaWrap">
+    <button id="dsCtaBtn" onclick="window.__hideSplash()">開始使用 ▶</button>
+    <div id="dsCtaHint">點擊進入選股台</div>
+  </div>
+</div>
+
+<div id="dsDateline" id="dsDateline"></div>
+
+<script>
+(function(){
+  // 台詞輪播
+  const msgs = [
+    '今天散熱很強，去看看 👀',
+    '外資在買，注意籌碼',
+    '漲停族群剛更新 🔴',
+    '記得看籌碼面喵~',
+    '電子供應鏈接棒中',
+    '今日PCB也不錯',
+    '開盤前做好功課喵',
+    '五燈獎選股結果出來了',
+  ];
+  let mi = 0;
+  const bubble = document.getElementById('dsBubble');
+  function rotatMsg() {
+    mi = (mi + 1) % msgs.length;
+    bubble.style.opacity = '0';
+    bubble.style.transform = 'translateY(-4px)';
+    setTimeout(function(){
+      bubble.textContent = msgs[mi];
+      bubble.style.opacity = '1';
+      bubble.style.transform = 'translateY(0)';
+    }, 300);
+  }
+  setInterval(rotatMsg, 3800);
+
+  // 日期
+  const dl = document.getElementById('dsDateline');
+  if (dl) {
+    const d = new Date();
+    const yy = d.getFullYear(), mm = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+    dl.textContent = yy + ' · ' + mm + ' · ' + dd + ' · 盤後版';
+  }
+
+  // 全域 hide 函式（main.js init 完成後可呼叫，也可以直接按按鈕）
+  window.__hideSplash = function() {
+    const el = document.getElementById('dengSplash');
+    if (!el || el.classList.contains('ds-gone')) return;
+    el.classList.add('ds-exit');
+    setTimeout(function(){ el.classList.add('ds-gone'); }, 520);
+  };
+})();
+</script>
+</div><!-- /#dengSplash -->
+
+<div class="app">
+
+<!-- ── Topbar ── -->
+  <header class="topbar">
+    <div class="logo">選股<em>台</em></div>
+    <div class="search-box">
+      <input id="searchInput" type="text" placeholder="代號 or 股名…" autocomplete="off" />
+      <button class="search-btn" title="查詢">&#9906;</button>
+      <div class="search-dropdown" id="searchDropdown"></div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-dot"></div>
+      <span class="status-label" id="statusLabel">盤後模式</span>
+      <span class="status-label" id="nowTime"></span>
+      <span class="data-source">TWSE + Yahoo Finance</span>
+      <div id="authArea"></div>                                    <!-- ← 新增這行 -->
+      <button class="settings-btn" id="settingsBtn" title="設定">⚙</button>
+    </div>
+  </header>
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span>自選清單</span>
+      <div style="display:flex;gap:6px;align-items:center">
+
+        <!-- 主要：更新報價 + 燈號合一 -->
+        <button id="watchlistRescanAll" class="wl-update-btn" title="更新報價與燈號">
+          ⟳ 更新
+        </button>
+
+        <!-- 下拉選單 -->
+        <div class="wl-menu-wrap" id="wlMenuWrap">
+          <button class="wl-icon-btn" id="wlMenuBtn" title="更多功能" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div class="wl-dropdown" id="wlDropdown" role="menu">
+            <button class="wl-dd-item" id="watchlistAddStock" role="menuitem">
+              <span class="wl-dd-icon">＋</span>新增個股
+            </button>
+            <button class="wl-dd-item" id="watchlistAddGroup" role="menuitem">
+              <span class="wl-dd-icon">▤</span>新增群組
+            </button>
+            <div class="wl-dd-sep"></div>
+            <button class="wl-dd-item" id="watchlistImportBtn" role="menuitem">
+              <span class="wl-dd-icon">↑</span>匯入 JSON
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <div id="watchlistContainer"></div>
+    <!-- 拖曳分隔線（貼在 sidebar 右邊緣，不佔 flex 子元素位置） -->
+    <div id="sidebarResizer" aria-hidden="true"></div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main class="main">
+
+    <!-- 主導覽 Tab -->
+    <nav class="main-tabbar">
+      <button class="main-tab active" data-tab="chart">看盤</button>
+      <button class="main-tab"        data-tab="hotgroup">強勢族群</button>
+      <button class="main-tab"        data-tab="theme">題材追蹤</button>
+      <button class="main-tab"        data-tab="portfolio">庫存</button>
+      <button class="main-tab"        data-tab="screener">個股篩選</button>
+      <button class="main-tab"        data-tab="pattern">型態比對</button>
+      <button class="main-tab"        data-tab="seed">種子選股</button>
+    </nav>
+
+    <!-- ══ Tab：看盤 ══ -->
+    <div class="tab-panel active" id="tabChart">
+
+      <!-- 股票標題列 -->
+      <div class="stock-header" id="stockHeader">
+        <div class="sh-main">
+          <div class="sh-title">
+            <span class="sh-name" id="shName">—</span>
+            <span class="sh-code" id="shCode"></span>
+            <button class="sh-add-btn" id="shAddToWatchlist" title="加入自選清單">＋ 加入自選</button>
+          </div>
+          <div class="sh-price flat" id="shPrice">—</div>
+          <div class="sh-change flat" id="shChange"></div>
+          <!-- 訊號標籤列 -->
+          <div class="stock-signal-tags" id="stockSignalTags"></div>
+          <!-- v2.6: 五燈獎燈號（金燈/死亡綠燈呼吸動畫,LAMP_UPGRADE 0522_2130） -->
+          <div id="stockSignalLamps" style="display:none"></div>
+        </div>
+        <div class="sh-stats">
+          <div class="stat-item"><div class="stat-label">開盤</div><div class="stat-val" id="sOpen">—</div></div>
+          <div class="stat-item"><div class="stat-label">最高</div><div class="stat-val" id="sHigh">—</div></div>
+          <div class="stat-item"><div class="stat-label">最低</div><div class="stat-val" id="sLow">—</div></div>
+          <div class="stat-item"><div class="stat-label">昨收</div><div class="stat-val" id="sPrev">—</div></div>
+          <div class="stat-item"><div class="stat-label">成交量</div><div class="stat-val" id="sVol">—</div></div>
+          <div class="stat-item"><div class="stat-label">本益比</div><div class="stat-val" id="sPE">—</div></div>
+        </div>
+        <span class="loading-badge" id="loadingBadge" style="display:none">載入中…</span>
+      </div>
+
+      <!-- 個股內頁 Tab Bar -->
+      <nav class="stock-tabbar">
+        <button class="stock-tab active" data-stock-tab="chart">K線圖</button>
+        <button class="stock-tab"        data-stock-tab="analysis">智能分析</button>
+        <button class="stock-tab"        data-stock-tab="personas">AI 圓桌</button>
+        <button class="stock-tab"        data-stock-tab="resonance">多週期共振</button>
+        <button class="stock-tab"        data-stock-tab="chip">籌碼</button>
+        <button class="stock-tab"        data-stock-tab="fundamental">基本面</button>
+        <button class="stock-tab"        data-stock-tab="news">新聞</button>
+        <button class="stock-tab"        data-stock-tab="announcement">公告</button>
+        <button class="stock-tab"        data-stock-tab="stockinfo">補充資訊</button>
+      </nav>
+
+      <!-- 個股面板：K線圖 -->
+      <div class="stock-panel active" id="chartPanel">
+        <div class="chart-toolbar">
+          <button class="tb-btn"        data-period="5d" >5日</button>
+          <button class="tb-btn active" data-period="1mo">1月</button>
+          <button class="tb-btn"        data-period="3mo">3月</button>
+          <button class="tb-btn"        data-period="6mo">6月</button>
+          <button class="tb-btn"        data-period="1y" >1年</button>
+          <button class="tb-btn"        data-period="2y" >2年</button>
+          <div class="tb-sep"></div>
+          <button class="ind-toggle on" data-ind="MA5"  data-ma="5" >MA5</button>
+          <button class="ind-toggle on" data-ind="MA10" data-ma="10">MA10</button>
+          <button class="ind-toggle on" data-ind="MA20" data-ma="20">MA20</button>
+          <button class="ind-toggle"    data-ind="MA60" data-ma="60">MA60</button>
+          <div class="tb-sep"></div>
+          <button class="ind-toggle on" data-ind="KD"   data-indicator="KD"  >KD</button>
+          <button class="ind-toggle on" data-ind="RSI"  data-indicator="RSI" >RSI</button>
+          <button class="ind-toggle on" data-ind="MACD" data-indicator="MACD">MACD</button>
+          <div class="tb-sep"></div>
+          <!-- 主圖疊加指標（橫向展開） -->
+          <button class="ind-toggle" data-ind="ICHI" data-indicator="ICHI" title="一目均衡表（五條線+雲帶，勾選時自動關其他指標）">☁️ Ichimoku</button>
+          <button class="ind-toggle" data-ind="EMA"  data-indicator="EMA">EMA</button>
+          <button class="ind-toggle" data-ind="BB"   data-indicator="BB">BB</button>
+          <button class="ind-toggle" data-ind="ENV"  data-indicator="ENV">ENV</button>
+          <button class="ind-toggle" data-ind="SAR"  data-indicator="SAR">SAR</button>
+          <button class="ind-toggle" data-ind="GMMA" data-indicator="GMMA" title="顧比均線（12條，效能較重）">GMMA⚡</button>
+          <button class="ind-toggle" data-ind="PVD"  data-indicator="PVD" title="分價量表（右側 canvas）">📊 分價量</button>
+          <div class="tb-sep"></div>
+          <!-- 副圖指標（橫向展開） -->
+          <button class="ind-toggle" data-ind="DMI"  data-indicator="DMI">DMI</button>
+          <button class="ind-toggle" data-ind="PSY"  data-indicator="PSY">PSY</button>
+          <button class="ind-toggle" data-ind="RCI"  data-indicator="RCI">RCI</button>
+          <button class="ind-toggle" data-ind="HV"   data-indicator="HV">HV</button>
+          <div class="tb-sep"></div>
+          <!-- 說明書 -->
+          <button class="ce-enter-btn" id="indHelpBtn" title="開啟指標完整說明書">📖 說明書</button>
+          <div class="tb-sep"></div>
+          <!-- K 線編輯模式 -->
+          <button class="ce-enter-btn" id="btnChartEdit" title="K 線編輯模式(畫線/標註)">✎ 編輯</button>
+          <!-- || 分隔線 -->
+          <span class="tb-pipe">||</span>
+          <!-- Fixed 凍結：全視窗時顯示 -->
+          <button class="ce-enter-btn" id="btnFixedChart" title="凍結 K 線（捲動說明文字時 K 線固定在頂部）" style="display:none">📌 Fixed</button>
+          <!-- 蒙地卡羅模擬器 -->
+          <button class="ce-enter-btn" id="btnMonteCarlo" title="蒙地卡羅 K 線模擬">📈 模擬</button>
+          <!-- 強制刷新 K 線 -->
+          <button class="ce-enter-btn" id="btnRefreshKline" title="強制刷新 K 線(跳過快取,重新從 Yahoo 抓)">⟳ 重整</button>
+          <!-- 全視窗 -->
+          <button class="ce-enter-btn" id="btnFullscreen" title="全視窗模式(ESC 退出)">⛶ 全視窗</button>
+        </div>
+
+        <!-- Phase 7.3：全視窗 AI 解說工具列 — 已移除（由全視窗 Golden Board 取代） -->
+
+        <!-- 框選提示列（預設隱藏） -->
+        <div id="patternSelectBar" style="display:none;align-items:center;gap:10px;
+             padding:6px 14px;background:rgba(59,130,246,.08);border-bottom:1px solid rgba(59,130,246,.2);
+             font-size:12px;color:var(--accent)">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.2" stroke-dasharray="2.5 1.5"/>
+          </svg>
+          <span id="patternSelectBarText">在 K 線圖上按住滑鼠左鍵拖曳，框選一段走勢</span>
+          <button id="patternSelectConfirm" style="display:none;margin-left:auto;
+                  padding:3px 12px;border-radius:4px;border:none;
+                  background:var(--accent);color:#fff;font-size:11px;cursor:pointer">
+            使用此區間 →
+          </button>
+          <button id="patternSelectCancel" style="padding:3px 10px;border-radius:4px;
+                  border:1px solid var(--border2);background:transparent;
+                  color:var(--muted);font-size:11px;cursor:pointer">
+            取消
+          </button>
+        </div>
+
+        <div class="chart-area" id="chartArea">
+          <!-- 框選遮罩（疊在 chart 上） -->
+          <div id="patternSelectOverlay" style="display:none;position:absolute;
+               top:0;left:0;right:0;bottom:0;z-index:10;cursor:crosshair"></div>
+
+          <div id="mainChart" style="position:relative"></div>
+          <!-- 框選高亮矩形 -->
+          <div id="patternSelectRect" style="display:none;position:absolute;
+               pointer-events:none;background:rgba(59,130,246,.15);
+               border:1px solid rgba(59,130,246,.5);z-index:11"></div>
+
+          <div class="ind-panel" id="kdPanel">
+            <div class="ind-panel-label">
+              <span style="color:var(--kd-k)">● K</span>
+              <span style="color:var(--kd-d)">● D</span>
+              <span style="color:var(--hint);margin-left:4px">KD (9,3,3)</span>
+            </div>
+            <div id="kdChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="rsiPanel">
+            <div class="ind-panel-label">
+              <span style="color:var(--rsi-line)">● RSI (14)</span>
+            </div>
+            <div id="rsiChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="macdPanel">
+            <div class="ind-panel-label">
+              <span style="color:var(--macd-dif)">● DIF</span>
+              <span style="color:var(--macd-sig)">● Signal</span>
+              <span style="color:var(--muted)">● Histogram</span>
+              <span style="color:var(--hint);margin-left:4px">MACD (12,26,9)</span>
+            </div>
+            <div id="macdChart" style="height:135px"></div>
+          </div>
+
+          <!-- Advanced 5 副圖（預設 display:none，由 ind-toggle 控制） -->
+          <div class="ind-panel" id="dmiPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#ef5350">● +DI</span>
+              <span style="color:#26a69a">● -DI</span>
+              <span style="color:#f59e0b">● ADX</span>
+              <span style="color:var(--hint);margin-left:4px">DMI (14)</span>
+            </div>
+            <div id="dmiChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="psyPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#a78bfa">● PSY (12)</span>
+              <span style="color:var(--hint);margin-left:4px">心理線</span>
+            </div>
+            <div id="psyChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="rciPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#f97316">● RCI(9)</span>
+              <span style="color:#60a5fa">● RCI(26)</span>
+              <span style="color:var(--hint);margin-left:4px">順位相關係數</span>
+            </div>
+            <div id="rciChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="hvPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#34d399">● HV (20)</span>
+              <span style="color:var(--hint);margin-left:4px">歷史波動率（年化%）</span>
+            </div>
+            <div id="hvChart" style="height:135px"></div>
+          </div>
+          <!-- Phase 7.3 v3 — 全視窗模式專用：mini badges + 可拖拽圖例卡 -->
+          <div id="fsMiniBadges" class="fs-mini-badges"></div>
+          <div id="fsLegendCard" class="fs-legend-card">
+            <div class="fs-legend-head">
+              <span class="fs-legend-title">📍 圖例</span>
+              <button class="fs-legend-btn" id="fsLegendCollapse" title="摺疊/展開">−</button>
+              <button class="fs-legend-btn" id="fsLegendClose" title="關閉">✕</button>
+            </div>
+            <div class="fs-legend-body" id="fsLegendBody"></div>
+          </div>
+          <button class="fs-legend-reopen" id="fsLegendReopen" title="開啟圖例">📍 圖例</button>
+        </div>
+        <!-- Phase 7.3 v2 — 全視窗深度解讀區（K 線下方，可滾輪捲入）-->
+        <!-- 全視窗單指標 Tab Bar（JS 動態生成，非全視窗時隱藏）-->
+        <div id="fsTabBar" class="fs-tab-bar" style="display:none"></div>
+        <div id="fsDeepZone" class="fs-deep-zone"></div>
+        <div class="statusbar">
+          <div class="sb-item">資料來源：<b>Yahoo Finance + TWSE</b></div>
+          <div class="sb-item" id="dataInfo">尚未載入</div>
+          <div class="sb-item" style="margin-left:auto">台股盤後選股工具 v2.0</div>
+        </div>
+      </div>
+
+      <!-- 個股面板：籌碼 -->
+      <div class="stock-panel" id="chipPanel">
+        <div class="panel-loading">載入中</div>
+      </div>
+
+      <!-- 個股面板：基本面 -->
+      <div class="stock-panel" id="fundamentalPanel">
+        <div class="panel-loading">載入中</div>
+      </div>
+
+      <!-- 個股面板：新聞 -->
+      <div class="stock-panel" id="newsPanel">
+        <div class="panel-loading">載入中</div>
+      </div>
+
+      <!-- 個股面板：公告 -->
+      <div class="stock-panel" id="announcementPanel">
+        <div class="panel-loading">載入中</div>
+      </div>
+
+      <!-- 個股面板:AI 圓桌(5門派觀點+互嗆) -->
+      <div class="stock-panel" id="personasPanel"></div>
+
+      <!-- 個股面板:智能分析(Phase 7) -->
+      <div class="stock-panel" id="analysisPanel">
+        <div id="chartAnalysisPanel" class="ca-panel"></div>
+      </div>
+
+      <!-- 個股面板:補充資訊(Advanced 2) -->
+      <div class="stock-panel" id="stockinfoPanel">
+        <div id="stockinfoContent"></div>
+      </div>
+
+      <!-- 個股面板:多週期共振(Phase 7.4) -->
+      <div class="stock-panel" id="resonancePanel">
+        <div id="multiPeriodPanel" class="mp-panel"></div>
+      </div>
+
+    </div><!-- /tabChart -->
+
+
+    <!-- ══ Tab：題材追蹤 ══ -->
+    <div id="tabTheme" class="tab-panel"></div>
+
+            <!-- ══ Tab:庫存(多清單版)══ -->
+    <div class="tab-panel" id="tabPortfolio">
+      <!-- 二級 Tab:持股 / 追蹤 -->
+      <div class="pf-kind-tabs">
+        <button class="pf-kind-tab active" data-kind="holding">📈 持股</button>
+        <button class="pf-kind-tab"        data-kind="watch">👁 追蹤</button>
+      </div>
+
+      <!-- Toolbar:清單選擇器 + 操作 -->
+      <div class="pf-toolbar">
+        <div class="pf-list-picker">
+          <label class="pf-list-label">清單:</label>
+          <select id="pfListSelect" class="pf-list-select"></select>
+          <button class="pf-icon-btn" id="pfListAddBtn"    title="新增清單">＋</button>
+          <button class="pf-icon-btn" id="pfListRenameBtn" title="改名">✏</button>
+          <button class="pf-icon-btn" id="pfListDeleteBtn" title="刪除清單">✕</button>
+        </div>
+        <!-- 搜尋 Bar -->
+        <input type="text" id="pfSearchInput" class="pf-search-input" placeholder="🔍 搜尋代號 / 股名…" />
+        <div style="flex:1"></div>
+        <button class="pf-btn" id="pfRefreshBtn" title="重新整理現價與健康度">↻ 重新整理</button>
+        <button class="pf-btn" id="pfLoadFromWatchlistBtn" title="從自選清單載入" style="display:none;">📥 載入自選</button>
+        <button class="pf-btn primary" id="pfAddBtn">＋ 新增持股</button>
+      </div>
+
+      <div class="pf-table-wrap">
+        <table class="pf-table">
+          <thead id="pfThead"></thead>
+          <tbody id="pfTbody"></tbody>
+        </table>
+      </div>
+
+      <!-- 分頁列 -->
+      <div class="pf-pagination" id="pfPagination"></div>
+
+      <div class="pf-totals" id="pfTotals"></div>
+    </div><!-- /tabPortfolio -->
+
+    <!-- 庫存:持股 Modal(編輯交易) -->
+    <div id="pfModal">
+      <div class="pf-modal-box" onclick="event.stopPropagation()">
+        <div class="pf-modal-head">
+          <div class="pf-modal-title" id="pfModalTitle">編輯持股</div>
+          <button class="pf-modal-close" id="pfModalClose">×</button>
+        </div>
+        <div class="pf-modal-body">
+          <div class="pf-mod-row">
+            <label>代號</label>
+            <input type="text" id="pfModalCode" placeholder="例如:2330" />
+          </div>
+          <div class="pf-mod-row">
+            <label>名稱</label>
+            <input type="text" id="pfModalName" placeholder="自動帶入,可手改" />
+          </div>
+          <div class="pf-mod-section-title">交易紀錄</div>
+          <div id="pfModalTxList"></div>
+          <div class="pf-mod-section-title">統計</div>
+          <div id="pfModalSummary"></div>
+        </div>
+        <div class="pf-modal-foot">
+          <button class="pf-btn danger" id="pfModalRemove">從清單移除</button>
+          <button class="pf-btn primary" id="pfModalAddTx">＋ 新增交易</button>
+          <button class="pf-btn" onclick="document.getElementById('pfModal').classList.remove('open')">完成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 庫存:追蹤 Modal(編輯參考價/備註)-->
+    <div id="pfWatchModal">
+      <div class="pf-modal-box" onclick="event.stopPropagation()" style="max-width: 620px;">
+        <div class="pf-modal-head">
+          <div class="pf-modal-title" id="pfWatchModalTitle">新增追蹤</div>
+          <button class="pf-modal-close" id="pfWatchClose">×</button>
+        </div>
+
+        <!-- Tab 切換 -->
+        <div class="pf-modal-tabs" id="pfWatchTabs">
+          <button class="pf-modal-tab active" data-pf-tab="single">單筆新增</button>
+          <button class="pf-modal-tab" data-pf-tab="batch">📋 批次新增</button>
+          <button class="pf-modal-tab" data-pf-tab="strategy">🎯 策略選股</button>
+        </div>
+
+        <div class="pf-modal-body">
+          <!-- 單筆面板 -->
+          <div class="pf-tab-panel" id="pfTabSingle">
+            <div class="pf-mod-row">
+              <label>代號</label>
+              <input type="text" id="pfWatchCode" placeholder="例如:2330" />
+            </div>
+            <div class="pf-mod-row">
+              <label>名稱</label>
+              <input type="text" id="pfWatchName" placeholder="自動帶入,可手改" />
+            </div>
+            <div class="pf-mod-row">
+              <label>參考價</label>
+              <input type="number" id="pfWatchRefPrice" min="0" step="0.01" placeholder="希望進場/關注的價" />
+            </div>
+            <div class="pf-mod-row">
+              <label>備註</label>
+              <input type="text" id="pfWatchNote" placeholder="自由備註(原因/策略...)" />
+            </div>
+          </div>
+
+          <!-- 批次面板 -->
+          <div class="pf-tab-panel" id="pfTabBatch" style="display:none">
+            <div class="pf-batch-help">
+              <div class="pf-batch-help-title">輸入多個代號(空白、逗號或換行分隔皆可):</div>
+              <pre class="pf-batch-help-fmt">2330 2337 2377 2376</pre>
+              <div class="pf-batch-help-note">
+                · 加入「當前選取的清單」<br />
+                · 已存在的代號會跳過<br />
+                · 之後點該列可編輯詳細資料
+              </div>
+            </div>
+            <textarea id="pfBatchInput" class="pf-batch-input"
+              placeholder="貼上代號,例如:&#10;2330 2337 2377 2376&#10;或&#10;2330,2337,2377"
+              rows="5"></textarea>
+            <div class="pf-batch-preview" id="pfBatchPreview"></div>
+          </div>
+
+          <!-- 策略選股面板 -->
+          <div class="pf-tab-panel" id="pfTabStrategy" style="display:none">
+            <div class="ms-step" id="msStepSelect">
+              <p class="modal-hint" style="margin-top:0">選擇策略 → 複製 Prompt → 貼給 AI → 貼回 JSON → 系統驗算後加入追蹤</p>
+              <div class="ms-strategy-grid" id="msStrategyGrid"></div>
+            </div>
+            <div class="ms-step" id="msStepPrompt" style="display:none">
+              <div class="ms-selected-bar" id="msSelectedBar"></div>
+              <div class="ms-ai-box">
+                <div class="ms-ai-header">
+                  <span class="ms-ai-label">🤖 複製 Prompt 給 AI</span>
+                  <button class="tm-copy-btn" id="msCopyPrompt">複製 Prompt</button>
+                </div>
+                <div class="ms-ai-hint">複製 Prompt → 貼給 Gemini/ChatGPT → 把 JSON 貼回下方</div>
+              <!-- 價格區間篩選 -->
+              <div class="ms-price-block">
+                <div class="ms-price-label">💰 股價區間</div>
+                <div class="ms-price-presets">
+                  <button class="ms-preset-btn" data-min="0" data-max="50">50以下</button>
+                  <button class="ms-preset-btn" data-min="0" data-max="100">100以下</button>
+                  <button class="ms-preset-btn" data-min="0" data-max="300">300以下</button>
+                  <button class="ms-preset-btn" data-min="0" data-max="500">500以下</button>
+                  <button class="ms-preset-btn active" data-min="0" data-max="">不限</button>
+                </div>
+                <div class="ms-price-custom">
+                  <input class="ms-price-input" id="msPriceMin" type="number" placeholder="最低" min="0" />
+                  <span class="ms-price-sep">—</span>
+                  <input class="ms-price-input" id="msPriceMax" type="number" placeholder="最高" min="0" />
+                  <span class="ms-price-unit">元</span>
+                </div>
+              </div>
+                <textarea class="ms-json-input" id="msJsonInput"
+                  placeholder='貼上 AI 回覆的 JSON&#10;[{ "code": "2330", "name": "台積電", "reason": "..." }]'></textarea>
+                <button class="ms-parse-btn" id="msParseBtn">驗算並加入追蹤</button>
+                <div class="ms-parse-result" id="msParseResult"></div>
+              </div>
+              <div id="msPreviewList" class="ms-preview-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pf-modal-foot">
+          <button class="pf-btn danger" id="pfWatchRemove" style="display:none">移除</button>
+          <div style="flex:1"></div>
+          <button class="pf-btn" id="pfWatchCancel">取消</button>
+          <!-- 各 Tab 對應確認按鈕 -->
+          <button class="pf-btn primary" id="pfWatchSave">儲存</button>
+          <button class="pf-btn primary" id="pfBatchConfirm" style="display:none">📋 批次新增</button>
+        </div>
+      </div>
+    </div>
+
+
+
+    <!-- 庫存:載入自選 Modal -->
+    <div id="pfLoadModal">
+      <div class="pf-modal-box" onclick="event.stopPropagation()" style="max-width: 480px;">
+        <div class="pf-modal-head">
+          <div class="pf-modal-title">📥 從自選清單載入</div>
+          <button class="pf-modal-close" id="pfLoadClose">×</button>
+        </div>
+        <div class="pf-modal-body">
+          <div class="pf-mod-row">
+            <label>自選群組</label>
+            <select id="pfLoadGroupSelect" class="pf-list-select" style="flex:1;"></select>
+          </div>
+          <div class="pf-batch-preview" id="pfLoadPreview"></div>
+        </div>
+        <div class="pf-modal-foot">
+          <div style="flex:1"></div>
+          <button class="pf-btn" id="pfLoadCancel">取消</button>
+          <button class="pf-btn primary" id="pfLoadConfirm">載入</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 庫存:輸入 Prompt Modal(取代瀏覽器 prompt/confirm) -->
+    <div id="pfPromptModal">
+      <div class="pf-modal-box" onclick="event.stopPropagation()" style="max-width: 420px;">
+        <div class="pf-modal-head">
+          <div class="pf-modal-title" id="pfPromptTitle">提示</div>
+          <button class="pf-modal-close" id="pfPromptClose">×</button>
+        </div>
+        <div class="pf-modal-body">
+          <div id="pfPromptMessage" class="pf-prompt-msg"></div>
+          <input type="text" id="pfPromptInput" class="pf-prompt-input" />
+        </div>
+        <div class="pf-modal-foot">
+          <div style="flex:1"></div>
+          <button class="pf-btn" id="pfPromptCancel">取消</button>
+          <button class="pf-btn primary" id="pfPromptConfirm">確定</button>
+        </div>
+      </div>
+    </div>
+
+        <!-- ══ Tab：選股篩選 ══ -->
+    <div class="tab-panel" id="tabScreener">
+      <div class="screener-wrap">
+
+        <!-- 控制欄 -->
+        <div class="sc-toolbar">
+          <span class="sc-toolbar-title">選股篩選</span>
+          <button class="sc-btn" id="screenerAddCond">＋ 新增條件</button>
+          <button class="sc-btn sc-btn-ghost" id="screenerClearConds">清除全部</button>
+          <div class="sc-toolbar-spacer"></div>
+          <button class="sc-btn" id="screenerSave">儲存組合</button>
+          <button class="sc-btn sc-btn-primary" id="screenerRun">開始篩選</button>
+        </div>
+
+        <!-- 狀態 / 進度 -->
+        <div class="sc-status-bar">
+          <span id="screenerStatus">新增篩選條件後點擊「開始篩選」</span>
+          <div class="sc-progress" id="screenerProgress">
+            <div class="sc-progress-track">
+              <div class="sc-progress-fill" id="screenerProgressBar"></div>
+            </div>
+            <span class="sc-progress-text" id="screenerProgressText"></span>
+          </div>
+        </div>
+
+        <!-- 主體 -->
+        <div class="sc-body">
+
+          <!-- 左：條件面板 -->
+          <div class="sc-left">
+
+            <!-- 左欄 Tab 切換 -->
+            <div class="sc-left-tabs">
+              <button class="sc-left-tab active" data-left-tab="custom">自訂條件</button>
+              <button class="sc-left-tab" data-left-tab="strategy">策略庫</button>
+            </div>
+
+            <!-- 自訂條件面板 -->
+            <div class="sc-left-panel" id="scPanelCustom">
+             <div id="strategyActiveBanner"></div>
+              <div class="sc-cond-list" id="screenerConditions">
+                <div class="sc-empty-conds">尚未新增任何條件<br>點擊「＋ 新增條件」開始</div>
+              </div>
+            </div>
+
+            <!-- 策略庫面板 -->
+            <div class="sc-left-panel" id="scPanelStrategy" style="display:none">
+              <div class="sc-strategy-list" id="strategyList"></div>
+            </div>
+
+            <!-- 已儲存組合（兩個 tab 共用） -->
+            <div class="sc-saved-section">
+              <div class="sc-panel-title">已儲存的組合</div>
+              <div id="screenerSavedSets">
+                <div class="sc-saved-empty">尚無儲存的篩選組合</div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 右：結果面板 -->
+          <div class="sc-right">
+            <div class="sc-result-toolbar">
+              <span class="sc-panel-title">篩選結果（點擊任一列 → 跳轉看盤）</span>
+              <button id="screenerSaveResultBtn" class="sc-btn" title="儲存篩選結果" style="display:none">
+                💾 儲存結果
+              </button>
+            </div>
+
+            <!-- 命名輸入列 / 已載入備份提示列（動態顯示） -->
+            <div id="screenerSaveResultArea" style="display:none"></div>
+
+            <div class="sc-results-wrap" id="screenerResults">
+              <div class="sc-results-empty">篩選結果將顯示於此</div>
+            </div>
+
+            <!-- 歷史備份清單 -->
+            <details class="saved-results-section">
+              <summary>📁 已儲存的篩選結果</summary>
+              <div id="screenerSavedList"></div>
+            </details>
+          </div>
+
+        </div><!-- /sc-body -->
+      </div><!-- /screener-wrap -->
+    </div><!-- /tabScreener -->
+
+    <!-- ══ Tab：型態比對 ══ -->
+    <div class="tab-panel" id="tabPattern">
+      <div class="pattern-layout">
+
+        <!-- ── 左側：型態輸入 ── -->
+        <div class="pattern-input-panel">
+          <div class="pattern-input-panel-header">型態輸入</div>
+          <div id="patternDrawPanel">
+
+            <!-- 工具列：框選 / 手繪 切換 -->
+            <div class="pd-toolbar">
+              <div class="pd-mode-switch">
+                <button class="pd-mode-btn active" data-mode="select">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor"
+                          stroke-width="1.2" stroke-dasharray="2.5 1.5"/>
+                  </svg>
+                  框選
+                </button>
+                <button class="pd-mode-btn" data-mode="draw">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor"
+                          stroke-width="1.2" stroke-linecap="round" fill="none"/>
+                  </svg>
+                  手繪
+                </button>
+              </div>
+            </div>
+            <div class="pd-meta" id="pdMeta">切換到「看盤」Tab，點擊「框選型態」後拖曳選取 K 線區間</div>
+
+            <!-- 框選提示 -->
+            <div class="pd-select-hint" id="pdSelectHint">
+              <div class="pd-select-info" id="pdSelectInfo">尚未框選</div>
+            </div>
+
+            <!-- 手繪 Canvas（預設隱藏） -->
+            <div class="pd-draw-wrap" id="pdDrawWrap" style="display:none">
+              <canvas id="pdCanvas" height="140"></canvas>
+              <button class="pd-clear-btn" id="pdClearBtn">清除</button>
+            </div>
+
+            <!-- 型態預覽（有範本時顯示） -->
+            <div class="pd-preview" id="pdPreview" style="display:none">
+              <div class="pd-preview-title">選取型態預覽</div>
+              <canvas id="pdPreviewCanvas" height="64"></canvas>
+              <div class="pd-preview-tags" id="pdPreviewTags"></div>
+            </div>
+
+            <!-- 掃描設定 -->
+            <div class="pd-settings">
+              <label>
+                <span>相似度門檻</span>
+                <input type="range" id="pdSimilarity" min="50" max="99" value="75" step="1">
+                <span id="pdSimilarityVal" class="pd-val-badge">75%</span>
+              </label>
+              <label>
+                <span>比對視窗</span>
+                <select id="pdWindow">
+                  <option value="10">10 根</option>
+                  <option value="15">15 根</option>
+                  <option value="20" selected>20 根</option>
+                  <option value="30">30 根</option>
+                  <option value="40">40 根</option>
+                </select>
+              </label>
+              <label>
+                <span>特徵模式</span>
+                <select id="pdFeatureMode">
+                  <option value="simple" selected>收盤價（快速）</option>
+                  <option value="multi">多維特徵（精準）</option>
+                </select>
+              </label>
+            </div>
+
+            <!-- 股票範圍篩選 -->
+            <div class="pd-filter-section">
+              <div class="pd-filter-title">縮小掃描範圍</div>
+              <div class="pd-filter-row">
+                <label>
+                  <span>股價（元）</span>
+                  <div class="pd-range-inputs">
+                    <input type="number" id="pdPriceMin" placeholder="最低" min="0" step="1">
+                    <span class="pd-range-sep">—</span>
+                    <input type="number" id="pdPriceMax" placeholder="最高" min="0" step="1">
+                  </div>
+                </label>
+              </div>
+              <div class="pd-filter-row">
+                <label>
+                  <span>成交量（張）≥</span>
+                  <input type="number" id="pdVolumeMin" placeholder="不限" min="0" step="100">
+                </label>
+              </div>
+              <div class="pd-filter-row pd-filter-screener">
+                <label class="pd-checkbox-label">
+                  <input type="checkbox" id="pdFromScreener">
+                  <span>從「選股結果」掃描</span>
+                </label>
+                <span class="pd-screener-count" id="pdScreenerCount"></span>
+              </div>
+            </div>
+
+            <!-- 確認按鈕 -->
+            <button class="pd-confirm-btn" id="pdConfirmBtn" disabled>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              開始掃描全市場
+            </button>
+
+          </div><!-- /patternDrawPanel -->
+        </div><!-- /pattern-input-panel -->
+
+        <!-- ── 右側：掃描結果 ── -->
+        <div class="pattern-result-panel">
+          <div class="pattern-result-header">比對結果</div>
+          <div id="patternResultPanel">
+
+            <!-- 進度 -->
+            <div class="pr-progress" id="prProgress" style="display:none">
+              <div class="pr-progress-bar-wrap">
+                <div class="pr-progress-bar" id="prProgressBar"></div>
+              </div>
+              <div class="pr-progress-meta">
+                <span id="prProgressText">準備中…</span>
+                <button class="pr-abort-btn" id="prAbortBtn">停止</button>
+              </div>
+            </div>
+
+            <!-- 彙總 -->
+            <div class="pr-summary" id="prSummary" style="display:none">
+              <div class="pr-summary-stat" id="prSumFound"></div>
+              <div class="pr-summary-stat" id="prSumScanned"></div>
+            </div>
+
+            <!-- 回測面板 -->
+            <div class="pr-backtest" id="prBacktest" style="display:none">
+              <div class="pr-backtest-header">
+                <span class="pr-backtest-title">歷史回測統計</span>
+                <label class="pr-hold-label">
+                  持有
+                  <select id="prHoldDays">
+                    <option value="3">3日</option>
+                    <option value="5" selected>5日</option>
+                    <option value="10">10日</option>
+                    <option value="20">20日</option>
+                  </select>
+                </label>
+              </div>
+              <div class="pr-backtest-stats" id="prBacktestStats"></div>
+              <div class="pr-dist-chart" id="prDistChart"></div>
+            </div>
+
+            <!-- 結果列表 header -->
+            <div class="pr-list-header" id="prListHeader" style="display:none">
+              <span>代號 / 名稱</span>
+              <span>相似度</span>
+              <span>近期走勢</span>
+            </div>
+
+            <!-- 結果列表 -->
+            <div class="pr-list" id="prList"></div>
+
+            <!-- 空狀態（掃描前） -->
+            <div class="pr-empty" id="prEmpty">
+              <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                <circle cx="20" cy="20" r="13" stroke="var(--border2)" stroke-width="1.5"/>
+                <path d="M30 30l8 8" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M14 20 Q17 13 20 17 Q23 21 26 13" stroke="var(--hint)"
+                      stroke-width="1.5" stroke-linecap="round" fill="none"/>
+              </svg>
+              <p>尚未開始掃描</p>
+              <p class="pr-empty-hint">先選取一段 K 線型態，再點擊「開始掃描全市場」</p>
+            </div>
+
+          </div><!-- /patternResultPanel -->
+        </div><!-- /pattern-result-panel -->
+
+      </div><!-- /pattern-layout -->
+    </div><!-- /tabPattern -->
+
+    <!-- ══ Tab：種子選股（Phase 4） ══ -->
+    <div class="tab-panel" id="tabSeed">
+      <div class="seed-layout">
+
+        <!-- ── 左側：輸入 & 設定 ── -->
+        <div class="seed-left">
+
+          <!-- 種子輸入 -->
+          <div>
+            <div class="seed-section-title">種子股（2–10 檔）</div>
+            <div class="seed-input-row">
+              <input id="seedInput" type="text" placeholder="輸入代號，如 2330…" maxlength="8" autocomplete="off" />
+              <button id="seedAddBtn">新增</button>
+            </div>
+            <div style="margin-top:6px">
+              <div style="position:relative;display:inline-block">
+                <button class="seed-from-watchlist-btn" id="seedFromWatchlist">從自選群組帶入 ▾</button>
+                <div id="seedGroupDropdown" class="seed-group-dropdown" style="display:none"></div>
+              </div>
+            </div>
+            <div class="seed-chips" id="seedChips" style="margin-top:8px"></div>
+          </div>
+
+          <!-- 分析種子 -->
+          <button class="seed-analyze-btn" id="seedAnalyzeBtn" disabled>分析種子 →</button>
+
+          <!-- 模板預覽 -->
+          <div id="seedTemplatePreview" style="display:none;flex-direction:column;gap:10px">
+            <div class="seed-section-title">種子模板預覽</div>
+            <div class="seed-preview-canvas-wrap">
+              <canvas id="seedPreviewCanvas" height="72"></canvas>
+            </div>
+            <span class="seed-sector-badge" id="seedSectorBadge">—</span>
+            <div class="seed-indicator-profile" id="seedIndicatorProfile"></div>
+            <div class="seed-divergence-warning" id="seedDivergenceWarning"></div>
+          </div>
+
+          <!-- 評分權重 -->
+          <div>
+            <div class="seed-section-title">評分權重</div>
+            <div class="seed-weight-group">
+              <div class="seed-weight-row">
+                <span class="wr-label">產業</span>
+                <input type="range" id="seedWeightSector" min="5" max="90" value="25" step="1">
+                <span class="wr-val" id="seedWeightSectorLabel">25%</span>
+              </div>
+              <div class="seed-weight-row">
+                <span class="wr-label">線型</span>
+                <input type="range" id="seedWeightPattern" min="5" max="90" value="50" step="1">
+                <span class="wr-val" id="seedWeightPatternLabel">50%</span>
+              </div>
+              <div class="seed-weight-row">
+                <span class="wr-label">指標</span>
+                <input type="range" id="seedWeightIndicator" min="5" max="90" value="25" step="1">
+                <span class="wr-val" id="seedWeightIndicatorLabel">25%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 掃描範圍 -->
+          <div>
+            <div class="seed-section-title">縮小掃描範圍</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <span>股價（元）</span>
+                <div class="seed-range-inputs">
+                  <input type="number" id="seedPriceMin" placeholder="最低" min="0" step="1">
+                  <span class="seed-range-sep">—</span>
+                  <input type="number" id="seedPriceMax" placeholder="最高" min="0" step="1">
+                </div>
+              </div>
+              <div class="seed-filter-row">
+                <span>成交量（張）≥</span>
+                <input type="number" id="seedVolumeMin" placeholder="不限" min="0" step="100">
+              </div>
+              <div class="seed-filter-row">
+                <label class="seed-checkbox-label">
+                  <input type="checkbox" id="seedFromScreener">
+                  <span>從「選股結果」掃描</span>
+                </label>
+                <span class="seed-screener-count" id="seedScreenerCount"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 掃描按鈕 -->
+          <div class="seed-scan-btns">
+            <button class="seed-scan-btn" id="seedScanBtn" disabled>開始掃描全市場</button>
+            <button class="seed-abort-btn" id="seedAbortBtn">停止</button>
+          </div>
+
+          <!-- 儲存組合 -->
+          <div id="seedSaveArea">
+            <div class="seed-section-title">儲存種子組合</div>
+            <div class="seed-save-row">
+              <input type="text" id="seedSaveName" placeholder="組合名稱…" maxlength="20">
+              <button id="seedSaveBtn">儲存</button>
+            </div>
+          </div>
+
+          <!-- 已儲存組合 -->
+          <div>
+            <div class="seed-section-title">已儲存的組合</div>
+            <div id="seedSavedSets">
+              <div class="seed-saved-empty">尚無儲存的組合</div>
+            </div>
+          </div>
+
+        </div><!-- /seed-left -->
+
+        <!-- ── 右側：掃描結果 ── -->
+        <div class="seed-right">
+          <div class="seed-result-header">
+            <span>比對結果（依綜合分數排序）</span>
+          </div>
+
+          <!-- 進度 -->
+          <div class="seed-progress" id="seedProgress">
+            <div class="seed-progress-track">
+              <div class="seed-progress-bar" id="seedProgressBar"></div>
+            </div>
+            <div class="seed-progress-meta">
+              <span id="seedProgressText">準備中…</span>
+              <button class="seed-abort-btn" id="seedAbortBtn2" style="display:none">停止</button>
+            </div>
+          </div>
+
+          <!-- 彙總 -->
+          <div id="seedSummary"></div>
+
+          <!-- 結果列表標題 -->
+          <div class="seed-list-header" id="seedListHeader">
+            <span>代號 / 名稱</span>
+            <span class="sr-sort-col active" data-sort="compositeScore">綜合分 ↓</span>
+            <span class="sr-sort-col" data-sort="health">健康度</span>
+            <span class="sr-sort-col" data-sort="patternScore">線型</span>
+            <span>走勢</span>
+          </div>
+
+          <!-- 結果列表 -->
+          <div class="seed-result-list" id="seedResultList">
+            <div class="seed-empty-state">
+              <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+                <circle cx="22" cy="22" r="14" stroke="var(--border2)" stroke-width="1.5"/>
+                <path d="M22 14 Q26 18 22 22 Q18 26 22 30" stroke="var(--hint)"
+                      stroke-width="1.5" stroke-linecap="round" fill="none"/>
+                <circle cx="22" cy="32" r="1.5" fill="var(--hint)"/>
+              </svg>
+              <p>尚未開始掃描</p>
+              <p class="hint">輸入種子股 → 分析模板 → 開始掃描</p>
+            </div>
+          </div>
+        </div><!-- /seed-right -->
+
+      </div><!-- /seed-layout -->
+    </div><!-- /tabSeed -->
+
+    <!-- ══ Tab：強勢族群 ══ -->
+    <div class="tab-panel" id="tabHotgroup">
+      <div class="hotgroup-layout">
+
+        <!-- 頂部標題 -->
+        <div class="hg-header">
+          <div>
+            <div class="hg-header-title">SECTOR ROTATION</div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+              <div class="hg-header-main">強勢族群</div>
+              <div class="hg-toggle">
+                <button class="hg-toggle-btn active" data-mode="up">▲ 漲停</button>
+                <button class="hg-toggle-btn" data-mode="down">▼ 跌停</button>
+              </div>
+            </div>
+          </div>
+          <div class="hg-header-meta" id="hgMeta">載入中…</div>
+        </div>
+
+        <!-- 盤面分析 -->
+        <div class="hotgroup-commentary" id="hgCommentary">
+          <div class="hg-commentary-loading">載入中…</div>
+        </div>
+
+        <!-- 族群 Treemap -->
+        <div class="hg-treemap-wrap">
+          <div class="hg-treemap-grid" id="hgTreemap"></div>
+        </div>
+
+        <!-- 個股 chip 區（點族群後展開） -->
+        <div class="hg-stocks-section" id="hgStocksSection">
+          <div class="hg-stocks-hint">點選上方族群查看個股</div>
+        </div>
+
+      </div>
+    </div><!-- /tabHotgroup -->
+
+  </main>
+</div>
+
+<!-- ── 強勢族群・追蹤 Modal ── -->
+<div id="hgTrackModal">
+  <div class="hg-track-modal-box">
+    <div class="hg-track-modal-header">
+      <div class="hg-track-modal-title" id="hgTrackModalTitle">加入追蹤清單</div>
+      <button class="hg-track-modal-close" id="hgTrackModalClose">✕</button>
+    </div>
+    <input type="hidden" id="hgTrackModalType" value="stocks">
+    <div class="hg-track-modal-info" id="hgTrackModalInfo"></div>
+    <div class="hg-track-modal-row">
+      <label class="hg-track-modal-label">新建追蹤清單名稱</label>
+      <input type="text" id="hgTrackListName" placeholder="輸入清單名稱…">
+    </div>
+    <div class="hg-track-modal-row">
+      <label class="hg-track-modal-label">或選擇現有追蹤清單</label>
+      <select id="hgTrackListSelect">
+        <option value="">── 新建清單（使用上方名稱）──</option>
+      </select>
+    </div>
+    <div class="hg-track-modal-row" id="hgTrackAutoRow">
+      <label class="hg-track-modal-auto">
+        <input type="checkbox" id="hgTrackAutoChk">
+        之後若該族群再度出現，自動累加個股進此清單
+      </label>
+    </div>
+    <div class="hg-track-modal-footer">
+      <button id="hgTrackModalCancel">取消</button>
+      <button id="hgTrackModalConfirm">確認加入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 手機 Tab Bar -->
+<nav class="mobile-tabbar">
+  <button class="tab-item active" data-mobile-tab="chart">
+    <span class="tab-icon">📈</span><span>看盤</span>
+  </button>
+  <button class="tab-item" data-mobile-tab="watchlist">
+    <span class="tab-icon">★</span><span>自選</span>
+  </button>
+  <button class="tab-item" data-mobile-tab="screener">
+    <span class="tab-icon">🔍</span><span>選股</span>
+  </button>
+  <button class="tab-item" data-mobile-tab="pattern">
+    <span class="tab-icon">〰</span><span>型態</span>
+  </button>
+  <button class="tab-item" data-mobile-tab="seed">
+    <span class="tab-icon">🌱</span><span>種子</span>
+  </button>
+  <button class="tab-item" data-mobile-tab="settings">
+    <span class="tab-icon">⚙</span><span>設定</span>
+  </button>
+</nav>
+
+<!-- Modal -->
+<div class="modal-bg" id="modalBg">
+  <div class="modal modal--wide">
+    <h3>新增自選股</h3>
+
+    <!-- Tab 切換 -->
+    <div class="modal-tabs">
+      <button class="modal-tab active" data-modal-tab="single">單筆新增</button>
+      <button class="modal-tab" data-modal-tab="batch">批次新增</button>
+      <button class="modal-tab" data-modal-tab="strategy" id="msStrategyTab">🎯 策略選股</button>
+    </div>
+
+    <!-- 單筆面板 -->
+    <div class="modal-panel" id="modalPanelSingle">
+      <p class="modal-hint">輸入股票代號或中文名稱（如 2330、台積電）</p>
+      <div class="modal-group-row">
+        <label class="modal-group-label">加入群組</label>
+        <select id="modalGroupSelect" class="modal-group-select"><option>預設清單</option></select>
+      </div>
+      <div class="modal-search-wrap">
+        <input id="modalInput" type="text" placeholder="代號或中文名稱…" maxlength="20" autocomplete="off" />
+        <div id="modalSuggestList" class="modal-suggest-list"></div>
+      </div>
+    </div>
+
+    <!-- 批次面板 -->
+    <div class="modal-panel" id="modalPanelBatch" style="display:none">
+      <p class="modal-hint">每行一檔，支援格式：<code>鴻名（3021）</code>、<code>3021 鴻名</code>、<code>3021</code></p>
+      <div class="modal-batch-group-row">
+        <label class="modal-group-label">新增至群組</label>
+        <select id="modalBatchGroupSelect" class="modal-group-select">
+          <option value="__new__">🆕 自動建立新群組</option>
+        </select>
+      </div>
+      <div id="modalNewGroupRow" class="modal-new-group-row">
+        <label class="modal-group-label">新群組名稱</label>
+        <input id="modalNewGroupName" type="text" placeholder="請輸入群組名稱…" maxlength="20" />
+      </div>
+      <textarea id="modalBatchInput" class="modal-batch-textarea"
+        placeholder="鴻名（3021）&#10;台積電（2330）&#10;2376&#10;AAPL"></textarea>
+      <div id="modalBatchPreview" class="modal-batch-preview"></div>
+    </div>
+
+    <div class="modal-btns">
+      <button id="modalCancelBtn">取消</button>
+      <button id="modalConfirmBtn" class="confirm">新增</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 設定遮罩 -->
+<div class="settings-overlay" id="settingsOverlay"></div>
+
+<!-- 設定抽屜 -->
+<div class="settings-drawer" id="settingsDrawer">
+  <div class="drawer-header">
+    <h2>⚙ 系統設定</h2>
+    <button class="drawer-close" id="settingsCloseBtn">✕</button>
+  </div>
+  <div class="drawer-body">
+
+    <!-- 資料來源 -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">資料來源</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">基本面 / 籌碼來源</div>
+          <div class="setting-hint">切換後重新載入個股生效</div>
+        </div>
+        <div class="radio-group">
+          <label class="radio-option"><input type="radio" name="dataSource" value="twse" />TWSE 免費</label>
+          <label class="radio-option"><input type="radio" name="dataSource" value="finmind" />FinMind</label>
+        </div>
+      </div>
+      <div id="finmindSection" style="display:none">
+        <div class="setting-label" style="margin-bottom:4px">FinMind API Token</div>
+        <div class="token-row">
+          <input type="password" id="finmindToken" placeholder="貼上你的 Token…" autocomplete="off" />
+          <button class="token-toggle" id="tokenToggle">顯示</button>
+        </div>
+        <div class="setting-hint" style="margin-top:6px">
+          尚未申請？前往
+          <a href="https://finmind.github.io" target="_blank" style="color:var(--accent);text-decoration:none">finmind.github.io</a>
+          免費註冊
+        </div>
+      </div>
+    </div>
+
+    <!-- 新聞來源 -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">新聞來源</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">個股新聞來源</div>
+          <div class="setting-hint">切換後下次開啟新聞 Tab 生效</div>
+        </div>
+      </div>
+      <div class="radio-group" style="flex-direction:column;gap:6px;padding:4px 0">
+        <label class="radio-option" style="justify-content:flex-start">
+          <input type="radio" name="newsSource" value="yahootw" />
+          Yahoo 奇摩股市（中文，預設）
+        </label>
+        <label class="radio-option" style="justify-content:flex-start">
+          <input type="radio" name="newsSource" value="googlenews" />
+          Google News（中文）
+        </label>
+        <label class="radio-option" style="justify-content:flex-start">
+          <input type="radio" name="newsSource" value="yahoofinance" />
+          Yahoo Finance（英文）
+        </label>
+      </div>
+    </div>
+
+    <!-- 篩選器設定 -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">篩選器設定</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">並發請求數</div>
+          <div class="setting-hint">數值越高速度越快，但容易被封鎖</div>
+        </div>
+        <div class="slider-row" style="min-width:120px">
+          <input type="range" id="concurrencyVal" min="1" max="10" step="1" />
+          <span class="slider-display" id="concurrencyDisplay">5</span>
+        </div>
+      </div>
+      <div class="setting-row">
+        <div class="setting-label">K 線週期</div>
+        <select class="setting-select" id="screenerPeriod">
+          <option value="1mo">1 個月</option>
+          <option value="3mo">3 個月</option>
+          <option value="6mo">6 個月</option>
+          <option value="1y">1 年</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">K 線 Proxy 來源</div>
+          <div class="setting-hint">Worker 502 時可切換；切換後立即生效</div>
+        </div>
+        <select class="setting-select" id="klineProxyMode">
+          <option value="auto">自動（Worker → 公開 proxy）</option>
+          <option value="public">公開 proxy（跳過 Worker）</option>
+          <option value="worker">只用 Worker（不 fallback）</option>
+          <option value="direct">直連 Yahoo（localhost 用）</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 功能模組 -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">功能模組</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">三大法人買賣超</div>
+          <div class="setting-hint">外資、投信、自營商（TWSE）</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="modInstitutional" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">融資融券</div>
+          <div class="setting-hint">融資餘額、融券餘額（TWSE）</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="modMargin" /><span class="toggle-track"></span></label>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">技術指標篩選</div>
+          <div class="setting-hint">需呼叫 Yahoo Finance，速度較慢</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="modTechnical" /><span class="toggle-track"></span></label>
+      </div>
+    </div>
+
+    <!-- 手機顯示 -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">手機顯示設定</div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">預設副圖指標</div>
+          <div class="setting-hint">手機螢幕小，預設只開一個</div>
+        </div>
+        <div class="radio-group">
+          <label class="radio-option"><input type="radio" name="mobileIndicator" value="KD" />KD</label>
+          <label class="radio-option"><input type="radio" name="mobileIndicator" value="RSI" />RSI</label>
+          <label class="radio-option"><input type="radio" name="mobileIndicator" value="MACD" />MACD</label>
+        </div>
+      </div>
+      <div class="setting-row mobile-only">
+        <div>
+          <div class="setting-label">自選清單寬度</div>
+          <div class="setting-hint">拖曳調整左側欄寬（手機版）</div>
+        </div>
+        <div class="setting-slider-row">
+          <input type="range" id="sidebarWidthSlider" min="25" max="60" value="40" step="1">
+          <span id="sidebarWidthLabel">40%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 圓桌人格管理已移至 personas-panel.js -->
+
+  </div>
+  <div class="drawer-footer">
+    <button id="settingsResetBtn">還原預設</button>
+    <button id="settingsSaveBtn" class="btn-primary">儲存設定</button>
+  </div>
+</div>
+
+<!-- 看盤頁右下角懸浮市場總覽 -->
+<button id="marketMiniBtn" class="mm-fab" title="市場總覽">📊</button>
+
+<div id="marketMiniPanel" class="mm-panel">
+  <div class="mm-header">
+    <span class="mm-title">市場總覽</span>
+    <button id="mmRefresh" class="mm-icon-btn" title="手動更新">↻</button>
+    <button id="mmClose"   class="mm-icon-btn" title="收起">✕</button>
+  </div>
+
+  <div class="mm-body">
+    <!-- 即時數字 -->
+    <div class="mm-hero">
+      <div class="mm-hero-label">加權指數</div>
+      <div class="mm-hero-row">
+        <span id="mmPrice"  class="mm-price">--</span>
+        <span id="mmChange" class="mm-change">--</span>
+      </div>
+      <div id="mmSignalLamps" class="mm-signal-lamps"></div>
+    </div>
+
+    <!-- 當日分時 K -->
+    <div id="mmChart" class="mm-chart"></div>
+
+    <!-- 漲跌家數 -->
+    <div class="mm-section-title">大盤動態</div>
+    <div class="mm-breadth">
+      <div class="mm-breadth-item">
+        <span class="lbl">上漲</span><span id="mmBreadthUp" class="val up">--</span>
+      </div>
+      <div class="mm-breadth-item">
+        <span class="lbl">下跌</span><span id="mmBreadthDown" class="val down">--</span>
+      </div>
+      <div class="mm-breadth-item">
+        <span class="lbl">平盤</span><span id="mmBreadthFlat" class="val">--</span>
+      </div>
+      <div class="mm-breadth-item">
+        <span class="lbl">漲停</span><span id="mmBreadthLimitUp" class="val up">--</span>
+      </div>
+      <div class="mm-breadth-item">
+        <span class="lbl">跌停</span><span id="mmBreadthLimitDown" class="val down">--</span>
+      </div>
+    </div>
+    <div id="mmBreadthHint" class="mm-empty" style="display:none">尚未取得盤後資料</div>
+
+    <!-- 強勢族群 -->
+    <div class="mm-section-title">今日強勢</div>
+    <div id="mmSectors" class="mm-sectors"></div>
+
+    <!-- 更新時間 -->
+    <div id="mmTime" class="mm-time">--</div>
+  </div>
+</div>
+
+
+<script src="js/game-runner.js" defer></script>
+<script src="js/game-thunder.js" defer></script>
+<script src="js/game-bigTwo.js" defer></script>
+<!-- 新增遊戲只要在這裡加一行 -->
+<script src="js/splash-game.js" defer></script>
+<script type="module" src="js/main.js"></script>
+<script type="module">
+  import { initHelpModal } from './js/help/help-loader.js';
+  initHelpModal();
+</script>
+<!-- 🌟 技術分析 Golden Board 模組（各自獨立，自動 register 到框架）-->
+<script type="module" src="js/modules/analysis-mod-ichimoku.js"></script>
+<script type="module" src="js/modules/analysis-mod-granville.js"></script>
+<script type="module" src="js/modules/analysis-mod-kd.js"></script>
+<script type="module" src="js/modules/analysis-mod-rsi.js"></script>
+<script type="module" src="js/modules/analysis-mod-macd.js"></script>
+<script type="module" src="js/modules/analysis-mod-ema.js"></script>
+<script type="module" src="js/modules/analysis-mod-dmi.js"></script>
+<script type="module" src="js/modules/analysis-mod-bb.js"></script>
+<script type="module" src="js/modules/analysis-mod-psy.js"></script>
+<script type="module" src="js/modules/analysis-mod-rci.js"></script>
+<script type="module" src="js/modules/analysis-mod-hv.js"></script>
+<script type="module" src="js/modules/analysis-mod-env.js"></script>
+<script type="module" src="js/modules/analysis-mod-sar.js"></script>
+<script type="module" src="js/modules/analysis-mod-gmma.js"></script>
+<script type="module" src="js/modules/analysis-mod-pattern.js"></script>
+<script type="module" src="js/modules/analysis-mod-fundamental.js"></script>
+<script type="module" src="js/modules/analysis-mod-xseries.js"></script>
+<script type="module" src="js/modules/analysis-mod-summary.js"></script>
+<!-- 新增指標模組時，在這裡加一行（summary 必須放最後）-->
+  <!-- 指標下拉選單 inline script 已移除（改為橫向展開 btn，不需下拉邏輯） -->
+  <!-- 📖 說明書 Modal（內容由 js/help/help-loader.js 動態插入）-->
+  <div class="ind-help-modal" id="indHelpModal">
+    <div class="ind-help-header">
+      <h2>📖 技術指標完整說明書</h2>
+      <button class="ind-help-close" id="indHelpClose">✕</button>
+    </div>
+    <div class="ind-help-tabs">
+      <button class="ind-help-tab active" data-tab="ma">移動平均</button>
+      <button class="ind-help-tab" data-tab="momentum">動能指標</button>
+      <button class="ind-help-tab" data-tab="trend">趨勢指標</button>
+      <button class="ind-help-tab" data-tab="volatility">波動指標</button>
+      <button class="ind-help-tab" data-tab="pattern">K線型態</button>
+      <button class="ind-help-tab" data-tab="tools">輔助工具</button>
+      <button class="ind-help-tab" data-tab="xseries">X系列策略</button>
+    </div>
+    <div class="ind-help-body">
+      <!-- 各 section 骨架，內容由 help-loader.js 動態插入 -->
+      <section class="ind-help-section active" data-section="ma"></section>
+      <section class="ind-help-section" data-section="momentum"></section>
+      <section class="ind-help-section" data-section="trend"></section>
+      <section class="ind-help-section" data-section="volatility"></section>
+      <section class="ind-help-section" data-section="pattern"></section>
+      <section class="ind-help-section" data-section="tools"></section>
+      <section class="ind-help-section" data-section="xseries"></section>
+    </div>
+  </div>
+
+</body>
+</html>

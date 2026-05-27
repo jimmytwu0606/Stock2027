@@ -1,0 +1,134 @@
+/* ──────────────────────────────────────────────
+   基本面子 Tab 樣式 — 貼入 css/additions.css 末尾
+   （完整取代舊版 fund-* 所有規則）
+   ────────────────────────────────────────────── */
+
+/* ── 子 Tab Bar：與主 Tab Bar 同款 ─────────── */
+.fund-subtab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  background: var(--bg2);
+}
+.fund-subtab-bar::-webkit-scrollbar { display: none; }
+
+.fund-subtab {
+  flex-shrink: 0;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  transition: color 0.15s;
+}
+.fund-subtab:hover { color: var(--text); }
+.fund-subtab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── 子面板容器 ──────────────────────────────── */
+.fund-subpanel {
+  display: none;
+  flex-direction: column;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.fund-subpanel.active {
+  display: flex;
+}
+
+/* ── 總覽來源說明 ─────────────────────────────── */
+.fund-overview-note {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--hint);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── 表格容器 ────────────────────────────────── */
+.fund-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+}
+
+/* ── 財務歷史表格 ─────────────────────────────── */
+.fund-table {
+  width: 100%;
+  min-width: 280px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.fund-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 7px 16px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.fund-table tbody td {
+  padding: 7px 16px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.fund-table tbody tr:last-child td { border-bottom: none; }
+.fund-table tbody tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+.fund-table tbody tr:hover td { background: var(--bg3) !important; }
+
+/* 顏色 */
+.fund-table .up,
+.fund-table span.up   { color: var(--up);   }
+.fund-table .down,
+.fund-table span.down { color: var(--down); }
+.fund-muted           { color: var(--hint); }
+
+/* ── 無 Token 提示 ───────────────────────────── */
+.fund-notoken {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.fund-notoken button {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--accent);
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.fund-notoken button:hover { background: rgba(59,130,246,0.2); }
+
+/* ── 手機 ────────────────────────────────────── */
+@media (max-width: 768px) {
+  .fund-subtab          { padding: 8px 12px; font-size: 12px; }
+  .fund-table thead th,
+  .fund-table tbody td  { padding: 6px 10px; font-size: 12px; }
+}

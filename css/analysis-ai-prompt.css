@@ -1,0 +1,148 @@
+/* ═══════════════════════════════════════════════════════
+   analysis-ai-prompt.css
+   全視窗模式 — AI 深度分析區塊樣式
+   對應：analysis-ai-prompt.js 的 renderAISection()
+   ═══════════════════════════════════════════════════════ */
+
+/* ── 外框 ── */
+.fs-ai-section {
+  margin-top: 24px;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(59, 130, 246, 0.04);
+}
+
+/* ── 標題列 ── */
+.fs-ai-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(59, 130, 246, 0.10);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+.fs-ai-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.fs-ai-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #93c5fd;
+}
+.fs-ai-sub {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+  margin-left: auto;
+}
+
+/* ── AI 回覆顯示區 ── */
+.fs-ai-result {
+  padding: 14px 16px;
+  min-height: 52px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text, #e8eaed);
+}
+.fs-ai-placeholder {
+  color: var(--muted, #8a8f99);
+  font-size: 12px;
+  text-align: center;
+  margin: 4px 0;
+}
+
+/* AI 回覆渲染後的排版 */
+.fs-ai-rendered h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #93c5fd;
+  margin: 12px 0 4px;
+}
+.fs-ai-rendered h3:first-child { margin-top: 0; }
+.fs-ai-rendered p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: var(--text, #e8eaed);
+}
+.fs-ai-rendered ul {
+  margin: 4px 0 4px 16px;
+  padding: 0;
+}
+.fs-ai-rendered li {
+  font-size: 12.5px;
+  color: var(--text, #e8eaed);
+  margin-bottom: 2px;
+}
+.fs-ai-rendered strong { color: #fbbf24; }
+.fs-ai-rendered .ai-price {
+  font-weight: 600;
+  color: #34d399;
+  font-family: 'Roboto Mono', monospace;
+}
+
+/* ── 操作按鈕列 ── */
+.fs-ai-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.fs-ai-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.fs-ai-btn:hover  { opacity: 0.85; }
+.fs-ai-btn:active { transform: scale(0.97); }
+
+.fs-ai-copy {
+  background: rgba(59, 130, 246, 0.20);
+  color: #93c5fd;
+}
+.fs-ai-copy:hover { background: rgba(59, 130, 246, 0.32); }
+
+.fs-ai-paste-toggle {
+  background: rgba(139, 92, 246, 0.20);
+  color: #c4b5fd;
+}
+.fs-ai-paste-toggle:hover { background: rgba(139, 92, 246, 0.32); }
+
+.fs-ai-submit {
+  background: rgba(16, 185, 129, 0.20);
+  color: #6ee7b7;
+}
+.fs-ai-submit:hover { background: rgba(16, 185, 129, 0.32); }
+
+/* ── 貼上區 ── */
+.fs-ai-paste-area {
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fs-ai-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 6px;
+  color: var(--text, #e8eaed);
+  font-size: 12.5px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+}
+.fs-ai-textarea:focus {
+  border-color: rgba(59, 130, 246, 0.45);
+}
+.fs-ai-textarea::placeholder {
+  color: var(--muted, #8a8f99);
+}

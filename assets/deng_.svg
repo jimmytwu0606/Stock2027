@@ -1,0 +1,117 @@
+<!--
+  燈燈 — Phase 7.1 助手角色
+  三花貓:白底 + 橘斑 + 黑斑
+  使用 CSS class 切換表情:
+    .deng-mood-happy   (預設)
+    .deng-mood-curious (圓眼)
+    .deng-mood-tired   (半瞇)
+    .deng-mood-savage  (斜眼)
+    .deng-mood-sleepy  (閉眼)
+    .deng-mood-sad     (眼淚)
+  動畫 class:
+    .deng-blink-loop   (眨眼循環)
+    .deng-tail-wag     (尾巴搖)
+    .deng-talk         (嘴巴開合)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" class="deng-svg" role="img" aria-label="燈燈">
+  <!-- 尾巴 (繪於最底層,從身體後面伸出) -->
+  <g class="deng-tail">
+    <path d="M 95 78 Q 110 60 100 45 Q 95 35 100 28"
+          fill="none" stroke="#2a2a2a" stroke-width="6"
+          stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 95 78 Q 110 60 100 45 Q 95 35 100 28"
+          fill="none" stroke="#f5a623" stroke-width="3"
+          stroke-linecap="round" stroke-linejoin="round"
+          stroke-dasharray="6 8" />
+  </g>
+
+  <!-- 身體 -->
+  <ellipse cx="60" cy="78" rx="28" ry="18" fill="#fafafa" stroke="#2a2a2a" stroke-width="1.5" />
+  <!-- 橘斑 (身體) -->
+  <path d="M 45 70 Q 50 65 58 68 Q 55 75 48 76 Z" fill="#f5a623" opacity="0.85" />
+
+  <!-- 頭 -->
+  <circle cx="60" cy="50" r="32" fill="#fafafa" stroke="#2a2a2a" stroke-width="1.5" />
+
+  <!-- 三花斑塊 (頭) -->
+  <!-- 黑斑左耳 -->
+  <path d="M 36 30 Q 32 22 40 22 Q 48 24 44 36 Z" fill="#2a2a2a" />
+  <!-- 橘斑右耳 -->
+  <path d="M 76 26 Q 88 24 86 36 Q 80 38 74 32 Z" fill="#f5a623" />
+  <!-- 橘斑右頰 -->
+  <path d="M 78 52 Q 88 55 86 65 Q 78 64 74 58 Z" fill="#f5a623" opacity="0.85" />
+  <!-- 黑斑額頭 -->
+  <path d="M 50 32 Q 52 28 58 30 Q 56 36 52 36 Z" fill="#2a2a2a" opacity="0.85" />
+
+  <!-- 耳朵 (三角形) -->
+  <polygon points="38,18 30,32 46,30" fill="#2a2a2a" stroke="#2a2a2a" stroke-width="1" />
+  <polygon points="82,18 74,30 90,32" fill="#fafafa" stroke="#2a2a2a" stroke-width="1.5" />
+  <polygon points="82,20 76,28 86,29" fill="#f5a623" opacity="0.7" />
+  <!-- 內耳粉 -->
+  <polygon points="38,22 34,28 42,28" fill="#f5b8b8" />
+  <polygon points="82,22 78,28 86,28" fill="#f5b8b8" />
+
+  <!-- 眼睛 — 預設 happy (笑眼 ^.^) -->
+  <g class="deng-eyes deng-eyes-default">
+    <!-- 左眼 -->
+    <path class="deng-eye deng-eye-left"
+          d="M 47 47 Q 50 44 53 47"
+          stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" fill="none" />
+    <!-- 右眼 -->
+    <path class="deng-eye deng-eye-right"
+          d="M 67 47 Q 70 44 73 47"
+          stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" fill="none" />
+  </g>
+
+  <!-- 圓眼 (curious) — 預設隱藏 -->
+  <g class="deng-eyes deng-eyes-curious" style="display:none">
+    <circle cx="50" cy="48" r="3.5" fill="#2a2a2a" />
+    <circle cx="70" cy="48" r="3.5" fill="#2a2a2a" />
+    <circle cx="51" cy="47" r="1" fill="#fafafa" />
+    <circle cx="71" cy="47" r="1" fill="#fafafa" />
+  </g>
+
+  <!-- 半瞇 (tired) — 預設隱藏 -->
+  <g class="deng-eyes deng-eyes-tired" style="display:none">
+    <path d="M 46 47 L 54 47" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" />
+    <path d="M 66 47 L 74 47" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" />
+  </g>
+
+  <!-- 斜眼 (savage) — 預設隱藏 -->
+  <g class="deng-eyes deng-eyes-savage" style="display:none">
+    <path d="M 46 49 L 54 45" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" />
+    <path d="M 66 45 L 74 49" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" />
+  </g>
+
+  <!-- 閉眼 (sleepy) — 預設隱藏 -->
+  <g class="deng-eyes deng-eyes-sleepy" style="display:none">
+    <path d="M 46 48 Q 50 50 54 48" stroke="#2a2a2a" stroke-width="2" stroke-linecap="round" fill="none" />
+    <path d="M 66 48 Q 70 50 74 48" stroke="#2a2a2a" stroke-width="2" stroke-linecap="round" fill="none" />
+  </g>
+
+  <!-- 哭眼 (sad) — 預設隱藏 -->
+  <g class="deng-eyes deng-eyes-sad" style="display:none">
+    <path d="M 46 46 Q 50 49 54 46" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" fill="none" />
+    <path d="M 66 46 Q 70 49 74 46" stroke="#2a2a2a" stroke-width="2.5" stroke-linecap="round" fill="none" />
+    <!-- 淚滴 -->
+    <ellipse cx="50" cy="55" rx="1.5" ry="3" fill="#6bb6ff" opacity="0.8" />
+    <ellipse cx="70" cy="55" rx="1.5" ry="3" fill="#6bb6ff" opacity="0.8" />
+  </g>
+
+  <!-- 鼻子 -->
+  <path d="M 58 53 L 62 53 L 60 56 Z" fill="#f5b8b8" stroke="#2a2a2a" stroke-width="0.8" />
+
+  <!-- 嘴巴 -->
+  <g class="deng-mouth">
+    <path d="M 60 56 Q 58 60 55 59" stroke="#2a2a2a" stroke-width="1.5" stroke-linecap="round" fill="none" />
+    <path d="M 60 56 Q 62 60 65 59" stroke="#2a2a2a" stroke-width="1.5" stroke-linecap="round" fill="none" />
+  </g>
+
+  <!-- 鬍鬚 -->
+  <g class="deng-whiskers" stroke="#888" stroke-width="0.8" stroke-linecap="round">
+    <line x1="40" y1="54" x2="30" y2="52" />
+    <line x1="40" y1="58" x2="30" y2="60" />
+    <line x1="80" y1="54" x2="90" y2="52" />
+    <line x1="80" y1="58" x2="90" y2="60" />
+  </g>
+</svg>

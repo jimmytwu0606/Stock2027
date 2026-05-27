@@ -1,0 +1,658 @@
+/* ================================================================
+   pattern.css — Phase 3 K線型態辨識專屬樣式
+   CSS 顯隱規則：#tabPattern.active { display:flex }
+   ================================================================ */
+
+/* ─── Tab Panel 顯隱 ───────────────────────────────────────── */
+#tabPattern {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+}
+#tabPattern.active {
+  display: flex;
+}
+
+/* ─── 整體版型 ─────────────────────────────────────────────── */
+.pattern-layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .pattern-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    overflow: auto;
+  }
+}
+
+/* ─── 左側：型態輸入面板 ────────────────────────────────────── */
+.pattern-input-panel {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pattern-input-panel-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ─── 右側：結果面板 ───────────────────────────────────────── */
+.pattern-result-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pattern-result-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ─── pd- : 型態繪製面板元件 ───────────────────────────────── */
+.pd-toolbar {
+  padding: 12px 14px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pd-mode-switch {
+  display: flex;
+  background: var(--bg3);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.pd-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.pd-mode-btn.active,
+.pd-mode-btn:hover {
+  background: var(--bg2);
+  color: var(--text);
+}
+
+.pd-meta {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 6px 14px 0;
+}
+
+/* 框選提示 */
+.pd-select-hint {
+  padding: 10px 14px;
+  position: relative;
+}
+
+.pd-select-info {
+  font-size: 12px;
+  color: var(--accent);
+  padding: 6px 10px;
+  background: rgba(59,130,246,.08);
+  border: 1px solid rgba(59,130,246,.2);
+  border-radius: 5px;
+  text-align: center;
+}
+
+/* 手繪 Canvas */
+.pd-draw-wrap {
+  padding: 10px 14px;
+  position: relative;
+}
+
+#pdCanvas {
+  width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  cursor: crosshair;
+  display: block;
+}
+
+.pd-clear-btn {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s;
+}
+.pd-clear-btn:hover { color: var(--text); }
+
+/* 型態預覽 */
+.pd-preview {
+  margin: 0 14px;
+  padding: 10px;
+  background: var(--bg3);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.pd-preview-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  letter-spacing: .04em;
+}
+
+#pdPreviewCanvas {
+  width: 100%;
+  height: 60px;
+  border-radius: 4px;
+  display: block;
+}
+
+.pd-preview-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.pd-tag {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(59,130,246,.15);
+  color: var(--accent);
+  border: 1px solid rgba(59,130,246,.25);
+}
+.pd-tag--muted {
+  background: rgba(255,255,255,.05);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.pd-tag--up {
+  background: rgba(239,83,80,.15);
+  color: var(--up);
+  border-color: rgba(239,83,80,.25);
+}
+.pd-tag--down {
+  background: rgba(38,166,154,.15);
+  color: var(--down);
+  border-color: rgba(38,166,154,.25);
+}
+
+/* 設定列 */
+.pd-settings {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+}
+
+.pd-settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  gap: 8px;
+}
+
+.pd-settings input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.pd-settings select,
+.pd-settings span {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+#pdSimilarityVal {
+  min-width: 36px;
+  text-align: right;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+
+/* 確認按鈕 */
+.pd-confirm-btn {
+  margin: 10px 14px 14px;
+  padding: 10px 0;
+  width: calc(100% - 28px);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: opacity .15s, background .15s;
+}
+.pd-confirm-btn:hover { background: #2563eb; }
+.pd-confirm-btn:disabled {
+  background: var(--bg3);
+  color: var(--hint);
+  cursor: not-allowed;
+}
+
+/* ─── pr- : 結果列表元件 ───────────────────────────────────── */
+
+/* 進度條 */
+.pr-progress {
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-progress-bar-wrap {
+  height: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.pr-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width .3s ease;
+  width: 0;
+}
+
+.pr-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#prProgressText {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pr-abort-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.pr-abort-btn:hover {
+  color: var(--up);
+  border-color: var(--up);
+}
+
+/* 彙總列 */
+.pr-summary {
+  display: flex;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.pr-summary-stat {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 回測面板 */
+.pr-backtest {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+
+.pr-backtest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.pr-backtest-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: .04em;
+}
+
+.pr-hold-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pr-hold-label select {
+  font-size: 11px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 2px 5px;
+}
+
+.pr-backtest-stats {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.pr-bt-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.pr-bt-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.pr-bt-val.up   { color: var(--up); }
+.pr-bt-val.down { color: var(--down); }
+
+.pr-bt-label {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* 報酬分布長條圖 */
+.pr-dist-title {
+  font-size: 10px;
+  color: var(--hint);
+  margin-bottom: 6px;
+}
+
+.pr-dist-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 70px;
+}
+
+.pr-dist-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: default;
+}
+
+.pr-dist-bar {
+  width: 16px;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  transition: opacity .15s;
+}
+.pr-dist-bar.up   { background: rgba(239,83,80,.7); }
+.pr-dist-bar.down { background: rgba(38,166,154,.7); }
+.pr-dist-bar-wrap:hover .pr-dist-bar { opacity: .7; }
+
+.pr-dist-bar-label {
+  font-size: 9px;
+  color: var(--hint);
+  white-space: nowrap;
+}
+
+/* 結果列表 header */
+.pr-list-header {
+  display: grid;
+  grid-template-columns: 1fr 60px 70px 120px;
+  padding: 6px 16px;
+  font-size: 10px;
+  color: var(--hint);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.pr-sort-col {
+  cursor: pointer; user-select: none; transition: color .15s;
+}
+.pr-sort-col:hover, .pr-sort-col.active { color: var(--text); }
+
+/* 結果列 */
+.pr-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.pr-row {
+  display: grid;
+  grid-template-columns: 1fr 60px 70px 120px;
+  align-items: center;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .12s;
+}
+.pr-row:hover { background: var(--bg3); }
+
+.pr-row-health { display: flex; align-items: center; justify-content: center; }
+.pr-health-badge {
+  display: inline-block; padding: 2px 6px; border-radius: 5px;
+  font-size: 11px; font-weight: 700;
+}
+.pr-health-badge.strong     { background: rgba(239,83,80,.18);   color: #ef5350; }
+.pr-health-badge.mid-strong { background: rgba(245,158,11,.15);  color: #f59e0b; }
+.pr-health-badge.neutral    { background: rgba(255,255,255,.07); color: var(--muted); }
+.pr-health-badge.mid-weak   { background: rgba(6,182,212,.15);   color: #06b6d4; }
+.pr-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
+.pr-health-empty { color: var(--hint); font-size: 11px; }
+
+.pr-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pr-row-code {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+}
+
+.pr-row-name {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pr-row-score {
+  font-size: 14px;
+  font-weight: 700;
+  text-align: right;
+  padding-right: 8px;
+}
+
+.pr-mini-chart {
+  border-radius: 3px;
+  display: block;
+}
+
+/* 空狀態 */
+.pr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 20px;
+  color: var(--muted);
+  gap: 8px;
+  text-align: center;
+}
+
+.pr-empty p { margin: 0; font-size: 13px; }
+.pr-empty-hint { font-size: 11px; color: var(--hint) !important; }
+
+/* 錯誤 */
+.pr-error {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--up);
+}
+
+/* ─── 範圍篩選區塊 ────────────────────────────────────── */
+.pd-filter-section {
+  margin: 8px 14px 0;
+  padding: 10px 12px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pd-filter-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.pd-filter-row {
+  margin-bottom: 8px;
+}
+.pd-filter-row:last-child { margin-bottom: 0; }
+
+.pd-filter-row label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pd-filter-row input[type="number"] {
+  width: 76px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 12px;
+}
+.pd-filter-row input[type="number"]::placeholder { color: var(--hint); }
+
+.pd-range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pd-range-sep { color: var(--hint); font-size: 11px; }
+
+.pd-filter-screener {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pd-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.pd-checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.pd-screener-count {
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(59,130,246,.12);
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid rgba(59,130,246,.2);
+}
+.pd-screener-count:empty { display: none; }
+
+.pd-val-badge {
+  font-size: 12px;
+  color: var(--accent);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ─── 手機響應式 ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .pattern-layout {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .pattern-input-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pr-list-header span:last-child { display: none; }
+  .pr-row { grid-template-columns: 1fr 60px 60px; }
+  .pr-row-health { display: none; }
+  .pr-mini-chart { display: none; }
+
+  .pr-backtest-stats { gap: 12px; }
+  .pr-bt-val { font-size: 14px; }
+
+  .pr-dist-bars { overflow-x: auto; }
+}

@@ -1,0 +1,482 @@
+/* ─────────────────────────────────────────
+   stock-tabs.css
+   個股內頁 Tab Bar + 各資訊面板樣式
+───────────────────────────────────────── */
+
+/* ─────────────────────────────────────────
+   個股內頁 Tab Bar
+───────────────────────────────────────── */
+.stock-tabbar {
+  display: flex;
+  align-items: center;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.stock-tabbar::-webkit-scrollbar { display: none; }
+
+.stock-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 9px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.stock-tab:hover  { color: var(--text); }
+.stock-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+/* ─────────────────────────────────────────
+   個股面板通用
+───────────────────────────────────────── */
+.stock-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.stock-panel.active { display: flex; }
+.stock-panel::-webkit-scrollbar { width: 3px; }
+.stock-panel::-webkit-scrollbar-thumb { background: var(--border2); }
+
+/* 面板載入中 */
+.panel-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--hint);
+  font-size: 12px;
+  gap: 8px;
+}
+.panel-loading::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 面板錯誤 */
+.panel-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+/* ─────────────────────────────────────────
+   共用：資訊卡片 Grid
+───────────────────────────────────────── */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 12px 16px;
+}
+.info-cell {
+  background: var(--bg2);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.info-cell-label {
+  font-size: 10px;
+  color: var(--hint);
+  letter-spacing: 0.04em;
+}
+.info-cell-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.info-cell-value.up   { color: var(--up); }
+.info-cell-value.down { color: var(--down); }
+.info-cell-sub {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ─────────────────────────────────────────
+   Section 標題
+───────────────────────────────────────── */
+.panel-section {
+  margin: 0 16px 16px;
+}
+.panel-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hint);
+  padding: 14px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+/* ─────────────────────────────────────────
+   籌碼面板
+───────────────────────────────────────── */
+
+/* 三大法人橫條圖 */
+.chip-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+.chip-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.chip-bar-name {
+  width: 56px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.chip-bar-track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg3);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+.chip-bar-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+.chip-bar-fill.up   { left: 50%; background: var(--up); }
+.chip-bar-fill.down { right: 50%; background: var(--down); }
+.chip-bar-val {
+  width: 70px;
+  text-align: right;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────
+   基本面面板
+───────────────────────────────────────── */
+.summary-text {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+/* ─────────────────────────────────────────
+   新聞面板
+───────────────────────────────────────── */
+.news-list {
+  display: flex;
+  flex-direction: column;
+}
+.news-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  transition: background 0.12s;
+  cursor: pointer;
+}
+.news-item:hover { background: var(--bg2); }
+.news-title {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.news-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: var(--hint);
+}
+.news-publisher { color: var(--muted); }
+
+/* ─────────────────────────────────────────
+   公告面板
+───────────────────────────────────────── */
+.announcement-list {
+  display: flex;
+  flex-direction: column;
+}
+.announcement-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  transition: background 0.12s;
+  cursor: pointer;
+}
+.announcement-item:hover { background: var(--bg2); }
+.announcement-date {
+  font-size: 11px;
+  color: var(--hint);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+.announcement-subject {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+/* ─────────────────────────────────────────
+   手機響應式
+───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .info-grid {
+    grid-template-columns: repeat(2, 1fr);
+    margin: 8px 10px;
+  }
+  .stock-tab { padding: 9px 12px; font-size: 12px; }
+  .panel-section { margin: 0 10px 12px; }
+  .news-item, .announcement-item { padding: 10px 12px; }
+}
+
+/* ═══════════════════════════════════════════════════════
+   五燈獎燈號樣式 (v2.6 — LAMP_UPGRADE 0522_2130)
+   集中管理：個股頁籤 (.lamp-row) + 自選清單 (.wl-lamps) 共用
+   ═══════════════════════════════════════════════════════ */
+
+/* ── 個股頁籤燈號容器 ── */
+#stockSignalLamps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+}
+.lamp-label {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+  white-space: nowrap;
+}
+
+/* ── 通用燈泡列（個股頁籤） ── */
+.lamp-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+.lamp-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #2a2d33;
+  border: 1px solid #3a3d44;
+  transition: all 0.25s;
+}
+
+/* 做多紅燈 */
+.lamp-row.lamp-bull .lamp-dot.full {
+  background: radial-gradient(circle at 35% 35%, #FF6B6B, #CC0000);
+  border-color: #CC0000;
+  box-shadow: 0 0 4px rgba(239, 83, 80, 0.55);
+}
+.lamp-row.lamp-bull .lamp-dot.half {
+  background: linear-gradient(90deg, #CC0000 50%, #2a2d33 50%);
+  border-color: #CC0000;
+  box-shadow: 0 0 2px rgba(239, 83, 80, 0.4);
+}
+
+/* 避險綠燈 */
+.lamp-row.lamp-bear .lamp-dot.full {
+  background: radial-gradient(circle at 35% 35%, #69F0AE, #00796B);
+  border-color: #00796B;
+  box-shadow: 0 0 4px rgba(38, 166, 154, 0.55);
+}
+.lamp-row.lamp-bear .lamp-dot.half {
+  background: linear-gradient(90deg, #00796B 50%, #2a2d33 50%);
+  border-color: #00796B;
+  box-shadow: 0 0 2px rgba(38, 166, 154, 0.4);
+}
+
+/* 🏆 金燈（5.0 紅燈升級） */
+.lamp-row.lamp-golden {
+  border: 2px solid #FFD700;
+  padding: 3px 8px;
+  animation: lamp-golden-pulse 1.8s ease-in-out infinite;
+}
+.lamp-row.lamp-golden .lamp-dot {
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  border-color: #FFC200;
+  box-shadow: 0 0 6px #FFD700;
+}
+@keyframes lamp-golden-pulse {
+  0%, 100% {
+    box-shadow: 0 0 6px 2px rgba(255, 215, 0, 0.4);
+    border-color: #FFD700;
+  }
+  50% {
+    box-shadow: 0 0 18px 8px rgba(255, 215, 0, 0.8);
+    border-color: #FFC200;
+  }
+}
+
+/* ⛔ 死亡綠燈（5.0 綠燈升級） */
+.lamp-row.lamp-danger {
+  border: 2px solid #00C853;
+  padding: 3px 8px;
+  animation: lamp-danger-pulse 1.8s ease-in-out infinite;
+}
+.lamp-row.lamp-danger .lamp-dot {
+  background: linear-gradient(135deg, #00C853, #1B5E20);
+  border-color: #00C853;
+  box-shadow: 0 0 6px #00C853;
+}
+@keyframes lamp-danger-pulse {
+  0%, 100% {
+    box-shadow: 0 0 6px 2px rgba(0, 200, 83, 0.4);
+    border-color: #00C853;
+  }
+  50% {
+    box-shadow: 0 0 18px 8px rgba(0, 200, 83, 0.8);
+    border-color: #69F0AE;
+  }
+}
+
+/* ── 自選清單燈號（wl-lamps） — 共用顏色語意 ── */
+.wl-lamps {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  flex-basis: 100%;
+}
+.wl-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+/* 做多紅燈（wl-lamps.lamps-pos） */
+.wl-lamps.lamps-pos .wl-lamp.on {
+  background: var(--down, #ef5350);
+  border-color: var(--down, #ef5350);
+  box-shadow: 0 0 4px rgba(239, 83, 80, 0.6);
+}
+.wl-lamps.lamps-pos .wl-lamp.half {
+  background: linear-gradient(to right, var(--down, #ef5350) 50%, rgba(239, 83, 80, 0.12) 50%);
+  border-color: var(--down, #ef5350);
+  box-shadow: 0 0 3px rgba(239, 83, 80, 0.4);
+}
+
+/* 避險綠燈（wl-lamps.lamps-neg） */
+.wl-lamps.lamps-neg .wl-lamp.on {
+  background: var(--up, #26a69a);
+  border-color: var(--up, #26a69a);
+  box-shadow: 0 0 4px rgba(38, 166, 154, 0.6);
+}
+.wl-lamps.lamps-neg .wl-lamp.half {
+  background: linear-gradient(to right, var(--up, #26a69a) 50%, rgba(38, 166, 154, 0.12) 50%);
+  border-color: var(--up, #26a69a);
+  box-shadow: 0 0 3px rgba(38, 166, 154, 0.4);
+}
+
+/* 🏆 自選清單金燈 */
+.wl-lamps.lamps-golden {
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 1.5px solid #FFD700;
+  animation: wl-lamp-golden-pulse 1.8s ease-in-out infinite;
+}
+.wl-lamps.lamps-golden .wl-lamp.on,
+.wl-lamps.lamps-golden .wl-lamp.half {
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  border-color: #FFC200;
+  box-shadow: 0 0 4px #FFD700;
+}
+@keyframes wl-lamp-golden-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px 1px rgba(255, 215, 0, 0.35);
+    border-color: #FFD700;
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(255, 215, 0, 0.7);
+    border-color: #FFC200;
+  }
+}
+
+/* ⛔ 自選清單死亡綠燈 */
+.wl-lamps.lamps-danger {
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 1.5px solid #00C853;
+  animation: wl-lamp-danger-pulse 1.8s ease-in-out infinite;
+}
+.wl-lamps.lamps-danger .wl-lamp.on,
+.wl-lamps.lamps-danger .wl-lamp.half {
+  background: linear-gradient(135deg, #00C853, #1B5E20);
+  border-color: #00C853;
+  box-shadow: 0 0 4px #00C853;
+}
+@keyframes wl-lamp-danger-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px 1px rgba(0, 200, 83, 0.35);
+    border-color: #00C853;
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(0, 200, 83, 0.7);
+    border-color: #69F0AE;
+  }
+}
+
+/* ── 省電/低動態偏好：關閉呼吸動畫 ── */
+@media (prefers-reduced-motion: reduce) {
+  .lamp-row.lamp-golden,
+  .lamp-row.lamp-danger,
+  .wl-lamps.lamps-golden,
+  .wl-lamps.lamps-danger {
+    animation: none;
+  }
+  .lamp-row.lamp-golden  { box-shadow: 0 0 10px 3px rgba(255, 215, 0, 0.55); }
+  .lamp-row.lamp-danger  { box-shadow: 0 0 10px 3px rgba(0, 200, 83, 0.55); }
+  .wl-lamps.lamps-golden { box-shadow: 0 0 6px 2px rgba(255, 215, 0, 0.5); }
+  .wl-lamps.lamps-danger { box-shadow: 0 0 6px 2px rgba(0, 200, 83, 0.5); }
+}
+
+/* ── 手機版尺寸微調 ── */
+@media (max-width: 768px) {
+  .lamp-dot { width: 10px; height: 10px; }
+  .lamp-label { font-size: 10px; }
+  #stockSignalLamps { padding: 3px 10px; gap: 6px; }
+}

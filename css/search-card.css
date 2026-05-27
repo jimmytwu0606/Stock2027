@@ -1,0 +1,114 @@
+/* ── 搜尋 Info Card ──────────────────────────────────────── */
+.search-info-card {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 500;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  padding: 10px 14px 12px;
+  animation: cardSlideIn .15s ease;
+}
+
+@keyframes cardSlideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.sic-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sic-code { font-weight: 700; color: var(--accent); font-size: 14px; margin-right: 8px; }
+.sic-name { color: var(--muted); font-size: 12px; }
+
+.sic-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+.sic-close:hover { color: var(--text); }
+
+.sic-price {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.sic-price.up   { color: var(--up); }
+.sic-price.down { color: var(--down); }
+.sic-price.flat { color: var(--text); }
+
+.sic-chg {
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 8px;
+  opacity: .85;
+}
+
+.sic-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sic-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+.sic-group-list { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.sic-group-btn {
+  padding: 3px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.sic-group-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(59,130,246,.1);
+}
+.sic-group-btn:disabled { color: var(--down); border-color: var(--down); opacity: .8; }
+
+.sic-no-groups { font-size: 11px; color: var(--hint); }
+
+/* ── 讓 search-box 有 position:relative 才能定位 card ── */
+.search-box { position: relative; }
+
+/* ── Modal 群組選單 ──────────────────────────────────────── */
+.modal-group-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+
+.modal-group-label {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.modal-group-select {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal-group-select:focus { outline: none; border-color: var(--accent); }

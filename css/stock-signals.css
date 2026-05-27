@@ -1,0 +1,202 @@
+/* stock-signals.css
+   個股訊號標籤、五燈獎、自選清單燈號
+   原 additions.css 節號 11 + 手機折疊新增
+*/
+
+/* ─── 節號 11：個股訊號標籤 + 加入自選按鈕 ─── */
+
+.sh-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* 訊號標籤列 — 桌面版橫排 */
+.stock-signal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 0;
+  margin-top: 2px;
+}
+.signal-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid;
+  background: transparent;
+  white-space: nowrap;
+  cursor: default;
+  transition: opacity 0.15s;
+}
+.signal-tag:hover { opacity: 0.8; }
+
+/* ── 手機版：折疊訊號標籤 ─────────────────── */
+.signal-tags-summary {
+  display: none; /* 桌面隱藏 */
+}
+
+/* 折疊後的燈號 + 展開按鈕 */
+.signal-tags-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--hint);
+  background: transparent;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.signal-tags-toggle:hover { color: var(--text); border-color: var(--border2); }
+.signal-tags-toggle .toggle-count {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 展開後的完整標籤列（預設收起） */
+.signal-tags-expanded {
+  display: none;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.signal-tags-expanded.open { display: flex; }
+
+@media (max-width: 768px) {
+  /* 手機版：隱藏原始 wrap 列，顯示折疊版 */
+  .stock-signal-tags {
+    display: none;
+  }
+  .signal-tags-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .signal-tag { font-size: 10px; padding: 1px 6px; }
+}
+
+/* ─── 自選清單 signal tags ─── */
+.wl-signal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+  flex-basis: 100%;
+}
+.wl-signal-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  border: 1px solid;
+  white-space: nowrap;
+  cursor: default;
+}
+.wl-signal-more { font-size: 10px; color: var(--hint); padding: 1px 3px; }
+
+/* ─── 加入自選按鈕 ─── */
+.sh-add-btn {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  margin-left: 8px;
+}
+.sh-add-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(59,130,246,0.08);
+}
+.sh-add-btn--added {
+  color: var(--up);
+  border-color: var(--up);
+  background: rgba(38,166,154,0.08);
+  cursor: default;
+}
+.sh-add-btn:disabled { cursor: default; }
+
+@media (max-width: 768px) {
+  .sh-add-btn    { font-size: 10px; padding: 2px 8px; }
+  .wl-signal-tag { font-size: 9px; }
+}
+
+/* ─── 自選清單卡片（手機優化）─── */
+.wl-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  gap: 8px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s;
+  position: relative;
+}
+.wl-item:hover { background: var(--bg3); }
+
+.wl-item-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wl-code {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.wl-name {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80px;
+}
+.wl-item-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+.wl-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.wl-chg {
+  font-size: 11px;
+  font-weight: 500;
+}
+.wl-chg.up   { color: var(--up); }
+.wl-chg.down { color: var(--down); }
+
+/* 手機版自選清單：稍大一點，方便點擊 */
+@media (max-width: 768px) {
+  .wl-item       { padding: 10px 12px; }
+  .wl-code       { font-size: 14px; }
+  .wl-name       { font-size: 12px; max-width: 100px; }
+  .wl-price      { font-size: 14px; }
+  .wl-chg        { font-size: 12px; }
+  .wl-item-right { min-width: 72px; }
+}

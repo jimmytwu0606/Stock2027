@@ -1,0 +1,709 @@
+/* ═══════════════════════════════════════════════════
+   screener.css  — Phase 2 選股篩選器樣式
+   色彩變數繼承 main.css
+   ═══════════════════════════════════════════════════ */
+
+/* ── 篩選器主容器 ── */
+/* 非 active 時由 main.css 的 .tab-panel 控制隱藏（display:none）
+   此處只在 active 時覆寫為 flex，避免蓋過隱藏邏輯 */
+#tabScreener.active {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.screener-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 上方控制欄 ── */
+.sc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sc-toolbar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-right: 4px;
+}
+
+.sc-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.sc-btn:hover { background: rgba(255,255,255,0.07); }
+.sc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.sc-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.sc-btn-primary:hover:not(:disabled) { background: #2563eb; border-color: #2563eb; }
+
+.sc-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.sc-btn-ghost:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+
+.sc-toolbar-spacer { flex: 1; }
+
+/* ── 狀態列 ── */
+.sc-status-bar {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── 進度條 ── */
+.sc-progress {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.sc-progress-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 300px;
+}
+
+.sc-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+  width: 0;
+}
+
+.sc-progress-text {
+  font-size: 11px;
+  color: var(--hint);
+  min-width: 60px;
+}
+
+/* ── 主體：左（條件）+ 右（結果） ── */
+.sc-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── 左側：條件面板 ── */
+.sc-left {
+  width: 300px;
+  min-width: 240px;
+  max-width: 360px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sc-panel-title {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* 條件列表 */
+.sc-cond-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.sc-empty-conds {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--hint);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.sc-cond-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.sc-cond-row:last-child { border-bottom: none; }
+
+.sc-cond-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sc-cond-select:focus { outline: none; border-color: var(--accent); }
+
+.sc-cond-input {
+  width: 64px;
+  flex-shrink: 0;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font-size: 12px;
+  text-align: right;
+}
+.sc-cond-input:focus { outline: none; border-color: var(--accent); }
+
+.sc-cond-unit {
+  font-size: 11px;
+  color: var(--hint);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sc-cond-bool-label {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.sc-phase-badge {
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sc-cond-del {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--hint);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.sc-cond-del:hover { background: rgba(239, 83, 80, 0.15); color: var(--down); }
+
+/* 儲存的篩選組合 */
+.sc-saved-section {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.sc-saved-empty {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--hint);
+}
+
+.sc-saved-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.sc-saved-item:last-child { border-bottom: none; }
+
+.sc-saved-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-saved-count {
+  font-size: 11px;
+  color: var(--hint);
+  white-space: nowrap;
+}
+
+.sc-saved-load {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sc-saved-load:hover { background: rgba(59,130,246,0.1); }
+
+.sc-saved-del {
+  font-size: 11px;
+  padding: 3px 6px;
+  border: none;
+  background: transparent;
+  color: var(--hint);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sc-saved-del:hover { color: var(--down); background: rgba(239,83,80,0.1); }
+
+/* ── 右側：結果面板 ── */
+.sc-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sc-results-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sc-results-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--hint);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 結果表頭 */
+.sc-results-header {
+  display: grid;
+  grid-template-columns: 1fr 80px 80px 80px 70px 1fr;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 11px;
+  color: var(--hint);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg2);
+  z-index: 1;
+}
+
+/* 結果列 */
+.sc-result-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 80px 80px 70px 1fr;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+  align-items: center;
+}
+.sc-result-row:hover { background: var(--bg3); }
+
+.sc-result-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sc-code {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sc-name {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sc-result-price {
+  font-size: 13px;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-result-chg {
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.sc-result-chg.up   { color: var(--up); }
+.sc-result-chg.down { color: var(--down); }
+.sc-result-chg.flat { color: var(--muted); }
+
+.sc-result-vol {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.sc-result-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sc-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.13);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* ── 籌碼圖：買賣圖例 & 中線 ── */
+.chip-bar-legend {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px 6px;
+  font-size: 11px;
+}
+
+.chip-legend-sell { color: var(--up); font-weight: 600; }
+.chip-legend-zero { color: var(--hint); }
+.chip-legend-buy  { color: var(--down); font-weight: 600; }
+
+/* 中線（chip-bar-track 需改為 relative，fill 改為 absolute） */
+.chip-bar-track {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  background: var(--bg3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.chip-center-line {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--border2);
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+.chip-bar-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+.chip-bar-fill.up   { background: var(--up); }    /* 賣超 → 紅 */
+.chip-bar-fill.down { background: var(--down); }  /* 買超 → 綠 */
+
+/* ── 響應式：手機版 ── */
+@media (max-width: 768px) {
+  .sc-body {
+    flex-direction: column;
+  }
+
+  .sc-left {
+    width: 100%;
+    max-width: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 50vh;
+  }
+
+  .sc-results-header,
+  .sc-result-row {
+    grid-template-columns: 1fr 70px 70px 60px;
+  }
+
+  /* 手機隱藏量能和指標標籤 */
+  .sc-results-header > *:nth-child(4),
+  .sc-results-header > *:nth-child(6),
+  .sc-result-row > *:nth-child(4),
+  .sc-result-row > *:nth-child(6) {
+    display: none;
+  }
+
+  .sc-toolbar {
+    gap: 6px;
+    padding: 8px 12px;
+  }
+
+  .sc-btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   Phase 6 策略庫
+   ══════════════════════════════════════════════════ */
+
+/* 左欄 Tab 切換 */
+.sc-left-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sc-left-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 9px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.sc-left-tab:hover  { color: var(--text); }
+.sc-left-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* 左欄面板（自訂條件 / 策略庫） */
+.sc-left-panel {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* 策略卡片列表 */
+.sc-strategy-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 分類標籤 */
+.sc-strategy-category {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.sc-strategy-cat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 4px 3px;
+}
+
+/* 策略卡片 */
+.sc-strategy-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s, transform 0.1s;
+}
+.sc-strategy-card:hover {
+  background: var(--bg3);
+  transform: translateX(2px);
+}
+.sc-strategy-card:active { transform: translateX(1px) scale(0.99); }
+
+.sc-strategy-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  line-height: 1;
+  width: 28px;
+  text-align: center;
+}
+
+.sc-strategy-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sc-strategy-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-strategy-desc {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc-strategy-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+/* ── 策略庫預過濾欄位 ── */
+.sc-prefilter {
+  margin: 8px 8px 4px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+}
+
+.sc-prefilter-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hint);
+  margin-bottom: 8px;
+}
+
+.sc-prefilter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sc-prefilter-field {
+  flex: 1;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sc-prefilter-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sc-prefilter-range {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sc-prefilter-sep {
+  font-size: 11px;
+  color: var(--hint);
+  flex-shrink: 0;
+}
+
+.sc-prefilter-input {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+  width: 60px;
+  text-align: right;
+}
+.sc-prefilter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sc-prefilter-hint {
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--hint);
+  line-height: 1.5;
+}
+
+
+/* ── 篩選結果健康度 badge ── */
+.sc-result-health {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-health-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+/* 80-100 強勢 — 紅 */
+.sc-health-badge.strong     { background: rgba(239,83,80,.18);   color: #ef5350; }
+/* 60-79  中性偏強 — 橘 */
+.sc-health-badge.mid-strong { background: rgba(245,158,11,.15);  color: #f59e0b; }
+/* 40-59  中性 — 灰 */
+.sc-health-badge.neutral    { background: rgba(255,255,255,.07); color: var(--muted); }
+/* 20-39  中性偏弱 — 青 */
+.sc-health-badge.mid-weak   { background: rgba(6,182,212,.15);   color: #06b6d4; }
+/* 0-19   弱勢 — 綠 */
+.sc-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
+.sc-health-empty { color: var(--hint); font-size: 11px; }

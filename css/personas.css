@@ -1,0 +1,558 @@
+/* personas.css — AI 圓桌聊天室樣式 */
+
+/* 預設隱藏,只有 .active 才顯示(跟其他 stock-panel 一致) */
+#personasPanel {
+  display: none;
+}
+#personasPanel.active {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  /* 用 height 而非 max-height,確保即使父容器較矮也佔滿 */
+  height: calc(100vh - 180px);
+  max-height: calc(100vh - 180px);
+  min-height: 400px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.rt-empty {
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.rt-header {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.rt-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.rt-subtitle {
+  font-size: 12px;
+  color: var(--hint);
+}
+
+/* ─── 聊天室容器 ────────────────────────────────── */
+.rt-chat {
+  flex: 1 1 auto;
+  overflow-y: scroll;        /* 永遠顯示捲軸,不會被誤判隱藏 */
+  overflow-x: hidden;
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;             /* 關鍵:讓 flex 子元素能縮小到觸發 overflow */
+  background: var(--bg);
+  border-radius: 10px;
+  /* 自訂捲軸,夠明顯 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+.rt-chat::-webkit-scrollbar { width: 10px; }
+.rt-chat::-webkit-scrollbar-track { background: transparent; }
+.rt-chat::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 5px;
+}
+.rt-chat::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ─── 訊息 ──────────────────────────────────────── */
+.rt-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  animation: rt-msg-in 0.35s ease-out;
+  max-width: 80%;
+}
+@keyframes rt-msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 多方靠左、空方靠右、中性置中 */
+.rt-msg.side-bull    { align-self: flex-start; }
+.rt-msg.side-bear    { align-self: flex-end; flex-direction: row-reverse; }
+.rt-msg.side-neutral { align-self: center; max-width: 90%; }
+
+.rt-msg-avatar {
+  font-size: 28px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rt-msg-body {
+  min-width: 0;
+}
+
+.rt-msg-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rt-msg.side-bear .rt-msg-meta { justify-content: flex-end; }
+
+.rt-msg-name {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+.rt-msg-sect {
+  color: var(--muted);
+  font-size: 11px;
+}
+.rt-msg-time {
+  color: var(--hint);
+  font-size: 10px;
+  margin-left: auto;
+}
+.rt-msg.side-bear .rt-msg-time { margin-left: 0; margin-right: auto; }
+
+.rt-score-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+}
+.rt-score-badge.up   { color: var(--up); }
+.rt-score-badge.down { color: var(--down); }
+
+.rt-msg-reply {
+  font-size: 11px;
+  color: var(--hint);
+  margin-bottom: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border2);
+}
+.rt-msg.side-bear .rt-msg-reply {
+  padding-left: 0;
+  padding-right: 8px;
+  border-left: none;
+  border-right: 2px solid var(--border2);
+  text-align: right;
+}
+
+.rt-msg-bubble {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 9px 13px;
+  border-radius: 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* 多方氣泡左上角削平、空方氣泡右上角削平(像 LINE) */
+.rt-msg.side-bull .rt-msg-bubble    { border-top-left-radius: 4px; }
+.rt-msg.side-bear .rt-msg-bubble    { border-top-right-radius: 4px; }
+
+/* 情緒色:左邊框/右邊框做顏色提示 */
+.rt-msg.mood-happy   .rt-msg-bubble { border-color: rgba(38,166,154,0.4); background: rgba(38,166,154,0.06); }
+.rt-msg.mood-savage  .rt-msg-bubble { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.06); }
+.rt-msg.mood-sad     .rt-msg-bubble { border-color: rgba(239,83,80,0.4);  background: rgba(239,83,80,0.06); }
+.rt-msg.mood-curious .rt-msg-bubble { /* 維持預設 */ }
+
+/* 中性(量子)氣泡 */
+.rt-msg.side-neutral .rt-msg-bubble {
+  border-color: rgba(59,130,246,0.4);
+  background: rgba(59,130,246,0.06);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+}
+
+/* 手機 */
+@media (max-width: 768px) {
+  .rt-msg { max-width: 92%; }
+  .rt-msg-avatar { width: 34px; height: 34px; font-size: 22px; }
+  .rt-msg-bubble { font-size: 13px; }
+}
+
+/* ─── AI 圓桌:互動版新增樣式 ─────────────────── */
+
+/* 召喚再來一輪按鈕 */
+.rt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.rt-summon-btn {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  border: none;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(245,158,11,0.3);
+}
+.rt-summon-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245,158,11,0.5);
+}
+
+/* 使用者訊息(靠右,跟空方一樣方向)*/
+.rt-msg.side-user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+  max-width: 70%;
+}
+.rt-msg.side-user .rt-msg-meta { justify-content: flex-end; }
+.rt-msg.side-user .rt-msg-time { margin-left: 0; margin-right: auto; }
+.rt-msg.side-user .rt-msg-avatar {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.rt-msg.side-user .rt-msg-bubble {
+  background: rgba(59,130,246,0.18);
+  border-color: rgba(59,130,246,0.5);
+  color: var(--text);
+  border-top-right-radius: 4px;
+  border-top-left-radius: 16px;
+}
+
+/* @ 點名提示 chip 列 */
+.rt-mention-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+.rt-mention-chip {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.rt-mention-chip:hover {
+  background: var(--bg3);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 輸入框列 */
+.rt-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+.rt-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+.rt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.rt-send-btn {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.rt-send-btn:hover { opacity: 0.85; }
+
+/* 訊息中的 @ 高亮 */
+.rt-mention {
+  color: var(--accent);
+  font-weight: 700;
+  background: rgba(59,130,246,0.12);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+/* ─── 設定面板:AI 圓桌人格句型編輯 ─────────────── */
+.persona-edit {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.persona-edit summary {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+.persona-edit-sect {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 6px;
+}
+.persona-textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.persona-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.persona-tools {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.setting-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.setting-btn:hover {
+  background: var(--bg3);
+  border-color: var(--border2);
+}
+.setting-btn.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* JSON 匯入子 Modal */
+.settings-sub-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 10001;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.settings-sub-modal.open {
+  display: flex;
+  animation: pfFadeIn 0.15s ease-out;
+}
+.settings-sub-box {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 640px;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.settings-sub-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.settings-sub-foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.persona-json-fmt {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'Menlo','Monaco','Consolas',monospace;
+  color: var(--text);
+  margin: 6px 0;
+  white-space: pre;
+  overflow-x: auto;
+}
+.persona-json-status {
+  margin-top: 8px;
+  font-size: 12px;
+  min-height: 16px;
+}
+.persona-json-status.ok  { color: var(--up); }
+.persona-json-status.err { color: var(--down); }
+
+/* ─── AI 圓桌 設定:單一人格流程 ────────────────── */
+.persona-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.persona-row-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.persona-row-label {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 80px;
+}
+.persona-pick {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+.persona-pick:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.persona-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.persona-hint.ok { color: var(--up); }
+
+.setting-btn.danger {
+  background: transparent;
+  border-color: var(--down);
+  color: var(--down);
+}
+.setting-btn.danger:hover {
+  background: rgba(239,83,80,0.1);
+}
+
+.persona-preview-line {
+  display: block;
+  margin: 2px 0;
+  padding-left: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* 目前句型清單 */
+.persona-current {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.persona-current-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.persona-current-list {
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.persona-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--hint);
+  font-size: 12px;
+}
+.persona-line-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+.persona-line-row:last-child { border-bottom: none; }
+.persona-line-row:hover { background: rgba(255,255,255,0.03); }
+.persona-line-idx {
+  color: var(--muted);
+  min-width: 24px;
+  text-align: right;
+  font-size: 11px;
+}
+.persona-line-text {
+  flex: 1;
+  color: var(--text);
+  word-break: break-word;
+}
+.persona-line-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+.persona-line-del:hover {
+  background: rgba(239,83,80,0.2);
+  color: var(--down);
+}

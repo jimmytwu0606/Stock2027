@@ -1,0 +1,295 @@
+/* css/analysis-panel.css
+ * ============================================================================
+ * Phase 7.3 — 技術分析說明區 + Excel 引線風格
+ * ============================================================================ */
+
+/* ─── 說明區容器 ─── */
+#analysisSignalPanel {
+  display: none;
+  position: absolute;      /* ← 浮層,不佔 DOM 空間 */
+  top: 8px;                /* 相對 chart-area 頂部 */
+  left: 12px;
+  z-index: 8;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0;
+  align-items: flex-start;
+  align-content: flex-start;
+  pointer-events: none;    /* 不擋滑鼠 */
+  max-width: calc(100% - 80px);
+}
+
+/* 卡片本身要能點擊 */
+#analysisSignalPanel .asp-card {
+  pointer-events: auto;
+}
+
+/* 全視窗模式才顯示說明區 */
+#chartPanel.fullscreen-mode #analysisSignalPanel {
+  display: flex;
+}
+
+/* ─── 說明卡片 ─── */
+.asp-card {
+  position: relative;
+  min-width: 150px;
+  max-width: 210px;
+  background: rgba(10, 12, 18, 0.88);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  cursor: default;
+  transition: box-shadow 0.15s;
+  flex-shrink: 0;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+.asp-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.18);
+}
+
+/* 卡片標題 */
+.asp-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 卡片內文 */
+.asp-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.asp-card-line {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asp-card-line:first-child {
+  color: var(--text, #e8eaed);
+}
+
+/* 卡片底部的引線起點小圓(放在卡片右下角) */
+.asp-card-anchor {
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  border: 1.5px solid var(--bg, #0e0f11);
+  pointer-events: none;
+}
+
+/* ─── 全視窗佈局(說明區改浮層後 K 線不再被壓縮) ─── */
+
+/* chartPanel 需要 relative 讓說明區 absolute 定位 */
+#chartPanel.fullscreen-mode {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 1200 !important;
+  background: var(--bg, #0e0f11) !important;
+  overflow-y: auto !important;        /* 允許上下捲動 */
+  overflow-x: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  scroll-behavior: smooth;
+}
+
+/* K 線區固定高度，不被下方 fs-deep-zone 擠壓
+ * flex: 0 0 auto → 不參與伸縮
+ * height: calc(100vh - var(--fs-tb-h, 109px)) → 扣掉 toolbar 高度
+ * --fs-tb-h 由 main.js enterFS 動態量測寫入（實際量得 109px）
+ */
+#chartPanel.fullscreen-mode .chart-area,
+#chartPanel.fullscreen-mode #chartArea {
+  flex: 0 0 auto !important;
+  height: calc(100vh - var(--fs-tb-h, 109px)) !important;
+  min-height: auto !important;
+  overflow: hidden;
+}
+
+/* 全視窗下:主圖吃滿剩餘空間,不被首頁的固定 360px 卡住
+ * (v3 — 0523 修正首頁副圖擠壓後新增,首頁版本見 main.css)
+ */
+#chartPanel.fullscreen-mode #mainChart {
+  flex: 1 1 auto !important;
+  height: auto !important;
+  min-height: 200px !important;
+}
+
+
+/* ESC 提示樣式已移至 chart-edit.css 統一管理(v2.6.1) */
+
+/* ─── 引線 canvas ─── */
+#asp-line-canvas {
+  pointer-events: none;
+  z-index: 7;
+}
+
+/* ─── 手機版 ─── */
+@media (max-width: 768px) {
+  #analysisSignalPanel {
+    padding: 8px 10px 4px;
+    gap: 8px;
+    max-height: 38%;
+  }
+  .asp-card {
+    min-width: 130px;
+    max-width: 180px;
+    padding: 6px 10px 8px;
+  }
+  .asp-card-title { font-size: 11px; }
+  .asp-card-line  { font-size: 10px; }
+}
+
+/* ─── Phase 7.3：全視窗 AI 解說工具列 — 已移除（由 Golden Board Tab 取代） ─── */
+
+/* ============================================================
+ * Phase 7.1 Batch 2 — 說明卡複製按鈕
+ * ============================================================ */
+.asp-card-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 4px;
+  color: var(--muted, #8a8f99);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all .15s;
+  opacity: 0;       /* 預設隱藏,hover 卡片時才出現 */
+  z-index: 2;
+}
+.asp-card:hover .asp-card-copy {
+  opacity: 1;
+}
+.asp-card-copy:hover {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: var(--accent, #3b82f6);
+  color: var(--accent, #3b82f6);
+}
+.asp-card-copy:active { transform: scale(0.9); }
+.asp-card-copy.copied {
+  opacity: 1 !important;
+  background: rgba(38, 166, 154, 0.22);
+  border-color: var(--up, #26a69a);
+  color: var(--up, #26a69a);
+}
+
+/* 卡片標題需要留出右側空間給複製按鈕 */
+.asp-card-title {
+  padding-right: 26px;
+}
+
+/* 手機版上複製按鈕永遠顯示(沒有 hover) */
+@media (max-width: 768px) {
+  .asp-card-copy { opacity: 1; }
+}
+
+
+/* ═══════════════════════════════════════════════════════
+ * 全視窗單指標 Tab Bar
+ * ═══════════════════════════════════════════════════════ */
+.fs-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px 0;
+  background: var(--bg, #0e0f11);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.fs-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted, #8a8f99);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+  margin-bottom: -1px;   /* 蓋住 border-bottom */
+}
+.fs-tab-btn:hover:not([disabled]) {
+  color: var(--text, #e8eaed);
+  background: rgba(255,255,255,0.04);
+}
+.fs-tab-btn.active {
+  color: #93c5fd;
+  border-bottom-color: #3b82f6;
+  background: rgba(59,130,246,0.06);
+  font-weight: 600;
+}
+.fs-tab-btn.disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.fs-tab-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.fs-tab-label {
+  font-size: 12.5px;
+}
+.fs-tab-lock {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ── Toolbar || 分隔線 ── */
+.tb-pipe {
+  color: rgba(255,255,255,0.20);
+  font-size: 13px;
+  padding: 0 4px;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+/* ── Fixed 凍結模式：K 線不縮放，z-index 確保不被文字穿透 ── */
+#chartPanel.fullscreen-mode.fixed-chart .chart-area,
+#chartPanel.fullscreen-mode.fixed-chart #chartArea {
+  z-index: 20;
+  background: var(--bg, #0e0f11);
+}
+
+/* Fixed 模式下 fs-deep-zone 確保在 K 線下層 */
+#chartPanel.fullscreen-mode.fixed-chart .fs-deep-zone {
+  position: relative;
+  z-index: 1;
+}
+
+/* Fixed 按鈕 active 狀態 */
+#btnFixedChart.active {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: #fbbf24;
+  color: #fbbf24;
+}

@@ -1,0 +1,99 @@
+/* css/signal-overlay.css
+ * ============================================================================
+ * Phase 7.2 — 燈號分析按鈕 + 背離卡片樣式
+ * ============================================================================ */
+
+/* ─── 工具列燈號群組 ─── */
+.ce-signal-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ce-signal-label {
+  font-size: 10px;
+  color: var(--muted, #8a8f99);
+  white-space: nowrap;
+  padding: 0 2px;
+  letter-spacing: 0.03em;
+}
+.ce-signal-divider {
+  color: var(--border2, rgba(255,255,255,.18));
+  padding: 0 2px;
+  font-size: 14px;
+}
+
+/* 燈號按鈕 */
+.ce-signal-btn {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg3, #2a2e35);
+  color: var(--text, #e8eaed);
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.ce-signal-btn:hover {
+  background: var(--bg2, #1c1f24);
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.ce-signal-btn:active { transform: scale(0.95); }
+.ce-signal-btn.active {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
+/* 背離按鈕特殊色 */
+.ce-signal-divergence:hover,
+.ce-signal-divergence.active {
+  border-color: #f5a623;
+  color: #f5a623;
+}
+.ce-signal-divergence.active {
+  background: rgba(245, 166, 35, 0.12);
+}
+
+/* ─── 背離「畫線」按鈕 ─── */
+.ca-div-draw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--accent, #3b82f6);
+  border-radius: 4px;
+  color: var(--accent, #3b82f6);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+  margin-left: auto;
+}
+.ca-div-draw-btn:hover {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.ca-div-draw-btn.active {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #fff;
+}
+
+/* ─── 手機版 ─── */
+@media (max-width: 768px) {
+  .ce-signal-group {
+    display: none;  /* 手機不顯示手繪燈號按鈕(AI解說模式另行處理) */
+  }
+  .ca-div-draw-btn {
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+}
