@@ -7,6 +7,7 @@
 import { STRATEGIES } from './strategy.js';
 import { scanOneCode } from './signal-scan.js';
 import { AppState } from './state.js';
+import { getChineseName } from './api.js';
 
 // ── condId → Gemini 看得懂的中文描述對照表 ───────────────────
 const COND_DESC = {
@@ -283,8 +284,12 @@ async function _verifyAndPreview() {
   // 股名修正 + 代號驗證
   const nameCache = window.__nameCache ?? new Map();
   let stocks = parsed.map(s => {
-    const code     = String(s.code ?? s['代號'] ?? '').trim();
-    const realName = nameCache.get(code);
+    const code   = String(s.code ?? s['代號'] ?? '').trim();
+    const aiName = String(s.name ?? s['股名'] ?? s['名稱'] ?? '').trim();
+    const realName = nameCache.get(code)
+      || getChineseName(code)
+      || (window.__priceCache ?? {})[code]?.name
+      || aiName;
     if (!realName) return null;
     return { code, name: realName, reason: String(s.reason ?? s['理由'] ?? '').trim() };
   }).filter(Boolean);

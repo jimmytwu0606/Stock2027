@@ -448,124 +448,152 @@
   font-size: 13px;
 }
 
-/* 結果列 */
-.seed-result-row {
-  display: grid;
-  grid-template-columns: 1fr 60px auto auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+/* ── 結果 table ────────────────────────────────────────────── */
+.sr-tbl-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sr-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sr-tbl-th {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+.sr-tbl-th:hover, .sr-tbl-th.sorted { color: var(--text); }
+.sr-tbl-th.no-sort { cursor: default; }
+
+.sr-tbl-row {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background .12s;
 }
-.seed-result-row:hover { background: rgba(255,255,255,.03); }
+.sr-tbl-row:hover { background: var(--bg3); }
 
-/* 健康度欄 */
-.sr-health-col { display: flex; align-items: center; justify-content: center; }
-.sr-health-badge {
-  display: inline-block; padding: 2px 6px; border-radius: 5px;
-  font-size: 11px; font-weight: 700;
-}
-.sr-health-badge.strong     { background: rgba(239,83,80,.18);   color: #ef5350; }
-.sr-health-badge.mid-strong { background: rgba(245,158,11,.15);  color: #f59e0b; }
-.sr-health-badge.neutral    { background: rgba(255,255,255,.07); color: var(--muted); }
-.sr-health-badge.mid-weak   { background: rgba(6,182,212,.15);   color: #06b6d4; }
-.sr-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
-.sr-health-empty { color: var(--hint); font-size: 11px; }
-
-.sr-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.sr-tbl-td {
+  padding: 7px 10px;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
-.sr-code {
+/* 代號 */
+.sr-tbl-code {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--accent);
+  font-family: 'Courier New', monospace;
 }
 
-.sr-name {
-  font-size: 11px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sr-price {
+/* 股名 */
+.sr-tbl-name {
   font-size: 12px;
+  color: var(--muted);
+}
+
+/* 現價 / 漲跌 */
+.sr-tbl-price {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
 }
-.sr-price em { font-style: normal; font-size: 11px; }
-.sr-price.up   em { color: var(--up); }
-.sr-price.down em { color: var(--down); }
+.sr-tbl-chg { font-size: 12px; }
+.sr-tbl-chg.up   { color: var(--down); }
+.sr-tbl-chg.down { color: var(--up); }
 
-.sr-scores {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
+/* 短線 / 長線健康 badge（沿用 hg- prefix，全域已定義）*/
 
-/* 綜合分數 pill */
-.seed-score-pill {
-  width: 36px;
-  text-align: center;
-  font-size: 14px;
+/* 妖股 pill */
+.sr-yaogu-pill {
+  font-size: 10px;
   font-weight: 700;
-  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: .04em;
 }
-.seed-score-pill.high   { color: var(--down); }
-.seed-score-pill.medium { color: var(--kd-k); }
-.seed-score-pill.low    { color: var(--muted); }
+.sr-yaogu-pill--x2 { background: rgba(239,83,80,.2);  color: #ef5350; border: 1px solid rgba(239,83,80,.35); }
+.sr-yaogu-pill--x1 { background: rgba(245,158,11,.2); color: #f59e0b; border: 1px solid rgba(245,158,11,.35); }
+.sr-yaogu-pill--x5 { background: rgba(139,92,246,.2); color: #8b5cf6; border: 1px solid rgba(139,92,246,.35); }
 
-/* 三段評分條 */
-.seed-score-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 64px;
-  flex-shrink: 0;
-}
-
-.seed-score-bar {
-  height: 4px;
-  background: var(--bg3);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.seed-score-bar .sector-fill    { height: 100%; background: var(--accent); border-radius: 2px; }
-.seed-score-bar .pattern-fill   { height: 100%; background: var(--ma20);   border-radius: 2px; }
-.seed-score-bar .indicator-fill { height: 100%; background: var(--kd-k);   border-radius: 2px; }
-
-/* 迷你走勢圖 */
+/* 走勢迷你圖 */
 .sr-mini-chart {
   width: 60px;
   height: 36px;
-  flex-shrink: 0;
+  display: block;
 }
 
-/* 結果列表標題 */
-.seed-list-header {
-  display: grid;
-  grid-template-columns: 1fr 60px 60px 60px 60px;
+/* ＋加入按鈕 */
+.sr-add-wrap { position: relative; }
+.sr-add-btn {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  border-radius: 4px;
+  width: 24px; height: 24px;
+  font-size: 14px; line-height: 1;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color .15s, border-color .15s;
+}
+.sr-add-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.sr-add-dropdown {
+  position: absolute;
+  right: 0; top: calc(100% + 4px);
+  min-width: 140px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+}
+.sr-add-group-item {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background .1s;
+}
+.sr-add-group-item:hover { background: var(--bg3); }
+
+/* 妖股確認橫幅 */
+.sr-yaogu-alert {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 5px 14px;
-  font-size: 10px;
-  color: var(--hint);
-  border-bottom: 1px solid var(--border);
-  text-transform: uppercase;
+  padding: 8px 14px;
+  background: rgba(239,83,80,.08);
+  border-bottom: 1px solid rgba(239,83,80,.2);
+  font-size: 12px;
+  color: var(--text);
+  animation: srAlertIn .25s ease;
   flex-shrink: 0;
 }
-.sr-sort-col {
-  cursor: pointer; user-select: none; transition: color .15s; white-space: nowrap;
+@keyframes srAlertIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.sr-sort-col:hover, .sr-sort-col.active { color: var(--text); }
+.sr-yaogu-alert strong { color: #ef5350; }
+.sr-yaogu-alert-close {
+  margin-left: auto;
+  background: none; border: none;
+  color: var(--muted); font-size: 12px;
+  cursor: pointer; padding: 2px 4px; border-radius: 3px;
+  transition: color .15s;
+}
+.sr-yaogu-alert-close:hover { color: var(--text); }
 
 /* ── 空狀態（掃描前） ─────────────────────────────────────── */
 .seed-empty-state {
@@ -601,12 +629,8 @@
     min-height: 300px;
   }
 
-  .seed-score-bars { display: none; }
-  .sr-health-col { display: none; }
-  .seed-result-row { grid-template-columns: 1fr auto auto; }
-
-  .sr-main { flex-direction: row; align-items: center; gap: 8px; }
-  .sr-price { margin-left: auto; }
+  .sr-tbl-th:nth-child(n+4) { display: none; }
+  .sr-tbl-td:nth-child(n+4) { display: none; }
 }
 
 /* ── 群組選單 dropdown ────────────────────────────────────── */

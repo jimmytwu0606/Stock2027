@@ -87,12 +87,10 @@ export function updateHeader(code, quote) {
   document.getElementById('shPrice').className    = 'sh-price ' + cls;
   document.getElementById('shChange').textContent = `${chg > 0 ? '+' : ''}${chg.toFixed(2)} (${chg > 0 ? '+' : ''}${chgPct.toFixed(2)}%)`;
   document.getElementById('shChange').className   = 'sh-change ' + cls;
-  document.getElementById('sOpen').textContent    = fmt(quote.open);
   document.getElementById('sHigh').textContent    = fmt(quote.high);
   document.getElementById('sLow').textContent     = fmt(quote.low);
   document.getElementById('sPrev').textContent    = fmt(quote.prev);
   document.getElementById('sVol').textContent     = fmtVol(quote.volume);
-  document.getElementById('sPE').textContent      = '—';
   return { chg, chgPct };
 }
 

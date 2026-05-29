@@ -7,8 +7,8 @@
  *   - 429 rate limit 指數退避重試
  */
 
-import { fetchTWSEPrices, fetchHistory, toYahooSymbol, getChineseName, getAllKnownCodes } from './api.js';
-import { findBestMatch } from './pattern.js';
+import { fetchTWSEPrices, fetchHistory, fetchHistoryCached, resolveYahooSymbol, toYahooSymbol, getChineseName, getAllKnownCodes } from './api.js';
+import { findBestMatch, normalizeSeries, pearsonPrefilter } from './pattern.js';
 import { AppState } from './state.js';
 import { Config } from './config.js';
 
@@ -24,13 +24,28 @@ export function abortScan() {
 
 // ─── 主掃描 AsyncGenerator ────────────────────────────────
 export async function* runPatternScan(templateCandles, opts = {}) {
+  // ── 相容性轉換：圖片模式傳入 number[]，手繪模式傳入 Candle[] ──
+  // 統一轉成 Candle[]，讓後續 normalizeCandles / findBestMatch 可以正常使用
+  if (templateCandles.length > 0 && typeof templateCandles[0] === 'number') {
+    const now = Math.floor(Date.now() / 1000);
+    templateCandles = templateCandles.map((v, i) => ({
+      time:   now - (templateCandles.length - 1 - i) * 86400,
+      open:   v * 100, high: v * 100 + 0.5,
+      low:    v * 100 - 0.5, close: v * 100,
+      volume: 1000,
+    }));
+  }
+
+  // ── 讀取型態比對自己的 period（獨立於篩選器）──
+  const pdPeriodEl = document.getElementById('pdPeriod');
+  const pdPeriod   = pdPeriodEl?.value || '3mo';
+
   const {
     similarity  = AppState.pattern.similarity  || 75,
     windowSize  = AppState.pattern.windowSize  || 20,
     featureMode = AppState.pattern.featureMode || 'simple',
-    period      = Config.screenerPeriod        || '3mo',
-    // 強制並發數最高 2，避免 429
-    concurrency = Math.min(Config.concurrency  || 3, 2),
+    period      = pdPeriod,   // ← 用型態比對自己的 period，不吃 Config.screenerPeriod
+    concurrency = 3,          // cache hit 快，但 cache miss 還是要保護 proxy
   } = opts;
 
   AppState.pattern.scanResults = [];
@@ -87,14 +102,18 @@ export async function* runPatternScan(templateCandles, opts = {}) {
     codes = AppState.screener.results.map(r => r.code).filter(code => /^\d{4}$/.test(code));
     yield { type: 'progress', phase: 'scan', message: `從選股結果掃描 ${codes.length} 檔…`, done: 0, total: codes.length };
   } else {
-    // 用 priceMap 過濾
-    const allKeys = Object.keys(priceMap);
-    const isNoPriceMode = allKeys.length > 0 && allKeys.every(c => (priceMap[c]?.price ?? 0) === 0);
+    // 用 priceMap + getAllKnownCodes 合併代號來源
+    // Firestore priceMap 只有上市股，上櫃股靠 _nameCache 補入
+    const pmKeys = new Set(Object.keys(priceMap).filter(c => /^\d{4}$/.test(c)));
+    const ncKeys = getAllKnownCodes().filter(c => /^\d{4}$/.test(c) && !pmKeys.has(c));
+    const allKeys = [...pmKeys, ...ncKeys];
+    const isNoPriceMode = pmKeys.size > 0 && [...pmKeys].every(c => (priceMap[c]?.price ?? 0) === 0);
     codes = allKeys.filter(code => {
       if (!/^\d{4}$/.test(code)) return false;
       if (isNoPriceMode) return true;
       const d = priceMap[code];
-      if (!d) return false;
+      // priceMap 沒有的代號（上櫃）→ 只做股價區間過濾時放行（無法確認價格）
+      if (!d) return (priceMin <= 0 || priceMin === undefined) && (priceMax >= 9999 || priceMax === undefined);
       if (d.price < priceMin || d.price > priceMax) return false;
       if (d.volume < volumeMin) return false;
       return true;
@@ -142,9 +161,12 @@ export async function* runPatternScan(templateCandles, opts = {}) {
         yield { type: 'progress', phase: 'scan', message: `掃描中…`, done, total };
       }
 
-      // 批次內每股之間固定間隔
-      // 若連續碰到 429，間隔指數增加（最長 8 秒）
-      const baseDelay = 400;
+      // 動態間隔：
+      //   fromCache=true → 幾乎 0ms，短讓出主執行緒
+      //   429 → 指數退避
+      //   cache miss（打了 API）→ 200ms 保護 proxy
+      const isCacheHit = result?.fromCache === true;
+      const baseDelay  = result === '429' ? 800 : isCacheHit ? 20 : 200;
       const extraDelay = Math.min(consecutive429 * 1000, 8000);
       await _sleep(baseDelay + extraDelay);
     }
@@ -165,9 +187,6 @@ export async function* runPatternScan(templateCandles, opts = {}) {
  */
 async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0) {
   const { windowSize, featureMode, period, signal, priceMap } = opts;
-  const symbol = toYahooSymbol(code);
-  // .TWO（上櫃）在 Yahoo Finance 多數 404，直接跳過節省時間
-  if (symbol.endsWith('.TWO')) return null;
   if (signal?.aborted) return null;
 
   // 最多重試 2 次（僅針對非 429 錯誤）
@@ -177,13 +196,25 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
     if (signal?.aborted) return null;
 
     try {
-      const candles = await fetchHistory(symbol, period);
+      // fetchHistoryCached：先查 IndexedDB，cache hit → <5ms，miss → 打 Yahoo
+      // ⚠️ 踩雷備忘（永久，2026-05-28）：
+      //   resolveYahooSymbol 每檔打兩次 API（.TW + .TWO），全市場 1700 檔 × 2 = 3400 次
+      //   proxy 立刻被打爆，大量 502 → 全部 return null → 結果 0。
+      //   型態比對用 toYahooSymbol + fetchHistoryCached 即可，上櫃比例少且 KV 有快取。
+      const symbol = toYahooSymbol(code);
+      const _t0 = Date.now();
+      const candles = await fetchHistoryCached(symbol, period);
+      const fromCache = (Date.now() - _t0) < 30;
 
-      if (!candles || candles.length < windowSize) return null;
+      const scanLen = Math.max(templateCandles.length, windowSize);
+      if (!candles || candles.length < scanLen) return null;
 
-      // ── 只取最近 N 根（windowSize），不滑動掃描歷史 ──
-      // 目的：找「現在正在發生」的相似走勢，而非歷史某段
-      const recent = candles.slice(-windowSize);
+      const recent = candles.slice(-scanLen);
+
+      const templateNorm = normalizeSeries(templateCandles.map(c => c.close));
+      const recentNorm   = normalizeSeries(recent.map(c => c.close));
+      if (!pearsonPrefilter(templateNorm, recentNorm, 0.2)) return null;
+
       const { score } = findBestMatch(templateCandles, recent);
 
       return {
@@ -194,6 +225,7 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
         endIdx:      windowSize - 1,
         candles:     recent,
         fullCandles: candles,
+        fromCache,
       };
 
     } catch (err) {

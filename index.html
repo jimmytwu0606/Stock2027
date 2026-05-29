@@ -17,6 +17,8 @@
   <link rel="stylesheet" href="css/mc-styles.css" />
   <link rel="stylesheet" href="css/portfolio.css" />
   <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="css/theme-additions.css" />
+  <link rel="stylesheet" href="css/watchlist-v2.css" />
   <link rel="stylesheet" href="css/screener.css" />
   <link rel="stylesheet" href="css/pattern.css" />
   <link rel="stylesheet" href="css/seed.css" />
@@ -956,29 +958,33 @@
     <!-- ══ Tab：看盤 ══ -->
     <div class="tab-panel active" id="tabChart">
 
-      <!-- 股票標題列 -->
+      <!-- 股票標題列（A 版：單欄堆疊終端風） -->
       <div class="stock-header" id="stockHeader">
-        <div class="sh-main">
-          <div class="sh-title">
-            <span class="sh-name" id="shName">—</span>
-            <span class="sh-code" id="shCode"></span>
-            <button class="sh-add-btn" id="shAddToWatchlist" title="加入自選清單">＋ 加入自選</button>
-          </div>
+        <!-- 股名列 -->
+        <div class="sh-title">
+          <span class="sh-name" id="shName">—</span>
+          <span class="sh-code" id="shCode"></span>
+          <button class="sh-add-btn" id="shAddToWatchlist" title="加入自選清單">＋ 加入自選</button>
+        </div>
+        <!-- 價格 + 漲跌 + 五燈（內聯靠右） -->
+        <div class="sh-price-row">
           <div class="sh-price flat" id="shPrice">—</div>
           <div class="sh-change flat" id="shChange"></div>
-          <!-- 訊號標籤列 -->
-          <div class="stock-signal-tags" id="stockSignalTags"></div>
-          <!-- v2.6: 五燈獎燈號（金燈/死亡綠燈呼吸動畫,LAMP_UPGRADE 0522_2130） -->
-          <div id="stockSignalLamps" style="display:none"></div>
+          <div class="sh-lamps" id="stockSignalLamps"></div>
         </div>
+        <!-- 妖股結論 chip（B 風填色膠囊；JS 注入 .yaogu-chip） -->
+        <div id="stockYaoguChip"></div>
+        <!-- OHLCV 細行（無開盤；短欄名 內聯） -->
         <div class="sh-stats">
-          <div class="stat-item"><div class="stat-label">開盤</div><div class="stat-val" id="sOpen">—</div></div>
-          <div class="stat-item"><div class="stat-label">最高</div><div class="stat-val" id="sHigh">—</div></div>
-          <div class="stat-item"><div class="stat-label">最低</div><div class="stat-val" id="sLow">—</div></div>
-          <div class="stat-item"><div class="stat-label">昨收</div><div class="stat-val" id="sPrev">—</div></div>
-          <div class="stat-item"><div class="stat-label">成交量</div><div class="stat-val" id="sVol">—</div></div>
-          <div class="stat-item"><div class="stat-label">本益比</div><div class="stat-val" id="sPE">—</div></div>
+          <div class="stat-item"><span class="stat-label">高</span><span class="stat-val" id="sHigh">—</span></div>
+          <div class="stat-item"><span class="stat-label">低</span><span class="stat-val" id="sLow">—</span></div>
+          <div class="stat-item"><span class="stat-label">昨</span><span class="stat-val" id="sPrev">—</span></div>
+          <div class="stat-item"><span class="stat-label">量</span><span class="stat-val" id="sVol">—</span></div>
         </div>
+        <!-- 訊號膠囊列（A 風細框 + 色點 + 文字；hover title=desc） -->
+        <div class="sh-signals" id="stockSignalBubbles"></div>
+        <!-- 隱藏舊標籤列（保留 id 供 JS 插入 screenerTags） -->
+        <div class="stock-signal-tags" id="stockSignalTags" style="display:none"></div>
         <span class="loading-badge" id="loadingBadge" style="display:none">載入中…</span>
       </div>
 
@@ -1181,8 +1187,8 @@
       <!-- 個股面板:AI 圓桌(5門派觀點+互嗆) -->
       <div class="stock-panel" id="personasPanel"></div>
 
-      <!-- 個股面板:智能分析(Phase 7) -->
-      <div class="stock-panel" id="analysisPanel">
+      <!-- 個股面板:智能分析(Phase 7) — Carousel 版 -->
+      <div class="stock-panel ca-analysis-panel" id="analysisPanel">
         <div id="chartAnalysisPanel" class="ca-panel"></div>
       </div>
 
@@ -1516,31 +1522,27 @@
             <!-- 工具列：框選 / 手繪 切換 -->
             <div class="pd-toolbar">
               <div class="pd-mode-switch">
-                <button class="pd-mode-btn active" data-mode="select">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor"
-                          stroke-width="1.2" stroke-dasharray="2.5 1.5"/>
-                  </svg>
-                  框選
-                </button>
-                <button class="pd-mode-btn" data-mode="draw">
+                <button class="pd-mode-btn active" data-mode="draw">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor"
                           stroke-width="1.2" stroke-linecap="round" fill="none"/>
                   </svg>
                   手繪
                 </button>
+                <button class="pd-mode-btn" data-mode="image">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                    <circle cx="4.5" cy="5.5" r="1.2" stroke="currentColor" stroke-width="1"/>
+                    <path d="M1 9.5l3-2.5 2.5 2 2-2.5L13 9.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/>
+                  </svg>
+                  圖片
+                </button>
               </div>
             </div>
-            <div class="pd-meta" id="pdMeta">切換到「看盤」Tab，點擊「框選型態」後拖曳選取 K 線區間</div>
+            <div class="pd-meta" id="pdMeta">在下方畫布上繪製理想走勢</div>
 
-            <!-- 框選提示 -->
-            <div class="pd-select-hint" id="pdSelectHint">
-              <div class="pd-select-info" id="pdSelectInfo">尚未框選</div>
-            </div>
-
-            <!-- 手繪 Canvas（預設隱藏） -->
-            <div class="pd-draw-wrap" id="pdDrawWrap" style="display:none">
+            <!-- 手繪 Canvas -->
+            <div class="pd-draw-wrap" id="pdDrawWrap">
               <canvas id="pdCanvas" height="140"></canvas>
               <button class="pd-clear-btn" id="pdClearBtn">清除</button>
             </div>
@@ -1574,6 +1576,14 @@
                 <select id="pdFeatureMode">
                   <option value="simple" selected>收盤價（快速）</option>
                   <option value="multi">多維特徵（精準）</option>
+                </select>
+              </label>
+              <label>
+                <span>K線週期</span>
+                <select id="pdPeriod">
+                  <option value="1mo">1 個月</option>
+                  <option value="3mo" selected>3 個月</option>
+                  <option value="1y">1 年</option>
                 </select>
               </label>
             </div>
@@ -1614,6 +1624,9 @@
               </svg>
               開始掃描全市場
             </button>
+
+            <!-- 圖片比對模式（預設隱藏，點擊「圖片」Tab 後顯示） -->
+            <div id="pdImageWrap" style="display:none"></div>
 
           </div><!-- /patternDrawPanel -->
         </div><!-- /pattern-input-panel -->
@@ -1817,15 +1830,7 @@
           <div id="seedSummary"></div>
 
           <!-- 結果列表標題 -->
-          <div class="seed-list-header" id="seedListHeader">
-            <span>代號 / 名稱</span>
-            <span class="sr-sort-col active" data-sort="compositeScore">綜合分 ↓</span>
-            <span class="sr-sort-col" data-sort="health">健康度</span>
-            <span class="sr-sort-col" data-sort="patternScore">線型</span>
-            <span>走勢</span>
-          </div>
-
-          <!-- 結果列表 -->
+          <!-- 結果列表（thead 由 JS 動態產生）-->
           <div class="seed-result-list" id="seedResultList">
             <div class="seed-empty-state">
               <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
@@ -2231,6 +2236,8 @@
 <script type="module" src="js/modules/analysis-mod-sar.js"></script>
 <script type="module" src="js/modules/analysis-mod-gmma.js"></script>
 <script type="module" src="js/modules/analysis-mod-pattern.js"></script>
+  <script type="module" src="js/pattern-image.js"></script>
+  <script type="module" src="js/pattern-image-ui.js"></script>
 <script type="module" src="js/modules/analysis-mod-fundamental.js"></script>
 <script type="module" src="js/modules/analysis-mod-xseries.js"></script>
 <script type="module" src="js/modules/analysis-mod-summary.js"></script>

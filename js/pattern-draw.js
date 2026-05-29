@@ -1,85 +1,89 @@
 /**
  * pattern-draw.js — Phase 3 型態輸入 UI
  * 職責：
- *   1. 框選模式：監聽 patternRangeSelect 事件，擷取 AppState.lastCandles 子集
- *   2. 手繪模式：Canvas 折線手繪，轉換為虛擬 Candle[]
+ *   1. 手繪模式：Canvas 折線手繪，轉換為虛擬 Candle[]
+ *   2. 圖片模式：顯示/隱藏 pdImageWrap，切換交由本模組統一管理
+ * （框選模式已移除，main.js 已不再發 patternRangeSelect）
  * 依賴：state.js（AppState）、pattern.js（describePattern、normalizeSeries）
  * 對外暴露：initPatternDraw()
- *
- * 注意：HTML 結構已寫在 index.html 的 #patternDrawPanel，
- *       本模組只負責綁事件，不重建 innerHTML。
  */
 
 import { AppState } from './state.js';
 import { describePattern, normalizeSeries } from './pattern.js';
 
 // ─── 模組狀態 ──────────────────────────────────────────────
-let drawMode   = 'select';  // 'select' | 'draw'
+let drawMode   = 'draw';   // 'draw' | 'image'
 let isDrawing  = false;
 let drawPoints = [];        // [{ x, y }, ...]
 
 // ─── 初始化 ────────────────────────────────────────────────
 export function initPatternDraw() {
   _bindModeSwitch();
-  _bindSelectMode();
   _bindDrawMode();
   _bindConfirmBtn();
   _bindSimilaritySlider();
+  // 預設進入手繪模式
+  _enterDrawMode();
 }
 
-// ─── 模式切換（框選 ↔ 手繪） ──────────────────────────────
+// ─── 模式切換（手繪 ↔ 圖片） ──────────────────────────────
 function _bindModeSwitch() {
   document.querySelectorAll('.pd-mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      drawMode = btn.dataset.mode;
+      const mode = btn.dataset.mode;
+      if (mode === drawMode) return;
+      drawMode = mode;
 
       document.querySelectorAll('.pd-mode-btn').forEach(b =>
         b.classList.toggle('active', b === btn)
       );
 
-      const selectHint = document.getElementById('pdSelectHint');
-      const drawWrap   = document.getElementById('pdDrawWrap');
-      const meta       = document.getElementById('pdMeta');
-
-      if (drawMode === 'select') {
-        if (selectHint) selectHint.style.display = '';
-        if (drawWrap)   drawWrap.style.display   = 'none';
-        if (meta)       meta.textContent =
-          '切換到「看盤」Tab，點擊「框選型態」後拖曳選取 K 線區間';
-      } else {
-        if (selectHint) selectHint.style.display = 'none';
-        if (drawWrap)   drawWrap.style.display   = '';
-        if (meta)       meta.textContent = '在下方畫布上繪製理想走勢';
-        _initDrawCanvas();
+      if (mode === 'draw') {
+        _enterDrawMode();
+      } else if (mode === 'image') {
+        _enterImageMode();
       }
     });
   });
 }
 
-// ─── 框選模式：監聽來自 main.js 的 patternRangeSelect 事件 ─
-function _bindSelectMode() {
-  document.addEventListener('patternRangeSelect', e => {
-    const { startIdx, endIdx } = e.detail;
-    const candles = AppState.lastCandles;
-    if (!candles || !candles.length) return;
+function _enterDrawMode() {
+  drawMode = 'draw';
+  // 更新 active（預設進入時也要設）
+  document.querySelectorAll('.pd-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === 'draw')
+  );
 
-    const selected = candles.slice(startIdx, endIdx + 1);
-    const len      = selected.length;
+  const drawWrap   = document.getElementById('pdDrawWrap');
+  const imageWrap  = document.getElementById('pdImageWrap');
+  const meta       = document.getElementById('pdMeta');
+  const confirmBtn = document.getElementById('pdConfirmBtn');
 
-    const info = document.getElementById('pdSelectInfo');
-    if (info) info.textContent = `已選 ${len} 根 K 棒`;
+  if (drawWrap)   drawWrap.style.display   = '';
+  if (imageWrap)  imageWrap.style.display  = 'none';
+  if (meta)       meta.textContent = '在下方畫布上繪製理想走勢';
+  if (confirmBtn) confirmBtn.style.display = '';
 
-    const meta = document.getElementById('pdMeta');
-    const desc = describePattern(selected);
-    if (meta) meta.textContent = `選取 ${len} 根・${desc.label}・${desc.volatility}`;
-
-    _updatePreview(selected);
-    _setConfirmEnabled(len >= 5);
-    AppState.pattern.template = selected;
-  });
+  _initDrawCanvas();
 }
 
-// ─── 手繪模式：綁清除按鈕（Canvas 事件在切換時才初始化） ──
+function _enterImageMode() {
+  drawMode = 'image';
+
+  const drawWrap   = document.getElementById('pdDrawWrap');
+  const imageWrap  = document.getElementById('pdImageWrap');
+  const meta       = document.getElementById('pdMeta');
+  const preview    = document.getElementById('pdPreview');
+  const confirmBtn = document.getElementById('pdConfirmBtn');
+
+  if (drawWrap)   drawWrap.style.display   = 'none';
+  if (imageWrap)  imageWrap.style.display  = '';
+  if (meta)       meta.style.display       = 'none';
+  if (preview)    preview.style.display    = 'none';
+  if (confirmBtn) confirmBtn.style.display = 'none';
+}
+
+// ─── 手繪模式：綁清除按鈕 ─────────────────────────────────
 function _bindDrawMode() {
   document.addEventListener('click', e => {
     if (!e.target.closest('#pdClearBtn')) return;

@@ -1,115 +1,318 @@
 /* css/analysis-panel.css
  * ============================================================================
- * Phase 7.3 — 技術分析說明區 + Excel 引線風格
+ * 智能分析面板 — 全新 5 Tab 架構
  * ============================================================================ */
 
-/* ─── 說明區容器 ─── */
-#analysisSignalPanel {
-  display: none;
-  position: absolute;      /* ← 浮層,不佔 DOM 空間 */
-  top: 8px;                /* 相對 chart-area 頂部 */
-  left: 12px;
-  z-index: 8;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 0;
-  align-items: flex-start;
-  align-content: flex-start;
-  pointer-events: none;    /* 不擋滑鼠 */
-  max-width: calc(100% - 80px);
-}
-
-/* 卡片本身要能點擊 */
-#analysisSignalPanel .asp-card {
-  pointer-events: auto;
-}
-
-/* 全視窗模式才顯示說明區 */
-#chartPanel.fullscreen-mode #analysisSignalPanel {
+/* ── 面板容器 ── */
+.ca-panel {
   display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg, #0e0f11);
 }
 
-/* ─── 說明卡片 ─── */
-.asp-card {
-  position: relative;
-  min-width: 150px;
-  max-width: 210px;
-  background: rgba(10, 12, 18, 0.88);
-  backdrop-filter: blur(8px);
-  border: 1.5px solid rgba(255,255,255,0.12);
-  border-radius: 8px;
-  padding: 8px 12px 10px;
-  cursor: default;
-  transition: box-shadow 0.15s;
+.ca-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  font-size: 12px;
+  color: var(--muted, #8a8f99);
+  text-align: center;
+  padding: 20px;
+  line-height: 1.6;
+}
+
+/* ── 外層 wrap ── */
+.ca-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ══════════════════════════════════════════════════════
+ * Tab Bar（5個）
+ * ══════════════════════════════════════════════════════ */
+.ca-tabbar {
+  display: flex;
+  background: var(--bg2, #13151c);
+  border-bottom: 0.5px solid rgba(255,255,255,0.08);
   flex-shrink: 0;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-}
-.asp-card:hover {
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.18);
 }
 
-/* 卡片標題 */
-.asp-card-title {
+.ca-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px 7px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted, #8a8f99);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 500;
+  transition: color .15s, border-color .15s;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ca-tab:hover { color: var(--text, #e8eaed); }
+.ca-tab.active {
+  color: #93c5fd;
+  border-bottom-color: #3b82f6;
+}
+.ca-tab-icon  { font-size: 14px; line-height: 1; }
+.ca-tab-label { font-size: 10px; }
+
+/* ══════════════════════════════════════════════════════
+ * Body（可捲動內容區）
+ * ══════════════════════════════════════════════════════ */
+.ca-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 10px 10px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ══════════════════════════════════════════════════════
+ * 指標 Card（ca-ind-*）
+ * ══════════════════════════════════════════════════════ */
+.ca-ind-card {
+  background: var(--bg2, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ca-ind-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ca-ind-title {
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: 6px;
+  color: var(--text2, #c9d1d9);
+  letter-spacing: 0.2px;
+  flex: 1;
+  min-width: 0;
+}
+.ca-ind-chip {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.ca-ind-chip[hidden] { display: none; }
+
+.ca-ind-canvas {
+  display: block;
+  border-radius: 6px;
+  background: #0d1117;
+  /* width/height 由 JS 設定 */
 }
 
-/* 卡片內文 */
-.asp-card-body {
+/* ── 文解區 ── */
+.ca-ind-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ca-ind-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 5px 0;
+  border-bottom: 0.5px solid rgba(255,255,255,0.05);
+}
+.ca-ind-row:last-child { border-bottom: none; }
+
+.ca-ind-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  line-height: 1;
+}
+
+.ca-ind-body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
-.asp-card-line {
+
+.ca-ind-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text, #e8eaed);
+  line-height: 1.3;
+}
+
+.ca-ind-desc {
+  font-size: 13px;
+  color: #aeb6c2;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+/* ── 三段式：數值明細 + 白話解讀 ── */
+.ca-ind-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 2px 0 1px;
+}
+.ca-ind-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ca-ind-stat-k {
   font-size: 11px;
   color: var(--muted, #8a8f99);
-  line-height: 1.45;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  letter-spacing: 0.2px;
 }
-.asp-card-line:first-child {
+.ca-ind-stat-v {
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text, #e8eaed);
+  font-variant-numeric: tabular-nums;
+  font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+.ca-ind-read {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #aeb6c2;
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+  padding-top: 9px;
+  word-break: break-word;
 }
 
-/* 卡片底部的引線起點小圓(放在卡片右下角) */
-.asp-card-anchor {
-  position: absolute;
-  bottom: -5px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  border: 1.5px solid var(--bg, #0e0f11);
-  pointer-events: none;
+/* ══════════════════════════════════════════════════════
+ * Tab 0 — 總覽（cao-*，沿用原有樣式）
+ * ══════════════════════════════════════════════════════ */
+.cao-wrap { display:flex; flex-direction:column; gap:8px; padding:2px 0 8px; }
+
+.cao-card {
+  background: var(--bg2, rgba(255,255,255,0.04));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
-/* ─── 全視窗佈局(說明區改浮層後 K 線不再被壓縮) ─── */
+.cao-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #8a8f99);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cao-card-badge { font-size: 11px; font-weight: 500; margin-left: auto; }
 
-/* chartPanel 需要 relative 讓說明區 absolute 定位 */
+/* 評分環 */
+.cao-score-row { display:flex; align-items:center; gap:16px; }
+.cao-ring-wrap { position:relative; width:68px; height:68px; flex-shrink:0; }
+.cao-ring-wrap svg { width:68px; height:68px; }
+.cao-ring-num {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  font-size:22px; font-weight:700; color:var(--text,#e8eaed);
+}
+.cao-score-info { flex:1; min-width:0; }
+.cao-signal     { font-size:16px; font-weight:700; margin-bottom:4px; }
+.cao-signal-sub { font-size:12px; color:var(--muted,#8a8f99); line-height:1.6; }
+
+/* 進場停利停損 */
+.cao-rr-row { display:flex; gap:6px; }
+.cao-rr-item { flex:1; text-align:center; background:rgba(255,255,255,0.04); border-radius:6px; padding:7px 4px; }
+.cao-rr-label { font-size:9px; color:var(--muted,#8a8f99); margin-bottom:2px; }
+.cao-rr-val   { font-size:14px; font-weight:600; color:var(--text,#e8eaed); }
+
+/* 健康度 */
+.cao-health-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.cao-health-label { font-size:13px; color:var(--muted,#8a8f99); margin-bottom:6px; }
+.cao-hbar-row   { display:flex; align-items:center; gap:8px; }
+.cao-hbar-track { flex:1; height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden; }
+.cao-hbar-fill  { height:100%; border-radius:3px; transition:width .3s; }
+.cao-hbar-num   { font-size:15px; font-weight:700; min-width:28px; text-align:right; }
+.cao-na         { font-size:11px; color:var(--muted,#8a8f99); }
+
+/* 趨勢結構 */
+.cao-trend-body  { display:flex; gap:12px; align-items:flex-start; }
+.cao-trend-left  { flex:0 0 90px; }
+.cao-trend-right { flex:1; min-width:0; }
+
+.cao-vs-bar {
+  display:flex; height:10px; border-radius:5px;
+  overflow:hidden; margin-bottom:6px;
+  background:rgba(255,255,255,0.06);
+}
+.cao-vs-bull { background:#ef5350; }
+.cao-vs-neu  { background:rgba(255,255,255,0.15); }
+.cao-vs-bear { background:#26a69a; }
+.cao-vs-legend {
+  display:flex; justify-content:space-between;
+  font-size:11px; color:var(--muted,#8a8f99);
+}
+
+/* 趨勢指標細節列 */
+.cao-ind-item {
+  border-bottom:.5px solid rgba(255,255,255,0.04);
+  padding:6px 0;
+}
+.cao-ind-item:last-child { border-bottom:none; }
+.cao-ind-item .cao-ind-row { border-bottom:none; padding:0; }
+.cao-ind-why {
+  margin:4px 0 0 14px;
+  font-size:12px;
+  line-height:1.55;
+  color:#9aa0aa;
+  word-break:break-word;
+}
+.cao-ind-row {
+  display:flex; align-items:center; gap:8px;
+  padding:5px 0;
+  border-bottom:.5px solid rgba(255,255,255,0.04);
+}
+.cao-ind-row:last-child { border-bottom:none; }
+.cao-ind-dot  { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.cao-ind-name { font-size:13px; color:var(--muted,#8a8f99); flex:0 0 110px; }
+.cao-ind-val  { font-size:13px; color:var(--text,#e8eaed); flex:1; }
+
+/* ══════════════════════════════════════════════════════
+ * 全視窗模式（analysis-panel.css 延續舊有 fullscreen 支援）
+ * ══════════════════════════════════════════════════════ */
 #chartPanel.fullscreen-mode {
   position: fixed !important;
   inset: 0 !important;
   z-index: 1200 !important;
   background: var(--bg, #0e0f11) !important;
-  overflow-y: auto !important;        /* 允許上下捲動 */
+  overflow-y: auto !important;
   overflow-x: hidden !important;
   display: flex !important;
   flex-direction: column !important;
   scroll-behavior: smooth;
 }
-
-/* K 線區固定高度，不被下方 fs-deep-zone 擠壓
- * flex: 0 0 auto → 不參與伸縮
- * height: calc(100vh - var(--fs-tb-h, 109px)) → 扣掉 toolbar 高度
- * --fs-tb-h 由 main.js enterFS 動態量測寫入（實際量得 109px）
- */
 #chartPanel.fullscreen-mode .chart-area,
 #chartPanel.fullscreen-mode #chartArea {
   flex: 0 0 auto !important;
@@ -117,97 +320,13 @@
   min-height: auto !important;
   overflow: hidden;
 }
-
-/* 全視窗下:主圖吃滿剩餘空間,不被首頁的固定 360px 卡住
- * (v3 — 0523 修正首頁副圖擠壓後新增,首頁版本見 main.css)
- */
 #chartPanel.fullscreen-mode #mainChart {
   flex: 1 1 auto !important;
   height: auto !important;
   min-height: 200px !important;
 }
 
-
-/* ESC 提示樣式已移至 chart-edit.css 統一管理(v2.6.1) */
-
-/* ─── 引線 canvas ─── */
-#asp-line-canvas {
-  pointer-events: none;
-  z-index: 7;
-}
-
-/* ─── 手機版 ─── */
-@media (max-width: 768px) {
-  #analysisSignalPanel {
-    padding: 8px 10px 4px;
-    gap: 8px;
-    max-height: 38%;
-  }
-  .asp-card {
-    min-width: 130px;
-    max-width: 180px;
-    padding: 6px 10px 8px;
-  }
-  .asp-card-title { font-size: 11px; }
-  .asp-card-line  { font-size: 10px; }
-}
-
-/* ─── Phase 7.3：全視窗 AI 解說工具列 — 已移除（由 Golden Board Tab 取代） ─── */
-
-/* ============================================================
- * Phase 7.1 Batch 2 — 說明卡複製按鈕
- * ============================================================ */
-.asp-card-copy {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 4px;
-  color: var(--muted, #8a8f99);
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  transition: all .15s;
-  opacity: 0;       /* 預設隱藏,hover 卡片時才出現 */
-  z-index: 2;
-}
-.asp-card:hover .asp-card-copy {
-  opacity: 1;
-}
-.asp-card-copy:hover {
-  background: rgba(59, 130, 246, 0.18);
-  border-color: var(--accent, #3b82f6);
-  color: var(--accent, #3b82f6);
-}
-.asp-card-copy:active { transform: scale(0.9); }
-.asp-card-copy.copied {
-  opacity: 1 !important;
-  background: rgba(38, 166, 154, 0.22);
-  border-color: var(--up, #26a69a);
-  color: var(--up, #26a69a);
-}
-
-/* 卡片標題需要留出右側空間給複製按鈕 */
-.asp-card-title {
-  padding-right: 26px;
-}
-
-/* 手機版上複製按鈕永遠顯示(沒有 hover) */
-@media (max-width: 768px) {
-  .asp-card-copy { opacity: 1; }
-}
-
-
-/* ═══════════════════════════════════════════════════════
- * 全視窗單指標 Tab Bar
- * ═══════════════════════════════════════════════════════ */
+/* ── fs-tab-bar（全視窗單指標 Tab Bar，保留舊有） ── */
 .fs-tab-bar {
   display: flex;
   align-items: center;
@@ -221,7 +340,6 @@
   top: 0;
   z-index: 10;
 }
-
 .fs-tab-btn {
   display: inline-flex;
   align-items: center;
@@ -237,59 +355,393 @@
   border-radius: 6px 6px 0 0;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
   white-space: nowrap;
-  margin-bottom: -1px;   /* 蓋住 border-bottom */
+  margin-bottom: -1px;
 }
-.fs-tab-btn:hover:not([disabled]) {
-  color: var(--text, #e8eaed);
+.fs-tab-btn:hover:not([disabled]) { color:var(--text,#e8eaed); background:rgba(255,255,255,0.04); }
+.fs-tab-btn.active { color:#93c5fd; border-bottom-color:#3b82f6; background:rgba(59,130,246,0.06); font-weight:600; }
+.fs-tab-btn.disabled { opacity:.38; cursor:not-allowed; }
+.fs-tab-icon  { font-size:14px; line-height:1; }
+.fs-tab-label { font-size:12.5px; }
+
+/* ── 說明卡片（asp-*，保留舊有以免其他模組壞掉） ── */
+#analysisSignalPanel {
+  display: none;
+  position: absolute;
+  top: 8px; left: 12px;
+  z-index: 8;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0;
+  align-items: flex-start;
+  pointer-events: none;
+  max-width: calc(100% - 80px);
+}
+#analysisSignalPanel .asp-card { pointer-events: auto; }
+#chartPanel.fullscreen-mode #analysisSignalPanel { display: flex; }
+
+.asp-card {
+  position: relative;
+  min-width: 150px; max-width: 210px;
+  background: rgba(10,12,18,0.88);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  cursor: default;
+  transition: box-shadow 0.15s;
+  flex-shrink: 0;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+.asp-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.18); }
+.asp-card-title {
+  font-size: 12px; font-weight: 700;
+  margin-bottom: 6px; padding-right: 26px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.asp-card-body { display:flex; flex-direction:column; gap:2px; }
+.asp-card-line {
+  font-size: 11px; color: var(--muted,#8a8f99);
+  line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.asp-card-line:first-child { color: var(--text,#e8eaed); }
+#asp-line-canvas { pointer-events:none; z-index:7; }
+
+/* ══════════════════════════════════════════════════════
+ * 手機版
+ * ══════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .ca-tab  { font-size: 9px; padding: 7px 2px 6px; }
+  .ca-tab-icon  { font-size: 13px; }
+  .ca-tab-label { font-size: 9px; }
+  .ca-body { padding: 8px 8px 16px; }
+  .ca-ind-card { padding: 9px 11px; }
+  .ca-ind-title { font-size: 11.5px; }
+  .ca-ind-chip  { font-size: 11.5px; padding: 2px 8px; }
+  .ca-ind-stats { gap: 6px 14px; }
+  .ca-ind-stat-v { font-size: 13px; }
+  .ca-ind-read  { font-size: 12.5px; }
+  .ca-ind-name  { font-size: 11px; }
+  .ca-ind-desc  { font-size: 12.5px; }
+  .cao-card { padding: 10px 12px; }
+}
+
+/* ============================================================
+ * Tab 0 總覽升級 patch（2026-05-28）
+ * 新增：關鍵訊號卡 / 三批進場 / 支撐壓力 / 量價訊號
+ * ============================================================ */
+
+/* ── 關鍵訊號卡 ── */
+.cao-signal-card { padding-bottom: 6px; }
+
+.cao-sig-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ccc;
+}
+.cao-sig-item:last-child { border-bottom: none; }
+.cao-sig-bull { color: #ef9a9a; }
+.cao-sig-bear { color: #80cbc4; }
+.cao-sig-warn { color: #ffe082; }
+
+/* 量價小徽章（評分環旁） */
+.cao-vp-badge {
+  font-size: 10px;
+  color: #aaa;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ── 三批進場計畫 ── */
+.cao-entry-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+.cao-entry-item {
   background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  padding: 10px 8px;
+  text-align: center;
 }
-.fs-tab-btn.active {
-  color: #93c5fd;
-  border-bottom-color: #3b82f6;
-  background: rgba(59,130,246,0.06);
+.cao-entry-label {
+  font-size: 12px;
+  color: #777;
+  margin-bottom: 4px;
+}
+.cao-entry-pct {
+  font-size: 11px;
+  color: #f59e0b;
   font-weight: 600;
 }
-.fs-tab-btn.disabled {
-  opacity: 0.38;
-  cursor: not-allowed;
+.cao-entry-price {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 3px;
 }
-.fs-tab-icon {
-  font-size: 14px;
-  line-height: 1;
+.cao-entry-hint {
+  font-size: 11px;
+  color: #666;
 }
-.fs-tab-label {
-  font-size: 12.5px;
+.cao-entry-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 12px;
+  color: #999;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.05);
 }
-.fs-tab-lock {
-  font-size: 10px;
-  opacity: 0.7;
+.cao-entry-summary b { color: #e0e0e0; font-weight: 700; font-size: 13px; }
+
+/* ── 支撐壓力摘要 ── */
+.cao-sr-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.cao-sr-row:last-of-type { border-bottom: none; }
+.cao-sr-tag  { font-size: 12px; font-weight: 700; min-width: 32px; }
+.cao-sr-price { font-weight: 700; font-size: 15px; min-width: 58px; }
+.cao-sr-dist  { font-size: 12px; color: #888; min-width: 44px; }
+.cao-sr-stars { font-size: 12px; color: #f59e0b; min-width: 40px; }
+.cao-sr-hist  {
+  font-size: 10px; color: #555; flex: 1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cao-sr-advice {
+  font-size: 12px; color: #888;
+  padding: 6px 0 2px; font-style: italic;
 }
 
-/* ── Toolbar || 分隔線 ── */
-.tb-pipe {
-  color: rgba(255,255,255,0.20);
-  font-size: 13px;
-  padding: 0 4px;
-  user-select: none;
+/* ── 量價訊號區塊 ── */
+.cao-vp-row {
+  font-size: 13px; color: #999;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  line-height: 1.6;
+}
+.cao-vp-row:last-child { border-bottom: none; }
+
+/* ── 手機版補丁 ── */
+@media (max-width: 768px) {
+  .cao-entry-grid { gap: 4px; }
+  .cao-entry-price { font-size: 15px; }
+  .cao-entry-summary { font-size: 11px; gap: 6px 10px; }
+  .cao-sr-hist { display: none; }
+}
+
+/* ============================================================
+ * 轉速表儀表板 patch（2026-05-28）
+ * ============================================================ */
+
+/* ── 主儀表板 card ── */
+.cao-dash-card { padding: 14px 14px 10px; }
+
+/* 上半段：轉速表 + 信號 */
+.cao-dash-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+/* 轉速表 wrap */
+.cao-gauge-wrap {
+  position: relative;
+  width: 200px;
+  height: 120px;
   flex-shrink: 0;
 }
+.cao-gauge-wrap canvas { display: block; }
 
-/* ── Fixed 凍結模式：K 線不縮放，z-index 確保不被文字穿透 ── */
-#chartPanel.fullscreen-mode.fixed-chart .chart-area,
-#chartPanel.fullscreen-mode.fixed-chart #chartArea {
-  z-index: 20;
-  background: var(--bg, #0e0f11);
+.cao-gauge-score {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text, #e8eaed);
+  letter-spacing: -1px;
+  pointer-events: none;
 }
 
-/* Fixed 模式下 fs-deep-zone 確保在 K 線下層 */
-#chartPanel.fullscreen-mode.fixed-chart .fs-deep-zone {
-  position: relative;
-  z-index: 1;
+.cao-gauge-labels {
+  position: absolute;
+  bottom: 0;
+  left: 0; right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
 }
 
-/* Fixed 按鈕 active 狀態 */
-#btnFixedChart.active {
-  background: rgba(251, 191, 36, 0.15);
-  border-color: #fbbf24;
-  color: #fbbf24;
+/* 右側信號區 */
+.cao-dash-info { flex: 1; min-width: 0; padding-bottom: 8px; }
+.cao-dash-bull-bear { margin-top: 8px; }
+
+/* ── 切換 Tab ── */
+.cao-dash-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-bottom: 0.5px solid rgba(255,255,255,0.07);
+  padding-bottom: 10px;
 }
+
+.cao-dash-tab {
+  flex: 1;
+  padding: 6px 4px;
+  background: transparent;
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: var(--muted, #8a8f99);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.cao-dash-tab:hover { color: var(--text, #e8eaed); border-color: rgba(255,255,255,0.2); }
+.cao-dash-tab.active {
+  background: rgba(59,130,246,0.15);
+  color: #93c5fd;
+  border-color: rgba(59,130,246,0.4);
+  font-weight: 600;
+}
+
+/* ── view 顯示切換 ── */
+.cao-dash-view { }
+.cao-hidden { display: none !important; }
+
+/* ── 總覽 4格 ── */
+.cao-overview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.cao-ov-cell {
+  background: rgba(255,255,255,0.04);
+  border-radius: 7px;
+  padding: 9px 10px;
+}
+.cao-ov-label { font-size: 11px; color: #666; margin-bottom: 4px; }
+.cao-ov-val   { font-size: 16px; font-weight: 700; line-height: 1.2; }
+.cao-ov-sub   { font-size: 11px; color: #666; margin-top: 3px; }
+
+/* 趨勢指標明細 */
+.cao-dash-inds {
+  border-top: 0.5px solid rgba(255,255,255,0.06);
+  padding-top: 8px;
+}
+
+/* ── 健康度 extra rows ── */
+.cao-health-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 0.5px solid rgba(255,255,255,0.05);
+  margin-top: 4px;
+}
+
+/* ── 手機 ── */
+@media (max-width: 768px) {
+  .cao-dash-top { flex-direction: column; align-items: center; gap: 10px; }
+  .cao-gauge-wrap { width: 180px; height: 108px; }
+  .cao-gauge-score { font-size: 24px; }
+  .cao-dash-info { width: 100%; text-align: center; }
+  .cao-dash-tab { font-size: 11px; padding: 5px 3px; }
+  .cao-overview-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ============================================================
+ * 4 儀表盤 2x2 grid patch（2026-05-28）
+ * ============================================================ */
+
+/* 2x2 grid */
+.cao-gauge-grid { display: none; }
+
+/* 每個儀表盤單元 */
+.cao-gauge-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+/* canvas 本身由 JS 設定尺寸 */
+.cao-gauge-canvas { display: block; }
+
+/* 數字顯示（在圖盤下方，JS 另設 id_num） */
+.cao-gauge-num {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text, #e8eaed);
+  letter-spacing: -0.5px;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+/* 左中右標籤 */
+.cao-gauge-lbl-row {
+  display: flex;
+  justify-content: space-between;
+  width: 150px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+/* 儀表盤標題 */
+.cao-gauge-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #e8eaed);
+  margin-top: 2px;
+}
+
+/* 儀表盤副標 */
+.cao-gauge-sub {
+  font-size: 11px;
+  color: var(--muted, #8a8f99);
+}
+
+/* 手機：2x2 維持，只縮小 */
+@media (max-width: 480px) {
+  .cao-gauge-grid { gap: 8px 4px; }
+  .cao-gauge-lbl-row { width: 130px; font-size: 9px; }
+  .cao-gauge-num { font-size: 18px; }
+  .cao-gauge-title { font-size: 12px; }
+}
+
+/* ── 5儀表板橫排 ── */
+.cao-gauge-row5 {
+  display: flex;
+  gap: 4px;
+  justify-content: space-between;
+  padding: 4px 0 8px;
+  overflow-x: auto;
+}
+.cao-gauge-row5 .cao-gauge-unit {
+  flex: 1;
+  min-width: 0;
+}
+.cao-gauge-row5 .cao-gauge-lbl-row {
+  width: 100%;
+  padding: 0 4px;
+}
+/* 支撐壓力 canvas */
+.cao-sr-canvas { display: block; }

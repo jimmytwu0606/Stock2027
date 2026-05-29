@@ -258,3 +258,56 @@ export function describePattern(candles) {
 
   return { trend, volatility: volLabel, label, chgPct: chgPct.toFixed(1) };
 }
+
+// ─── Pearson 相關係數粗篩 ──────────────────────────────────
+
+/**
+ * 計算兩個等長序列的 Pearson 相關係數
+ * O(n)，比 DTW O(n²) 快約 20 倍，用來快速剔除明顯不像的走勢
+ * @param {number[]} a  正規化序列（0~1）
+ * @param {number[]} b  正規化序列（0~1），長度需與 a 相同
+ * @returns {number}    -1 ~ 1，1=完全正相關，-1=完全負相關
+ */
+export function pearsonCorr(a, b) {
+  const n = a.length;
+  if (n === 0 || n !== b.length) return 0;
+
+  let sumA = 0, sumB = 0;
+  for (let i = 0; i < n; i++) { sumA += a[i]; sumB += b[i]; }
+  const meanA = sumA / n;
+  const meanB = sumB / n;
+
+  let num = 0, denA = 0, denB = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - meanA;
+    const db = b[i] - meanB;
+    num  += da * db;
+    denA += da * da;
+    denB += db * db;
+  }
+  const den = Math.sqrt(denA * denB);
+  return den === 0 ? 0 : num / den;
+}
+
+/**
+ * 快速粗篩：將長序列降採樣後做 Pearson，判斷走勢大方向是否相符
+ * 用在 DTW 之前，快速剔除明顯不像的股票
+ * @param {number[]} template  範本正規化序列
+ * @param {number[]} target    目標正規化序列
+ * @param {number}  [threshold=0.2]  低於此相關係數直接跳過（不進 DTW）
+ * @returns {boolean}  true = 通過粗篩，可進 DTW；false = 直接跳過
+ */
+export function pearsonPrefilter(template, target, threshold = 0.2) {
+  // 降採樣到最多 20 點做相關係數（更快）
+  const MAX_PTS = 20;
+  const downsample = (arr, n) => {
+    if (arr.length <= n) return arr;
+    const step = (arr.length - 1) / (n - 1);
+    return Array.from({ length: n }, (_, i) => arr[Math.round(i * step)]);
+  };
+
+  const a = downsample(template, MAX_PTS);
+  const b = downsample(target,   MAX_PTS);
+  const corr = pearsonCorr(a, b);
+  return corr >= threshold;
+}

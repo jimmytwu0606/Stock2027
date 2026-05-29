@@ -974,11 +974,18 @@ function _openBatchModal() {
 function _closeBatchModal() { _closeWatchModal(); }
 
 function _parseBatchCodes(text) {
-  const raw = String(text || '').split(/[\s,;]+/).filter(Boolean);
+  // 先把「名稱（代號）」或「名稱(代號)」格式提取代號
+  // 例：神準（3558）、虹揚-KY（6573）→ 3558、6573
+  const preprocessed = String(text || '').replace(
+    /[\u4e00-\u9fa5\w\-\.]+[（(](\d{4,6}[A-Z]?)[）)]/gi,
+    (_, code) => code
+  );
+  const raw = preprocessed.split(/[\s,;、\n]+/).filter(Boolean);
   const valid = [], invalid = [];
   for (const t of raw) {
+    // 純代號格式：4-6碼數字 + 可選英文字母
     if (/^\d{4,6}[A-Z]?$/i.test(t)) valid.push(t.toUpperCase());
-    else                            invalid.push(t);
+    else invalid.push(t);
   }
   const unique = [...new Set(valid)];
   return { codes: unique, invalid, duplicateRemoved: valid.length - unique.length };

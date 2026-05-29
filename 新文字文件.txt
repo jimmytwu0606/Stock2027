@@ -1,0 +1,168 @@
+// =====================================================
+// 健康度公式驗證腳本 v2 (不依賴 AppState)
+// 用法：DevTools Console 貼上 → 跳出 prompt 輸入代號
+// =====================================================
+(async () => {
+  const code = prompt('股票代號 (例 1101 / 2330 / 0050)', '1101');
+  if (!code) return;
+  const symbol = /^00/.test(code) ? code + '.TW' : code + '.TW';  // 上櫃會自動 fallback
+  
+  // 動態 import 模組 (從當前頁面相對路徑)
+  const base = location.origin + (location.pathname.endsWith('/') ? location.pathname : location.pathname.replace(/[^/]+$/, ''));
+  const api    = await import(base + 'js/api.js');
+  const health = await import(base + 'js/health.js');
+  const ind    = await import(base + 'js/indicators.js');
+  
+  console.log(`%c[抓資料中] ${code} candles 1y + fund ...`, 'color:#888');
+  
+  // 並行抓 candles + fund
+  let candles = await api.fetchHistoryCached(code + '.TW', '1y').catch(() => null);
+  if (!candles || candles.length < 20) {
+    candles = await api.fetchHistoryCached(code + '.TWO', '1y').catch(() => null);
+  }
+  const fund = await api.fetchFundamentals(code).catch(() => null);
+  
+  if (!candles || candles.length < 20) { 
+    console.error('❌ candles 不足，可能代號錯或 Worker 掛了'); 
+    return; 
+  }
+  
+  const closes = candles.map(c => c.close);
+  const vols   = candles.map(c => c.volume);
+  const last   = candles[candles.length-1];
+  const n      = candles.length;
+  
+  console.log(`%c━━━━━ ${code} 健康度驗證 (n=${n}) ━━━━━`, 'color:#0af;font-weight:bold;font-size:14px');
+  
+  // ============ 基礎指標 ============
+  const ma = (p) => closes.slice(-p).reduce((a,b)=>a+b,0)/p;
+  const ma5  = ma(5), ma20 = ma(20);
+  const ma60 = n>=60?ma(60):null, ma120 = n>=120?ma(120):null, ma240 = n>=240?ma(240):null;
+  
+  const rsi14 = ind.calcRSI ? ind.calcRSI(closes, 14).at(-1) : null;
+  const kdObj = ind.calcKD  ? ind.calcKD(candles, 9)         : null;
+  const kdLast = kdObj ? (Array.isArray(kdObj) ? kdObj.at(-1) : { k: kdObj.k?.at(-1), d: kdObj.d?.at(-1) }) : null;
+  const dmi   = ind.calcDMI ? ind.calcDMI(candles, 14)       : null;
+  const adx   = dmi?.adx?.at?.(-1);
+  const hv    = ind.calcHV  ? ind.calcHV(closes, 20).at(-1)  : null;
+  const psy   = ind.calcPSY ? ind.calcPSY(closes, 12).at(-1) : null;
+  const bias20 = (last.close - ma20) / ma20 * 100;
+  
+  console.log('📊 基礎指標:', {
+    close: last.close, 
+    MA5: ma5.toFixed(2), MA20: ma20.toFixed(2),
+    MA60: ma60?.toFixed(2), MA120: ma120?.toFixed(2), MA240: ma240?.toFixed(2),
+    RSI14: rsi14?.toFixed(1), 
+    K: kdLast?.k?.toFixed(1), D: kdLast?.d?.toFixed(1),
+    ADX: adx?.toFixed(1), 
+    HV20: hv != null ? hv.toFixed(1)+'%' : null, 
+    PSY12: psy?.toFixed(1), 
+    bias20: bias20.toFixed(2)+'%'
+  });
+  
+  // ============ 實際健康度分數 ============
+  const shortScore    = health.calcHealth(candles);
+  const longScore     = health.calcHealthLong(candles, fund);
+  const longScoreTech = health.calcHealthLong(candles, null);
+  
+  // ============ 短線健康度推算 ============
+  console.log('%c\n━━━ 短線健康度 (基準50) ━━━', 'color:#fa0;font-weight:bold');
+  const s = { base: 50 };
+  s.trend = (last.close > ma20 ? 14 : -14) + (ma5 > ma20 ? 14 : -14);
+  if (rsi14 != null) {
+    if (rsi14 > 80)      s.rsi = -15;
+    else if (rsi14 > 70) s.rsi = -8;
+    else if (rsi14 < 30) s.rsi = 12;
+    else if (rsi14 < 50) s.rsi = -3;
+    else                 s.rsi = 8;
+  }
+  if (kdLast?.k != null) {
+    if (kdLast.k > 85)              s.kd = -10;
+    else if (kdLast.k > kdLast.d && kdLast.k < 80) s.kd = 10;
+    else if (kdLast.k < kdLast.d)   s.kd = -5;
+  }
+  if (adx >= 15 && dmi) {
+    const plusDI = dmi.plusDI.at(-1), minusDI = dmi.minusDI.at(-1);
+    s.dmi = plusDI > minusDI ? Math.min(12, adx/3) : -Math.min(12, adx/3);
+  }
+  const v5  = vols.slice(-5).reduce((a,b)=>a+b,0)/5;
+  const v20 = vols.slice(-20).reduce((a,b)=>a+b,0)/20;
+  s.vol = v5 > v20*1.3 ? 8 : v5 < v20*0.7 ? -6 : 0;
+  if (hv != null) s.hv = hv > 50 ? -6 : hv < 20 ? 4 : 0;
+  if (Math.abs(bias20) > 8)              s.bias = -4;
+  else if (bias20 > 0 && bias20 < 5)     s.bias = 3;
+  if (psy != null) s.psy = psy > 75 ? -2 : psy < 25 ? 3 : 0;
+  
+  console.table({
+    '基準': s.base, 'MA±28': s.trend, 'RSI±20': s.rsi, 'KD±15': s.kd,
+    'DMI±12': s.dmi, '量±10': s.vol, 'HV±8': s.hv, '乖±4': s.bias, 'PSY±3': s.psy,
+    '推算總': Math.max(0, Math.min(100, Object.values(s).reduce((a,b)=>a+(b||0),0))),
+    '★實際': shortScore
+  });
+  
+  // ============ 長線健康度推算 ============
+  console.log('%c\n━━━ 長線健康度 (基準50) ━━━', 'color:#0fa;font-weight:bold');
+  const L = { base: 50 };
+  if (ma60 && ma120 && ma240) {
+    if (ma60 > ma120 && ma120 > ma240)      L.bigTrend = 20;
+    else if (ma60 < ma120 && ma120 < ma240) L.bigTrend = -20;
+    else L.bigTrend = 0;
+  }
+  if (fund) {
+    L.fund = 0;
+    if (fund.eps > 0)                       L.fund += 5;
+    if (fund.earningsGrowth >= 0.2)         L.fund += 8;
+    else if (fund.earningsGrowth >= 0.1)    L.fund += 4;
+    else if (fund.earningsGrowth < -0.2)    L.fund -= 15;
+    if (fund.profitMargin > 0.15)           L.fund += 3;
+    else if (fund.profitMargin > 0)         L.fund += 1;
+    if (fund.pbRatio < 1.5 && fund.pbRatio > 0) L.fund += 4;
+    if (fund.peRatio > 50)                  L.fund -= 10;
+    console.log('  💰 基本面原料:', { 
+      eps: fund.eps, growth: fund.earningsGrowth, 
+      netMargin: fund.profitMargin, PE: fund.peRatio, PB: fund.pbRatio,
+      _source: fund._source
+    });
+  } else {
+    console.log('  ⚠️ fund=null (未建庫 or FinMind 掛了) → 基本面 ±20 維度跳過');
+  }
+  if (n >= 200) {
+    const win = closes.slice(-240);
+    const hi = Math.max(...win), lo = Math.min(...win);
+    const pct = (last.close - lo) / (hi - lo);
+    if (pct < 0.3)      L.pos = 12;
+    else if (pct > 0.9) L.pos = -8;
+    else                L.pos = 0;
+    console.log(`  📍 1年區間: ${lo.toFixed(1)} ~ ${hi.toFixed(1)} | 現價 ${last.close} (${(pct*100).toFixed(0)}%)`);
+  }
+  
+  console.table({
+    '基準': L.base, '大趨勢±20': L.bigTrend, '基本面±20': L.fund, '百分位±15': L.pos,
+    '部分推算': Object.values(L).reduce((a,b)=>a+(b||0),0),
+    '★純技術': longScoreTech,
+    '★含基本面': longScore,
+    '基本面貢獻': longScore - longScoreTech
+  });
+  
+  // ============ 紅旗 ============
+  console.log('%c\n━━━ 紅旗檢查 ━━━', 'color:#f44;font-weight:bold');
+  const flags = [];
+  if (rsi14 > 80)                  flags.push(`🔴 RSI=${rsi14.toFixed(1)} 過熱 短線-15`);
+  if (kdLast?.k > 85)              flags.push(`🔴 K=${kdLast.k.toFixed(1)} 過熱 短線-10`);
+  if (bias20 > 8)                  flags.push(`🔴 bias=${bias20.toFixed(1)}% 超漲`);
+  if (fund?.peRatio > 50)          flags.push(`🔴 PE=${fund.peRatio} 過高 長線-10`);
+  if (fund?.earningsGrowth < -0.2) flags.push(`🔴 EPS衰退${(fund.earningsGrowth*100).toFixed(0)}% 長線-15`);
+  if (n >= 200) {
+    const hi = Math.max(...closes.slice(-240));
+    if (last.close / hi > 0.9)     flags.push(`🔴 現價在1年高點${(last.close/hi*100).toFixed(0)}% 追高 -8`);
+  }
+  if (flags.length === 0) console.log('✅ 無紅旗');
+  else flags.forEach(f => console.log(f));
+  
+  console.log(`%c\n━━━ ${code} → 短線:${shortScore} │ 長線:${longScore} ━━━`, 
+    'color:#0af;font-weight:bold;font-size:16px');
+  
+  // 回傳給 window 方便後續調試
+  window._lastHealthDebug = { code, candles, fund, shortScore, longScore, longScoreTech, s, L };
+  console.log('%c\n💡 結果已存到 window._lastHealthDebug', 'color:#888');
+})();

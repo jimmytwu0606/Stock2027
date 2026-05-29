@@ -22,7 +22,7 @@ import {
   getAllGroups, saveGroup, deleteGroup as dbDeleteGroup,
   initDB, migrateFromLocalStorage,
 } from './db.js';
-import { getChineseName, toYahooSymbol, FEATURE_INTRADAY_5M } from './api.js';
+import { getChineseName, toYahooSymbol } from './api.js';
 import { calcSignalLamps } from './strategy.js';
 import { getYaoguStatus }  from './signal-scan.js';
 import { getYaoguRecord }  from './db.js';
@@ -51,10 +51,7 @@ const _SPARK_PAD = 4;                   // 上下留邊
 let _groups    = [];
 let _collapsed = new Set();
 let _sortState = {};                    // { [groupId]: { key: string|null, dir: 1|-1 } }
-// ★ 無 FinMind token → 強制鎖定 '40d'，完全不打 Yahoo 5m（引信：訂閱後填 token 自動開通）
-let _sparkMode = (FEATURE_INTRADAY_5M && localStorage.getItem('wl_spark_mode') === 'day')
-  ? 'day'
-  : '40d';
+let _sparkMode = localStorage.getItem('wl_spark_mode') || '40d'; // 'day' | '40d'
 
 const _kline40Cache  = new Map();       // code → number[] (close prices, last 40)
 const _intradayCache = new Map();       // code → { points: number[], fetchedAt: number }
@@ -439,8 +436,8 @@ function _renderSparkModeBar() {
   return `<div class="wl-spark-mode-bar">
   <span class="wl-spm-label">走勢圖</span>
   <div class="wl-sptg">
-    ${FEATURE_INTRADAY_5M ? `<button class="wl-spt${_sparkMode === 'day' ? ' wl-spt-on' : ''}"
-            data-action="set-spark-mode" data-mode="day">今日</button>` : ''}
+    <button class="wl-spt${_sparkMode === 'day' ? ' wl-spt-on' : ''}"
+            data-action="set-spark-mode" data-mode="day">今日</button>
     <button class="wl-spt${_sparkMode === '40d' ? ' wl-spt-on' : ''}"
             data-action="set-spark-mode" data-mode="40d">40日</button>
   </div>
@@ -558,7 +555,7 @@ function _renderStock(stock, groupId) {
       ${dupBadge}
     </div>
     <div class="wl-price">${priceStr}</div>
-    <div class="wl-chg ${isUp ? 'wl-chg-up' : 'wl-chg-dn'}">${chgStr}</div>
+    <div class="wl-chg" style="color:${color};">${chgStr}</div>
     ${lampHtml || yaoguDot
       ? `<div class="wl-lamps-row">${lampHtml}${yaoguDot}</div>`
       : ''}
@@ -658,7 +655,6 @@ function _toggleDropdown(id) {
 
 function _setSparkMode(mode) {
   if (mode !== 'day' && mode !== '40d') return;
-  if (mode === 'day' && !FEATURE_INTRADAY_5M) return;  // ★ 無 FinMind token，今日模式鎖定
   _drainGen++;                           // 使當前正在跑的 drain 世代失效
   _sparkRunning = false;                 // 強制釋放鎖（舊 drain 的 finally 會跳過重設）
   _sparkQueue.clear();

@@ -10,6 +10,8 @@ import { fetchQuote, toYahooSymbol, fetchHistory, fetchFundamentals, fetchFundam
 
 // fund 快取（掃描完成後批次讀入）
 let _srFundCache = {};
+// 妖股快取
+let _srYaoguMap = new Map();
 import { showToast }           from './ui.js';
 import {
   extractSeedFeatures, mergeTemplates, defaultWeights,
@@ -17,9 +19,10 @@ import {
 } from './seed.js';
 import { runSeedScan, abortSeedScan } from './seed-scan.js';
 import { getGroups, addStockToGroup, getDefaultGroupId } from './watchlist.js';
-import { getAllSeedSets, saveSeedSet, deleteSeedSet } from './db.js';
+import { getAllSeedSets, saveSeedSet, deleteSeedSet, getAllSignalsCache } from './db.js';
 import { getChineseName } from './api.js';
-import { calcHealth, calcHealthFast, calcHealthLong, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { scanOneCode } from './signal-scan.js';
 
 // 排序狀態
 let _srSortKey = 'compositeScore';
@@ -43,18 +46,7 @@ export async function initSeedUI() {
 }
 
 function _bindSeedListHeader() {
-  const header = document.getElementById('seedListHeader');
-  if (!header || header.dataset.bound) return;
-  header.dataset.bound = '1';
-  header.querySelectorAll('.sr-sort-col').forEach(col => {
-    col.addEventListener('click', () => {
-      const key = col.dataset.sort;
-      if (_srSortKey === key) _srSortAsc = !_srSortAsc;
-      else { _srSortKey = key; _srSortAsc = false; }
-      const results = AppState.seed?.scanResults;
-      if (results?.length) _renderResults(results);
-    });
-  });
+  // header 現在由 _renderResults 動態產生在 table thead，此函式保留為空
 }
 
 // ─── 種子輸入 ─────────────────────────────────────────────
@@ -497,15 +489,14 @@ async function _startScan() {
           summary.style.display = '';
           summary.textContent   = `掃描完成：${found} 檔符合，共掃描 ${scanned} 檔，耗時 ${((Date.now() - startTime) / 1000).toFixed(0)}s`;
         }
-        // 批次讀 fund → 長線健康度吃基本面，讀完重繪
         if (AppState.seed.scanResults?.length > 0) {
           const codes = AppState.seed.scanResults.map(r => r.code);
           fetchFundamentalsBatch(codes).then(fundMap => {
             fundMap.forEach((f, code) => { _srFundCache[code] = f ?? null; });
             _renderResults(AppState.seed.scanResults);
           }).catch(() => {});
+          _scanYaoguForSeedResults(AppState.seed.scanResults);
         }
-        // 儲存到範本
         _maybeSavePattern();
         break;
 
@@ -518,6 +509,60 @@ async function _startScan() {
   }
 }
 
+// ─── 妖股掃描（背景執行）────────────────────────────────────
+async function _scanYaoguForSeedResults(results) {
+  const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let xCount = 0;
+  let allCache = [];
+  try { allCache = await getAllSignalsCache(); } catch(e) {}
+
+  for (const item of results) {
+    try {
+      const cached  = allCache.find(r => r.code === item.code);
+      const isFresh = cached && (now - (cached.scannedAt ?? 0)) < THREE_DAYS;
+      let sigs = [];
+      if (isFresh) {
+        sigs = cached.signals ?? [];
+      } else {
+        sigs = await Promise.race([
+          scanOneCode(item.code, { silent: true }),
+          new Promise(res => setTimeout(() => res([]), 5000)),
+        ]);
+      }
+      const x1 = sigs.some(s => s.id === 'X1');
+      const x2 = sigs.some(s => s.id === 'X2');
+      const x5 = sigs.some(s => s.id === 'X5');
+      if (x1 || x2 || x5) {
+        _srYaoguMap.set(item.code, { x1, x2, x5, strongest: x2?'X2':x1?'X1':'X5' });
+        xCount++;
+      }
+    } catch(e) {
+      console.warn(`[seed-ui] 妖股掃描失敗 ${item.code}:`, e.message);
+    }
+  }
+  if (xCount > 0) {
+    _renderResults(results);
+    _showSeedYaoguAlert(xCount);
+  }
+}
+
+function _showSeedYaoguAlert(count) {
+  if (document.getElementById('srYaoguAlert')) return;
+  const alert = document.createElement('div');
+  alert.id = 'srYaoguAlert';
+  alert.className = 'sr-yaogu-alert';
+  alert.innerHTML = `
+    <span>🚀</span>
+    <span>篩選結果中有 <strong>${count}</strong> 檔出現妖股訊號（X1/X2/X5）</span>
+    <button class="sr-yaogu-alert-close" id="srYaoguAlertClose">✕</button>
+  `;
+  const summary = document.getElementById('seedSummary');
+  summary?.insertAdjacentElement('afterend', alert);
+  document.getElementById('srYaoguAlertClose')?.addEventListener('click', () => alert.remove());
+  setTimeout(() => alert.remove(), 8000);
+}
+
 // ─── 結果列表 ─────────────────────────────────────────────
 function _renderResults(items) {
   const list = document.getElementById('seedResultList');
@@ -525,108 +570,126 @@ function _renderResults(items) {
 
   if (!items || items.length === 0) {
     list.innerHTML = '<div class="seed-result-empty">尚無結果</div>';
+    _srYaoguMap = new Map();
     return;
   }
 
   // 排序
   const sorted = [...items].sort((a, b) => {
     let av, bv;
-    if (_srSortKey === 'health') {
-      // 短線固定取最後 65 根（≈3mo）統一基底
+    if (_srSortKey === 'hs') {
       const _s = c => c?.length > 65 ? c.slice(-65) : c;
-      const _h = (item) => item.miniCandles?.length >= 20 ? calcHealth(_s(item.miniCandles)) : calcHealthFast({ indicators: {}, chgPct: item.chgPct ?? 0 });
-      av = _h(a) ?? -1;   // 排序用短線
-      bv = _h(b) ?? -1;
+      av = calcHealth(_s(a.miniCandles)) ?? -1;
+      bv = calcHealth(_s(b.miniCandles)) ?? -1;
+    } else if (_srSortKey === 'hl') {
+      av = calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null) ?? -1;
+      bv = calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null) ?? -1;
+    } else if (_srSortKey === 'chg') {
+      av = a.chgPct ?? 0; bv = b.chgPct ?? 0;
+    } else if (_srSortKey === 'price') {
+      av = a.price ?? 0; bv = b.price ?? 0;
     } else {
-      av = a[_srSortKey] ?? 0;
-      bv = b[_srSortKey] ?? 0;
+      av = a[_srSortKey] ?? 0; bv = b[_srSortKey] ?? 0;
     }
     return _srSortAsc ? av - bv : bv - av;
   });
 
-  // 更新 list-header 排序箭頭
-  const header = document.getElementById('seedListHeader');
-  if (header) {
-    header.querySelectorAll('.sr-sort-col').forEach(col => {
-      const key = col.dataset.sort;
-      const isActive = key === _srSortKey;
-      col.classList.toggle('active', isActive);
-      const labels = { compositeScore:'綜合分', health:'健康度', patternScore:'線型' };
-      col.textContent = (labels[key] ?? key) + (isActive ? (_srSortAsc ? ' ↑' : ' ↓') : '');
-    });
-  }
+  // table 結構：代號 / 股名 / 現價 / 漲跌 / 短線健康 / 長線健康 / 妖股 / 走勢 / ＋
+  const cols = [
+    { key: 'code',  label: '代號' },
+    { key: 'name',  label: '股名' },
+    { key: 'price', label: '現價' },
+    { key: 'chg',   label: '漲跌幅' },
+    { key: 'hs',    label: '短線健康' },
+    { key: 'hl',    label: '長線健康' },
+    { key: 'yaogu', label: '妖股', noSort: true },
+    { key: 'chart', label: '走勢',  noSort: true },
+    { key: 'add',   label: '',      noSort: true },
+  ];
 
-  list.innerHTML = '';
+  let thead = '<tr>';
+  cols.forEach(col => {
+    if (col.noSort) {
+      thead += `<th class="sr-tbl-th no-sort">${col.label}</th>`;
+      return;
+    }
+    const isSorted = _srSortKey === col.key;
+    const arrow = isSorted ? (_srSortAsc ? ' ▲' : ' ▼') : '';
+    thead += `<th class="sr-tbl-th${isSorted ? ' sorted' : ''}" data-col="${col.key}">${col.label}${arrow}</th>`;
+  });
+  thead += '</tr>';
+
+  let tbody = '';
   for (const item of sorted) {
-    const row = document.createElement('div');
-    row.className = 'seed-result-row';
-    row.dataset.code = item.code;
-
-    const pill   = item.compositeScore >= 80 ? 'high' : item.compositeScore >= 65 ? 'medium' : 'low';
+    const _candlesShort = item.miniCandles?.length > 65 ? item.miniCandles.slice(-65) : item.miniCandles;
+    const hs = _candlesShort?.length >= 20 ? calcHealth(_candlesShort) : null;
+    const hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null) : null;
+    const yg = _srYaoguMap.get(item.code);
     const chgCls = item.chgPct >= 0 ? 'up' : 'down';
     const chgStr = (item.chgPct >= 0 ? '+' : '') + item.chgPct.toFixed(2) + '%';
-    // 短線固定取最後 65 根（≈3mo），長線用完整 candles
-    const _candlesShort = item.miniCandles?.length > 65 ? item.miniCandles.slice(-65) : item.miniCandles;
-    const healthShort = _candlesShort?.length >= 20
-      ? calcHealth(_candlesShort)
-      : calcHealthFast({ indicators: {}, chgPct: item.chgPct ?? 0 });
-    const healthLong  = item.miniCandles?.length >= 120
-      ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null)
-      : null;
 
-    row.innerHTML = `
-      <div class="sr-main">
-        <span class="sr-code">${item.code}</span>
-        <span class="sr-name">${item.name}</span>
-        <span class="sr-price ${chgCls}">${item.price.toFixed(item.price >= 100 ? 0 : 1)} <em>${chgStr}</em></span>
-      </div>
-      <div class="sr-health-col">${healthBadgeDual(healthShort, healthLong, 'sr')}</div>
-      <div class="sr-scores">
-        <span class="seed-score-pill ${pill}">${item.compositeScore}</span>
-        <div class="seed-score-bars">
-          <div class="seed-score-bar" title="產業 ${item.sectorScore}">
-            <div class="sector-fill"  style="width:${item.sectorScore}%"></div>
-          </div>
-          <div class="seed-score-bar" title="線型 ${item.patternScore}">
-            <div class="pattern-fill" style="width:${item.patternScore}%"></div>
-          </div>
-          <div class="seed-score-bar" title="指標 ${item.indicatorScore}">
-            <div class="indicator-fill" style="width:${item.indicatorScore}%"></div>
-          </div>
+    tbody += `<tr class="sr-tbl-row" data-code="${item.code}">
+      <td class="sr-tbl-td"><span class="sr-tbl-code">${item.code}</span></td>
+      <td class="sr-tbl-td"><span class="sr-tbl-name">${item.name}</span></td>
+      <td class="sr-tbl-td"><span class="sr-tbl-price">${item.price.toFixed(item.price >= 100 ? 0 : 1)}</span></td>
+      <td class="sr-tbl-td"><span class="sr-tbl-chg ${chgCls}">${chgStr}</span></td>
+      <td class="sr-tbl-td">${healthBadge(hs, 'hg')}</td>
+      <td class="sr-tbl-td">${healthBadge(hl, 'hg')}</td>
+      <td class="sr-tbl-td">${yg ? `<span class="sr-yaogu-pill sr-yaogu-pill--${yg.strongest.toLowerCase()}">${yg.strongest}</span>` : ''}</td>
+      <td class="sr-tbl-td"><canvas class="sr-mini-chart" height="36" data-code="${item.code}"></canvas></td>
+      <td class="sr-tbl-td">
+        <div class="sr-add-wrap">
+          <button class="sr-add-btn" data-code="${item.code}" title="加入自選群組">＋</button>
+          <div class="sr-add-dropdown" style="display:none"></div>
         </div>
-      </div>
-      <canvas class="sr-mini-chart" height="36" data-code="${item.code}"></canvas>
-      <div class="sr-add-wrap" style="position:relative">
-        <button class="sr-add-btn" title="加入自選群組">＋</button>
-        <div class="sr-add-dropdown" style="display:none"></div>
-      </div>
-    `;
+      </td>
+    </tr>`;
+  }
 
-    row.addEventListener('click', () => {
-      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code: item.code } }));
-      // 跳轉看盤 Tab
+  const wrap = document.createElement('div');
+  wrap.className = 'sr-tbl-wrap';
+  wrap.innerHTML = `<table class="sr-tbl"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+  list.innerHTML = '';
+  list.appendChild(wrap);
+
+  // 排序 header
+  wrap.querySelectorAll('.sr-tbl-th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (_srSortKey === col) _srSortAsc = !_srSortAsc;
+      else { _srSortKey = col; _srSortAsc = false; }
+      _renderResults(AppState.seed.scanResults);
+    });
+  });
+
+  // 點列 → 跳看盤
+  wrap.querySelectorAll('.sr-tbl-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.sr-add-btn') || e.target.closest('.sr-add-dropdown')) return;
+      const code = row.dataset.code;
+      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code } }));
       document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
       document.querySelector('.main-tab[data-tab="chart"]')?.classList.add('active');
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tabChart')?.classList.add('active');
-      // 手機
       document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
       document.querySelector('.tab-item[data-mobile-tab="chart"]')?.classList.add('active');
     });
+  });
 
-    // ＋ 加入自選群組
-    const addBtn  = row.querySelector('.sr-add-btn');
-    const addDrop = row.querySelector('.sr-add-dropdown');
-    addBtn?.addEventListener('click', (e) => {
+  // ＋ 加入自選群組
+  wrap.querySelectorAll('.sr-add-btn').forEach(btn => {
+    const code = btn.dataset.code;
+    const item = sorted.find(i => i.code === code);
+    const addDrop = btn.nextElementSibling;
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const isOpen = addDrop.style.display === 'block';
-      if (isOpen) { addDrop.style.display = 'none'; return; }
-
+      if (addDrop.style.display === 'block') { addDrop.style.display = 'none'; return; }
       const groups = getGroups();
       addDrop.innerHTML = '';
       for (const g of groups) {
         const gi = document.createElement('div');
-        gi.className   = 'sr-add-group-item';
+        gi.className = 'sr-add-group-item';
         gi.textContent = g.name ?? '自選清單';
         gi.addEventListener('click', async (e2) => {
           e2.stopPropagation();
@@ -640,17 +703,17 @@ function _renderResults(items) {
       }
       addDrop.style.display = 'block';
     });
-    // 點外部關閉
     document.addEventListener('click', () => { addDrop.style.display = 'none'; }, { once: true });
+  });
 
-    list.appendChild(row);
-
-    // 迷你 K 線圖
-    const canvas = row.querySelector('.sr-mini-chart');
-    if (canvas && item.miniCandles?.length) {
+  // 迷你 K 線圖
+  wrap.querySelectorAll('.sr-mini-chart').forEach(canvas => {
+    const code = canvas.dataset.code;
+    const item = sorted.find(i => i.code === code);
+    if (item?.miniCandles?.length) {
       requestAnimationFrame(() => _drawMiniChart(canvas, item.miniCandles));
     }
-  }
+  });
 }
 
 function _drawMiniChart(canvas, candles) {

@@ -38,17 +38,15 @@ const _listeners = new Set();
 
 // ── 更新個股標頭的函式（由 main.js 在初始化時注入，避免循環 import）────────
 let _updateHeaderFn   = null;
-let _updateWatchlistFn = null;  // updateStockPrices（寫 DB）
-let _updateMisFn       = null;  // updateStockPricesFromMis（不寫 DB）
+let _updateWatchlistFn = null;
+let _updateMisFn       = null;
+let _getChineseNameFn  = null;  // api.js 的 getChineseName，由 main.js 注入
 
-/**
- * 由 main.js 初始化時注入 UI 更新函式
- * @param {{ updateHeader, updateStockPrices, updateStockPricesFromMis }} fns
- */
-export function initPriceHub({ updateHeader, updateStockPrices, updateStockPricesFromMis }) {
+export function initPriceHub({ updateHeader, updateStockPrices, updateStockPricesFromMis, getChineseName }) {
   _updateHeaderFn    = updateHeader;
   _updateWatchlistFn = updateStockPrices;
   _updateMisFn       = updateStockPricesFromMis;
+  _getChineseNameFn  = getChineseName ?? null;
 
   // 讓外部仍可透過 window.__priceCache 讀取（向後相容篩選器等直讀邏輯）
   window.__priceCache = _cache;
@@ -89,13 +87,31 @@ export function push(map, opts = {}) {
     const chg    = incoming.chg    ?? (price - prev);
     const chgPct = incoming.chgPct ?? (prev > 0 ? (chg / prev) * 100 : 0);
 
+    // ── name 合併：中文名優先，不讓英文名蓋掉已有的中文名 ──────────────────
+    const isChinese = (s) => s && /[\u4e00-\u9fa5]/.test(s);
+    const cachedName = _cache[code]?.name;
+    const incomingName = incoming.name;
+    let mergedName;
+    if (isChinese(incomingName)) {
+      mergedName = incomingName;                    // 新的是中文 → 覆蓋
+    } else if (isChinese(cachedName)) {
+      mergedName = cachedName;                      // cache 是中文 → 保留
+    } else {
+      mergedName = incomingName || cachedName || code; // 都不是中文 → 用非空的
+    }
+    // 同步補查 _nameCache（api.js 的本地快取）
+    if (!isChinese(mergedName)) {
+      const apiName = window.__nameCache?.get?.(code);
+      if (isChinese(apiName)) mergedName = apiName;
+    }
+
     const next = {
       price,
       prev,
       chg,
       chgPct,
       volume:  incoming.volume  ?? _cache[code]?.volume  ?? 0,
-      name:    incoming.name    || _cache[code]?.name    || code,
+      name:    mergedName,
       // open/high/low 只有 Yahoo 有；merge 保留已存在的值，新值優先
       open:    incoming.open    ?? _cache[code]?.open    ?? null,
       high:    incoming.high    ?? _cache[code]?.high    ?? null,
@@ -124,6 +140,12 @@ export function push(map, opts = {}) {
   // ── 2. 更新個股標頭（只在 activeCode 有在本批更新時才觸發）──────────────
   if (updateHeader && _updateHeaderFn && activeCode && updated[activeCode]) {
     const d = updated[activeCode];
+    // 補查中文名：api._nameCache → window.__nameCache → 已有的 name
+    const isChinese = (s) => s && /[\u4e00-\u9fa5]/.test(s);
+    const chName = (_getChineseNameFn?.(activeCode))
+      || window.__nameCache?.get?.(activeCode)
+      || (isChinese(d.name) ? d.name : null)
+      || d.name;
     _updateHeaderFn(activeCode, {
       price:  d.price,
       prev:   d.prev,
@@ -131,7 +153,7 @@ export function push(map, opts = {}) {
       high:   d.high,
       low:    d.low,
       volume: d.volume,
-      name:   d.name,
+      name:   chName,
     });
   }
 

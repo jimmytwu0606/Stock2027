@@ -13,9 +13,14 @@ import { runBacktest, calcReturnDistribution } from './backtest.js';
 import { AppState } from './state.js';
 import { normalizeSeries } from './pattern.js';
 import { getChineseName, fetchFundamentalsBatch } from './api.js';
+import { initPatternImageUI } from './pattern-image-ui.js';
+import { getAllSignalsCache } from './db.js';
+import { scanOneCode } from './signal-scan.js';
 
 // fund 快取
 let _prFundCache = {};
+// 妖股快取（掃描結果存這裡，重繪時用）
+let _prYaoguMap = new Map();
 import { calcHealth, calcHealthLong, healthBadgeDual } from './health.js';
 
 // 排序狀態
@@ -28,7 +33,31 @@ export function initPatternUI() {
   _buildResultPanel();
   _listenScanStart();
   _listenAbort();
+  _initImageMode();
+  // Tab 切換（draw ↔ image）統一由 pattern-draw.js 的 _bindModeSwitch 管理
 }
+
+// ─── 圖片模式初始化 ────────────────────────────────────────
+function _initImageMode() {
+  const container = document.getElementById('pdImageWrap');
+  if (!container) return;
+
+  initPatternImageUI(container, {
+    onResult(normalizedPrices) {
+      if (!normalizedPrices?.length) return;
+      // 同步掃描參數
+      AppState.pattern = AppState.pattern || {};
+      AppState.pattern.similarity  = parseInt(document.getElementById('pdSimilarity')?.value || 75);
+      AppState.pattern.windowSize  = parseInt(document.getElementById('pdWindow')?.value || 20);
+      AppState.pattern.featureMode = document.getElementById('pdFeatureMode')?.value || 'simple';
+      // 派發掃描事件，走既有流程
+      document.dispatchEvent(new CustomEvent('patternScanStart', {
+        detail: { template: normalizedPrices }
+      }));
+    }
+  });
+}
+
 
 // ─── 結果面板 HTML 骨架 ────────────────────────────────────
 function _buildResultPanel() {
@@ -171,6 +200,8 @@ function _resetUI() {
   _prResults = [];
   _prSortKey = 'score';
   _prSortAsc = false;
+  _prFundCache = {};
+  _prYaoguMap = new Map();
   document.getElementById('prList')?.replaceChildren();
   ['prSummary','prBacktest','prListHeader','prEmpty'].forEach(id => {
     const el = document.getElementById(id);
@@ -197,7 +228,6 @@ function _renderAllResults() {
   const sorted = [..._prResults].sort((a, b) => {
     let av, bv;
     if (_prSortKey === 'health') {
-      // 短線固定取最後 65 根（≈3mo）統一基底
       const _s = c => c?.length > 65 ? c.slice(-65) : c;
       av = calcHealth(_s(a.candles)) ?? -1;
       bv = calcHealth(_s(b.candles)) ?? -1;
@@ -216,10 +246,17 @@ function _renderAllResults() {
 
     const scoreColor = item.score >= 90 ? 'var(--down)' :
                        item.score >= 75 ? 'var(--accent)' : 'var(--muted)';
-    // 短線固定取最後 65 根（≈3mo），長線用完整 candles
+
     const candlesShort = item.candles?.length > 65 ? item.candles.slice(-65) : item.candles;
-    const healthShort = calcHealth(candlesShort);
-    const healthLong  = item.candles?.length >= 120 ? calcHealthLong(item.candles, _prFundCache[item.code] ?? null) : null;
+    const healthShort  = calcHealth(candlesShort);
+    const healthLong   = item.candles?.length >= 120
+      ? calcHealthLong(item.candles, _prFundCache[item.code] ?? null) : null;
+
+    // 妖股 pill
+    const yg = _prYaoguMap.get(item.code);
+    const ygHtml = yg
+      ? `<div class="pr-yaogu-cell"><span class="pr-yaogu-pill pr-yaogu-pill--${yg.strongest.toLowerCase()}">${yg.strongest}</span></div>`
+      : `<div class="pr-yaogu-cell">—</div>`;
 
     row.innerHTML = `
       <div class="pr-row-info">
@@ -230,7 +267,8 @@ function _renderAllResults() {
         ${item.score.toFixed(1)}%
       </div>
       <div class="pr-row-health">${healthBadgeDual(healthShort, healthLong, 'pr')}</div>
-      <canvas class="pr-mini-chart" width="120" height="40" data-code="${item.code}"></canvas>
+      ${ygHtml}
+      <canvas class="pr-mini-chart" width="110" height="40" data-code="${item.code}"></canvas>
     `;
 
     list.appendChild(row);
@@ -248,14 +286,13 @@ function _renderAllResults() {
     });
   }
 
-  // 排序 header 點擊（每次重繪後重新綁定）
+  // 排序 header 點擊
   const header = document.getElementById('prListHeader');
   header?.querySelectorAll('.pr-sort-col').forEach(col => {
     col.addEventListener('click', () => {
       const key = col.dataset.sort;
       if (_prSortKey === key) _prSortAsc = !_prSortAsc;
       else { _prSortKey = key; _prSortAsc = false; }
-      // 更新 header 箭頭
       header.querySelectorAll('.pr-sort-col').forEach(c => {
         const isActive = c.dataset.sort === _prSortKey;
         c.classList.toggle('active', isActive);
@@ -319,6 +356,10 @@ function _onScanDone(results, template, aborted = false) {
     document.getElementById('prSumFound').textContent = `找到 ${results.length} 檔`;
   }
 
+  // 顯示列表 header
+  const header = document.getElementById('prListHeader');
+  if (header) header.style.display = '';
+
   // 批次讀 fund → 長線健康度吃基本面，讀完重繪
   const codes = results.map(r => r.code);
   fetchFundamentalsBatch(codes).then(fundMap => {
@@ -328,6 +369,80 @@ function _onScanDone(results, template, aborted = false) {
 
   // 回測
   _renderBacktest(results, template);
+
+  // ── 妖股掃描：先讀 signals_cache，3天內有 X 訊號的直接用，否則即時掃
+  // ⚠️ 踩雷備忘（永久，2026-05-28）：
+  //   邏輯與 theme-ui.js _openYaoguScanModal 相同，讀 signals_cache → 有就用，沒有才即時掃
+  //   即時掃有 5 秒 timeout 保護，避免 proxy 全掛時整個卡死
+  _scanYaoguForResults(results);
+}
+
+// 妖股掃描（背景執行，不阻塞列表渲染）
+async function _scanYaoguForResults(results) {
+  const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  let xCount = 0;
+
+  let allCache = [];
+  try { allCache = await getAllSignalsCache(); } catch(e) {}
+
+  for (const item of results) {
+    try {
+      const cached = allCache.find(r => r.code === item.code);
+      const isFresh = cached && (now - (cached.scannedAt ?? 0)) < THREE_DAYS;
+
+      let sigs = [];
+      if (isFresh) {
+        sigs = cached.signals ?? [];
+      } else {
+        sigs = await Promise.race([
+          scanOneCode(item.code, { silent: true }),
+          new Promise(res => setTimeout(() => res([]), 5000)),
+        ]);
+      }
+
+      const x1 = sigs.some(s => s.id === 'X1');
+      const x2 = sigs.some(s => s.id === 'X2');
+      const x5 = sigs.some(s => s.id === 'X5');
+      if (x1 || x2 || x5) {
+        const strongest = x2 ? 'X2' : x1 ? 'X1' : 'X5';
+        _prYaoguMap.set(item.code, { x1, x2, x5, strongest });
+        xCount++;
+      }
+    } catch(e) {
+      console.warn(`[pattern-ui] 妖股掃描失敗 ${item.code}:`, e.message);
+    }
+  }
+
+  // 有妖股才重繪 + 跳確認視窗
+  if (xCount > 0) {
+    _renderAllResults();
+    _showYaoguAlert(xCount);
+  }
+}
+
+// 妖股確認視窗
+function _showYaoguAlert(count) {
+  // 已存在就不重複
+  if (document.getElementById('prYaoguAlert')) return;
+
+  const alert = document.createElement('div');
+  alert.id = 'prYaoguAlert';
+  alert.className = 'pr-yaogu-alert';
+  alert.innerHTML = `
+    <span class="pr-yaogu-alert-icon">🚀</span>
+    <span class="pr-yaogu-alert-text">篩選結果中有 <strong>${count}</strong> 檔出現妖股訊號（X1/X2/X5）</span>
+    <button class="pr-yaogu-alert-close" id="prYaoguAlertClose">✕</button>
+  `;
+
+  // 插在 prSummary 後面
+  const sum = document.getElementById('prSummary');
+  sum?.insertAdjacentElement('afterend', alert);
+
+  document.getElementById('prYaoguAlertClose')?.addEventListener('click', () => alert.remove());
+
+  // 5 秒後自動消失
+  setTimeout(() => alert.remove(), 8000);
 }
 
 // ─── 回測面板 ──────────────────────────────────────────────

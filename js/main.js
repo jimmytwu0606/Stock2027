@@ -62,7 +62,7 @@ import {
 import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals } from './stock-tabs.js';
 import { initScreener } from './screener-ui.js';
-import { initStrategyPanel, getSignalPeriod } from './strategy.js';
+import { initStrategyPanel, getSignalPeriod, refreshStrategyCards } from './strategy.js';
 import { initStrategyModal, renderStrategyGrid } from './modal-strategy.js';
 import { initPortfolio } from './portfolio-ui.js';
 import { initPatternDraw, updateScreenerCount } from './pattern-draw.js';
@@ -135,26 +135,33 @@ async function loadStock(code, opts = {}) {
 
     const { chg, chgPct } = updateHeader(code, quote);
 
-    // ── 補刷中文名：等 Firebase 名稱預載 + TWSE 批次其中一個完成就補刷 ──
+    // ── 補刷中文名：立刻補 + 二次保險 ──
     // ⚠️ 踩雷備忘：
-    //   preloadNamesFromFirestore 背景執行，loadStock 幾乎同時觸發（race condition）
-    //   ensureChineseName 查不到時 shName 顯示 code，等預載完成後要補刷回來
-    //   原本只等 __twsePricesReady，但 Firebase 預載比 TWSE 批次快很多
-    //   改為 Promise.race，任一完成就立即補刷，不用等最慢的那個
-    if (!getChineseName(code)) {
-      Promise.race([
-        window.__namesReady   ?? Promise.resolve(),
-        window.__twsePricesReady ?? Promise.resolve(),
-      ]).then(() => {
-        const chName = getChineseName(code) || window.__nameCache?.get?.(code);
-        if (chName && AppState.activeCode === code) {
-          const el = document.getElementById('shName');
-          if (el && el.textContent !== chName) el.textContent = chName;
-          PriceHub.push({ [code]: { price: quote.price, chg, chgPct, name: chName } }, { persist: false, updateHeader: false, source: 'loadStock-namefix' });
-          reloadStockTabs(code, chName);
-        }
-      });
+    //   ensureChineseName 與 resolveYahooSymbol 並行，但 fetchQuote 比它快
+    //   updateHeader 跑的當下中文名可能還沒到，填了 Yahoo 英文名
+    //   修法：updateHeader 後立刻 await ensureChineseName 結果補填；
+    //         再用 Promise.race 等 Firebase/TWSE 批次做二次保險
+    {
+      const chName = getChineseName(code)
+        || window.__nameCache?.get?.(code)
+        || await ensureChineseName(code).catch(() => null);
+      if (chName && AppState.activeCode === code) {
+        const el = document.getElementById('shName');
+        if (el && el.textContent !== chName) el.textContent = chName;
+      }
     }
+    Promise.race([
+      window.__namesReady      ?? Promise.resolve(),
+      window.__twsePricesReady ?? Promise.resolve(),
+    ]).then(() => {
+      const chName = getChineseName(code) || window.__nameCache?.get?.(code);
+      if (chName && AppState.activeCode === code) {
+        const el = document.getElementById('shName');
+        if (el && el.textContent !== chName) el.textContent = chName;
+        PriceHub.push({ [code]: { price: quote.price, chg, chgPct, name: chName } }, { persist: false, updateHeader: false, source: 'loadStock-namefix' });
+        reloadStockTabs(code, chName);
+      }
+    });
 
     // 優先用中文名（_nameCache 由 ensureChineseName/TWSE/FinMind 填入），fallback 才用 Yahoo 英文名
     const displayName = getChineseName(code) || quote.name;
@@ -1441,6 +1448,7 @@ function _initFullscreen() {
       updateHeader,
       updateStockPrices,
       updateStockPricesFromMis,
+      getChineseName,   // 注入中文名查詢，讓 price-hub 可以補中文名
     });
 
     // ── 啟動時預填上次價格（stockInfo.lastPrice → PriceHub）──────────────
@@ -1522,6 +1530,7 @@ function _initFullscreen() {
     // tier gate 更新（登入後重新套用權限，登出後退回訪客）
     const tier = e.detail?.tier ?? (e.detail?.user ? 'free' : 'guest');
     applyTierGate(tier);
+    refreshStrategyCards();  // tier 確認後補刷策略卡片（避免 Pro 策略因時序問題不顯示）
 
     // 自選清單重繪（雲端同步完成後）
     // 用 reloadWatchlist 而非 initWatchlist，避免工具列按鈕被重複綁定

@@ -10,7 +10,7 @@
  *   abortSeedScan()
  */
 
-import { fetchTWSEPrices, fetchHistory, fetchFundamentals, toYahooSymbol, getAllKnownCodes, getChineseName } from './api.js';
+import { fetchTWSEPrices, fetchHistoryCached, resolveYahooSymbol, fetchFundamentals, getAllKnownCodes, getChineseName } from './api.js';
 import { AppState }  from './state.js';
 import { Config }    from './config.js';
 import {
@@ -118,10 +118,11 @@ export async function* runSeedScan(template, opts = {}) {
       return;
     }
 
-    const symbol = toYahooSymbol(code);
-    if (skipOTC && symbol.endsWith('.TWO')) { done++; continue; }
-
-    const result = await _scanOne(code, symbol, template, {
+    // ⚠️ 踩雷備忘（永久，2026-05-28）：
+    //   舊版用 toYahooSymbol + skipOTC，_otcSet 冷啟動空時上櫃股全被跳過，
+    //   KV miss + Yahoo 502 時 fetchHistory 沒有 staleCandles 保護全部死掉。
+    //   改用 resolveYahooSymbol（自動試 .TW/.TWO，有 staleCandles fallback）。
+    const result = await _scanOne(code, template, {
       weights, windowSize, period, threshold, signal, priceMap,
     });
 
@@ -139,7 +140,6 @@ export async function* runSeedScan(template, opts = {}) {
       yield { type: 'progress', done, total, message: `掃描中 ${done}/${total}…`, rateLimited: false };
     }
 
-    // 指數退避延遲
     const delay = 400 + Math.min(consecutive429 * 1200, 8000);
     await _sleep(delay);
   }
@@ -150,7 +150,7 @@ export async function* runSeedScan(template, opts = {}) {
 }
 
 // ─── 單股掃描 ─────────────────────────────────────────────
-async function _scanOne(code, symbol, template, opts) {
+async function _scanOne(code, template, opts) {
   const { weights, windowSize, period, threshold, signal, priceMap } = opts;
   if (signal?.aborted) return null;
 
@@ -159,21 +159,19 @@ async function _scanOne(code, symbol, template, opts) {
   for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
     if (signal?.aborted) return null;
     try {
-      const candles = await fetchHistory(symbol, period);
+      // resolveYahooSymbol：自動試 .TW/.TWO，有 staleCandles fallback
+      // fetchHistoryCached：KV HIT 時極快，miss 才打 Yahoo
+      const { symbol, candles } = await resolveYahooSymbol(code, period);
       if (!candles || candles.length < windowSize + 30) return null;
 
       const recent = candles.slice(-windowSize);
 
       // ── 三維評分 ──
-      // sector 評分：不主動請求 fundamentals，嘗試從 Yahoo meta 取（已有快取時免費）
       let sectorScore = null;
       try {
-        // 使用輕量 fetchFundamentals（Yahoo v8 meta），通常已有快取
         const meta = await _fetchMetaQuiet(symbol);
         sectorScore = scoreSector(meta, template);
-      } catch (_) {
-        // sector 評分失敗不影響整體
-      }
+      } catch (_) {}
 
       const patternScore   = scorePattern(candles.slice(-(windowSize + 5)), template, 'simple');
       const indicatorScore = scoreIndicators(candles, template);
@@ -192,7 +190,7 @@ async function _scanOne(code, symbol, template, opts) {
         patternScore,
         indicatorScore,
         compositeScore,
-        sector:         null,  // meta 結果不在此儲存（避免非同步複雜度）
+        sector:         null,
         industry:       null,
         miniCandles:    recent,
       };

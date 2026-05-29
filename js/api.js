@@ -15,6 +15,13 @@
  */
 
 import { getDataSource, getFinMindToken, getNewsSource } from './config.js';
+
+/**
+ * 今日盤中 5m K / Sparkline 功能開關
+ * ★ 引信：FinMind 付費訂閱後在 config.js 填入 token → 自動 true → 開通今日走勢圖
+ *   false 時完全不打 Yahoo 5m，避免 IP 被 Yahoo throttle 連帶影響 K 線 prewarm
+ */
+export const FEATURE_INTRADAY_5M = !!getFinMindToken();
 import { getKlineCache, setKlineCache } from './db.js';
 // Advanced 1 — 讀取 Cron Worker 寫入的 Firestore 共享資料
 import { fsGetShared } from './firebase.js';
@@ -127,6 +134,7 @@ export async function resolveYahooSymbol(code, period, opts = {}) {
  *   3. SELF_PROXY 會優先使用，掛掉才 fallback 到公開 proxy
  */
 const SELF_PROXY = 'https://stock-2027.luffy0606.workers.dev/?url=';   // 使用者自架 Worker
+const PROXY_TOKEN = 'e99ecdc813d9a203d1951613de68e7a22f83e5b22ffd458f';  // Worker 認證 Token
 
 /**
  * Phase 7.4 — Worker 健康度追蹤
@@ -304,7 +312,12 @@ async function fetchWithProxy(url, timeoutMs = 8000, { fastFail = false } = {}) 
       const proxyUrl = proxies[i](url);
       const isWorker = SELF_PROXY && proxyUrl.startsWith(SELF_PROXY);
       try {
-        const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(timeoutMs) });
+        // Worker 請求帶 Token，防止白嫖
+        const fetchOpts = { signal: AbortSignal.timeout(timeoutMs) };
+        if (isWorker && PROXY_TOKEN) {
+          fetchOpts.headers = { 'X-Proxy-Token': PROXY_TOKEN };
+        }
+        const res = await fetch(proxyUrl, fetchOpts);
         if (res.status === 404) {
           const text = await res.text();
           if (isWorker) _onWorkerSuccess();
@@ -319,7 +332,15 @@ async function fetchWithProxy(url, timeoutMs = 8000, { fastFail = false } = {}) 
         if (isWorker) _onWorkerSuccess();
         return text;
       } catch (e) {
-        if (isWorker) _onWorkerFail();
+        if (isWorker) {
+          // ★ 只有真正的 Worker 故障才計入失敗（timeout / network error）
+          // HTTP 502/503/504 = MIS 或 Yahoo 上游回錯，Worker 本身正常
+          // 限流 = Yahoo 打爆，與 Worker 無關
+          // ← 這兩種情況不應讓 Worker 被停用 2 分鐘，否則 MIS 一抖動就癱整個系統
+          const isHttpError = /^HTTP \d+$/.test(e.message);
+          const isRateLimit = e.message.includes('限流');
+          if (!isHttpError && !isRateLimit) _onWorkerFail();
+        }
         console.warn(`[api] proxy[${i}] failed:`, e.message);
       }
     }
@@ -386,6 +407,31 @@ const PERIOD_MAP = {
   '2y':  { interval: '1wk', range: '2y'  },
 };
 
+// Worker KV 只存 1y，短期 period 向 1y 合併後回傳完整資料。
+// fetchHistory 解析完後必須截斷到 period 對應的天數，
+// 否則 3mo cache 存進 IndexedDB 的會是 250 根 1y 資料，圖表卡在 1y。
+// ⚠️ 踩雷備忘（永久，2026-05-28）：
+//   worker.js _yahooKvKey 把 1mo/3mo/6mo 全部 map 到 1y KV key，
+//   KV HIT 時回傳 1y 完整 JSON，fetchHistory 解出 ~250 根，
+//   但 fetchHistoryCached 的 IndexedDB key 是 symbol_3mo → 存了 250 根進去，
+//   之後 3mo 從 cache 拿到 250 根 → 圖表顯示 1y 範圍，無法切換。
+//   修法：fetchHistory 解析後根據 period 截尾，確保回傳根數符合 period。
+const _PERIOD_DAYS = {
+  '5d':   5,
+  '1mo':  23,
+  '3mo':  66,
+  '6mo':  132,
+  '1y':   252,
+  '2y':   520,
+};
+
+function _trimCandlesToPeriod(candles, period) {
+  const maxDays = _PERIOD_DAYS[period];
+  if (!maxDays || candles.length <= maxDays) return candles;
+  // 取最後 maxDays 根（最新資料），多出的頭部截掉
+  return candles.slice(-maxDays);
+}
+
 export async function fetchHistory(symbol, period) {
   const { interval, range } = PERIOD_MAP[period] ?? PERIOD_MAP['1mo'];
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}` +
@@ -440,7 +486,9 @@ export async function fetchHistory(symbol, period) {
     });
   }
   candles.sort((a, b) => a.time - b.time);
-  return candles;
+  // ★ KV HIT 時 Worker 回傳 1y 完整 JSON（1mo/3mo/6mo 全 map 到 1y key），
+  //   截斷到 period 對應天數，避免短期 period 存進 IndexedDB 250 根。
+  return _trimCandlesToPeriod(candles, period);
 }
 
 // ─────────────────────────────────────────────
@@ -1122,6 +1170,47 @@ export async function fetchFinMindRevenue(code) {
 
 // ─────────────────────────────────────────────
 // 基本面：自動選擇來源（含快取）
+// ─────────────────────────────────────────────
+// fetchEarningsDate — 法說/財報日期
+// ─────────────────────────────────────────────
+// 打 Yahoo Finance quoteSummary?modules=calendarEvents
+// 回傳 { earningsDate: 'YYYY-MM-DD' | null, earningsDates: string[] }
+//
+// ⚠️ 預留引信：
+//   - 若 Firestore stocks/{code}/events 有資料（GAS 寫入），優先使用
+//   - Yahoo 沒有台股財報日，通常回傳 null → 此時顯示「—」不報錯
+//   - GAS 可從 TWSE MOPS 爬財報日寫入 stocks/{code}/events { earningsDate, meetingDate, updatedAt }
+// ─────────────────────────────────────────────
+export async function fetchEarningsDate(symbol, code) {
+  // 1. 先查 Firestore（引信：GAS 補資料後自動生效）
+  try {
+    const fs = await fsGetShared(`stocks/${code}/events`);
+    if (fs && (fs.earningsDate || fs.meetingDate)) {
+      return {
+        earningsDate: fs.earningsDate ?? null,
+        meetingDate:  fs.meetingDate  ?? null,
+        source: 'firestore',
+      };
+    }
+  } catch (_) {}
+
+  // 2. fallback：Yahoo quoteSummary calendarEvents
+  try {
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}` +
+                `?modules=calendarEvents`;
+    const text = await fetchWithProxy(url, 6000, { fastFail: true });
+    const cal  = JSON.parse(text)?.quoteSummary?.result?.[0]?.calendarEvents;
+    const ts   = cal?.earnings?.earningsDate?.[0]?.raw ?? null;
+    return {
+      earningsDate: ts ? new Date(ts * 1000).toISOString().slice(0, 10) : null,
+      meetingDate:  null,
+      source: 'yahoo',
+    };
+  } catch (_) {}
+
+  return { earningsDate: null, meetingDate: null, source: 'none' };
+}
+
 //
 // ⚠️ Phase 2 修正:GAS 寫入格式是 { data: stringified_fund, updatedAt },
 //    fsGetShared 會 parse data 為物件 → 必須攤平回傳給 health.js 用
@@ -1776,27 +1865,30 @@ export async function fetchTWSEPrices() {
   let twseOK = false;   // 用來判斷是否要啟動 FinMind 備援抓中文名
 
 
-// ── Advanced 0: 盤中/剛收盤優先讀即時報價(GAS 每 5 分鐘寫入)────────────
-// 時間範圍: 09:00-16:00(涵蓋盤中 + 收盤後到 runTPExOnly 完成前的空窗)
+// ── Advanced 0: 優先讀即時報價(GAS 每 5 分鐘寫入)─────────────────────────
+// realtime 在收盤後定格在最後一筆(≈ 收盤價)，盤後也可用 → 不限時段
 // 好處: F5 後直接拿到最近一次 GAS 寫的即時報價,不用等 TWSE/TPEx API
-// ⚠️ realtime prices 是盤中每 5 分鐘更新,收盤後定格在最後一筆(≈ 收盤價)
+//       資料筆數比盤後快取多（1800+ vs ~900），中文名也比較完整
 try {
-  const _twHour = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCHours();
-  const _inWindow = _twHour >= 9 && _twHour < 16;   // 09:00-16:00
-  if (_inWindow) {
-    const rtData = await fsGetShared('market/realtime/prices');
-    if (rtData && typeof rtData === 'object' && Object.keys(rtData).length > 100) {
-      let filled = 0;
-      for (const [code, info] of Object.entries(rtData)) {
-        if (!info || typeof info !== 'object') continue;
-        if (info.name) _nameCache[code] = info.name;
-        if (info.market === 'tpex') _otcSet.add(code);
-        map[code] = info;
-        filled++;
-      }
-      console.log(`[api] realtime prices 命中 → ${filled} 檔(${_twHour}時),跳過盤後快取`);
-      return map;
+  const rtData = await fsGetShared('market/realtime/prices');
+  if (rtData && typeof rtData === 'object' && Object.keys(rtData).length > 100) {
+    let filled = 0;
+    for (const [code, info] of Object.entries(rtData)) {
+      if (!info || typeof info !== 'object') continue;
+      if (info.name) _nameCache[code] = info.name;
+      if (info.market === 'tpex') _otcSet.add(code);
+      map[code] = info;
+      filled++;
     }
+    // 同步到 window.__nameCache（modal-strategy / theme-ui 等讀此處）
+    if (!window.__nameCache) window.__nameCache = new Map();
+    for (const [code, info] of Object.entries(rtData)) {
+      if (info?.name && !window.__nameCache.has(code)) {
+        window.__nameCache.set(code, info.name);
+      }
+    }
+    console.log(`[api] realtime prices 命中 → ${filled} 檔,跳過盤後快取`);
+    return map;
   }
 } catch (e) {
   console.warn('[api] realtime prices 讀取失敗,fallback 盤後快取:', e.message);

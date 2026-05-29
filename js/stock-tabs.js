@@ -741,6 +741,7 @@ export async function renderStockSignals(candles, code) {
 
   _renderSignalTags(container, signals);
   _renderSignalLamps(signals);
+  _renderSignalBubbles(signals);
   // ── 篩選器來源：在燈號後方加一排篩選條件標籤 ──
   _renderScreenerCondTags(container, code);
 
@@ -769,6 +770,7 @@ export async function renderStockSignals(candles, code) {
         // 重繪 chip 列（X 系列標籤）
         if (container) _renderSignalTags(container, injected);
         _renderSignalLamps(injected);
+        _renderSignalBubbles(injected);
       }
     } catch(e) { /* silent */ }
 
@@ -868,7 +870,6 @@ function _renderSignalLamps(signals) {
 
   if (lamps === 0) {
     host.innerHTML = '';
-    host.style.display = 'none';
     return;
   }
   host.style.display = '';
@@ -935,6 +936,66 @@ function _clearSignalTags() {
   if (container) container.innerHTML = '';
   // 同時清除篩選條件標籤
   document.querySelectorAll('.screener-cond-tags').forEach(el => el.remove());
+}
+
+/**
+ * 個股 Header 右欄圓圈燈陣
+ * 目標容器：#stockSignalBubbles（.sh-signals，A 版細框膠囊）
+ */
+function _renderSignalBubbles(signals) {
+  const host = document.getElementById('stockSignalBubbles');
+  if (!host) return;
+
+  if (!Array.isArray(signals) || !signals.length) {
+    host.innerHTML = '';
+    return;
+  }
+
+  // 分類 → CSS class（顏色對應原本 _renderSignalTags 的 CATEGORY_COLOR 邏輯）
+  const CAT_MAP = {
+    '強勢續漲':  { cls: 'cat-teal',   label: '趨勢' },
+    '超跌反彈':  { cls: 'cat-blue',   label: '反彈' },
+    '轉折訊號':  { cls: 'cat-orange', label: '轉折' },
+    '盤整突破':  { cls: 'cat-purple', label: '突破' },
+    '葛蘭碧':    { cls: 'cat-purple', label: '葛蘭碧' },
+    'K線型態':   { cls: 'cat-teal',   label: 'K線' },
+    '基本面':    { cls: 'cat-gray',   label: '基本面' },
+    '技術指標':  { cls: 'cat-blue',   label: '指標' },
+    '一目均衡表':{ cls: 'cat-teal',   label: '一目' },
+    '避險警示':  { cls: 'cat-red',    label: '警示' },
+    'X 系列':    { cls: 'cat-gold',   label: '妖股' },
+    '巴菲特':    { cls: 'cat-gray',   label: '價值' },
+  };
+
+  // 依分類分組
+  const groups = new Map();
+  for (const s of signals) {
+    const cat = s.category ?? '其他';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(s);
+  }
+
+  // 優先排序：X系列 > 避險警示 > 強勢續漲 > 其他
+  const ORDER = ['X 系列', '避險警示', '強勢續漲', '超跌反彈', '轉折訊號', '盤整突破', '葛蘭碧', 'K線型態', '一目均衡表', '技術指標', '基本面', '巴菲特'];
+  const sortedEntries = [...groups.entries()].sort((a, b) => {
+    const ai = ORDER.indexOf(a[0]);
+    const bi = ORDER.indexOf(b[0]);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+
+  host.innerHTML = sortedEntries.map(([cat, sigs]) => {
+    const meta = CAT_MAP[cat] ?? { cls: 'cat-gray', label: cat };
+    const pills = sigs.map(s =>
+      `<span class="sh-pill ${meta.cls}" title="${_escHtml(s.desc ?? s.name)}">` +
+      `<span class="sh-pill-dot"></span>` +
+      `<span class="sh-pill-txt">${_escHtml(s.name)}</span>` +
+      `</span>`
+    ).join('');
+    return `<div class="sh-cat-group">` +
+      `<span class="sh-cat-label">${meta.label}</span>` +
+      `<div class="sh-cat-pills">${pills}</div>` +
+      `</div>`;
+  }).join('');
 }
 
 function _renderSignalTags(container, signals) {

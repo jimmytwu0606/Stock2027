@@ -85,13 +85,10 @@
 .wl-group-body.collapsed { display: none; }
 .wl-group-body.drag-over { outline: 2px dashed var(--accent); border-radius: 4px; }
 
-/* 個股列 */
+/* 個股列 — v3 已改用 grid（watchlist-v2.css 控制佈局）
+   保留 cursor / border-radius / hover 等非佈局屬性 */
 .wl-item {
-  display: flex;
-  flex-wrap: wrap;          /* 訊號標籤換行，不擠壓右側價格欄 */
-  align-items: flex-start;
-  gap: 8px;
-  padding: 7px 10px 7px 16px;
+  /* display / flex / gap / padding 移至 watchlist-v2.css */
   border-radius: 5px;
   cursor: pointer;
   position: relative;
@@ -100,13 +97,15 @@
 .wl-item:hover  { background: var(--bg3); }
 .wl-item.dragging { opacity: 0.4; }
 
-.wl-item-left  { flex: 1; min-width: 0; }
-.wl-item-right { text-align: right; flex-shrink: 0; align-self: flex-start; }
+/* v3：.wl-item-left / .wl-item-right 佈局由 watchlist-v2.css 的 grid 控制 */
+.wl-item-left  { min-width: 0; }
+.wl-item-right { }
 
 .wl-code  { display: block; font-size: 14px; font-weight: 500; color: var(--text); }
 .wl-name  { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wl-price { display: block; font-size: 13px; color: var(--text); }
-.wl-chg   { display: block; font-size: 11px; }
+.wl-price { display: block; font-size: 17px; color: var(--text); }   /* v3: 13→17px */
+.wl-chg   { display: block; font-size: 12px; }
+/* 舊版 .up/.down class 保留（不刪，以免其他地方用到），v3 改用 .wl-chg-up/.wl-chg-dn */
 .wl-chg.up   { color: var(--up);   }
 .wl-chg.down { color: var(--down); }
 
@@ -861,3 +860,95 @@ body.resizing {
 /* 節號 11 已移至 stock-signals.css */
 /* 節號 12~17 已移至 chart-ui.css */
 /* MC/X系列/策略Modal 已移至 mc-styles.css */
+
+/* ── 節號 18：個股 Header 訊號膠囊列（A 版細框 + 色點 + 文字）──────── */
+.sh-signals {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.sh-signals:empty { display: none; }
+
+/* 每個分類 = 獨立區塊：label 固定在左，膠囊在右側自己換行 */
+.sh-cat-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.sh-cat-label {
+  font-size: 11px;
+  color: var(--hint);
+  letter-spacing: .3px;
+  flex-shrink: 0;
+  padding-top: 6px;
+}
+.sh-cat-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 10px;
+  border: 1px solid;
+  border-color: color-mix(in srgb, currentColor 60%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  cursor: default;
+  white-space: nowrap;
+}
+.sh-pill-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.sh-pill-txt { color: currentColor; }
+
+/* 分類色：亮色同時驅動 文字 / 邊框 / 色點 / 淡底 */
+.sh-pill.cat-gold   { color: #f7bc2e; }
+.sh-pill.cat-blue   { color: #66a5f5; }
+.sh-pill.cat-teal   { color: #2fd4be; }
+.sh-pill.cat-purple { color: #bda6f7; }
+.sh-pill.cat-gray   { color: #9aa6b4; }
+.sh-pill.cat-red    { color: #f59595; }
+.sh-pill.cat-orange { color: #f7ac63; }
+
+/* ── 妖股結論 chip（B 風填色膠囊；覆寫 stock-signals.css）──────── */
+#stockYaoguChip { display: flex; }
+#stockYaoguChip .yaogu-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 11px;
+  border: 1px solid;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  max-width: 100%;
+}
+#stockYaoguChip .yaogu-chip-label { font-size: 13px; font-weight: 500; }
+#stockYaoguChip .yaogu-chip-desc  { font-size: 12px; color: var(--muted); }
+#stockYaoguChip .yaogu-reset-btn {
+  margin-left: 2px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+#stockYaoguChip .yaogu-reset-btn:hover { color: var(--text); border-color: var(--muted); }
+
+/* ── 五燈內聯（價格列右側）──────── */
+.sh-lamps .lamp-label { font-size: 12px; color: var(--muted); }
+.sh-lamps .lamp-row   { display: inline-flex; gap: 3px; vertical-align: middle; }

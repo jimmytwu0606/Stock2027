@@ -698,6 +698,19 @@ export function initStrategyPanel() {
   _bindLeftTabs();
 }
 
+/**
+ * refreshStrategyCards()
+ * auth 完成後重渲染策略卡片（tier 確認後補刷，避免 Pro 策略因時序問題不顯示）
+ * 在 main.js 的 authReady 事件裡呼叫
+ */
+export function refreshStrategyCards() {
+  const list = document.getElementById('strategyList');
+  if (!list) return;
+  // 清掉舊的策略分類卡片（保留搜尋列 + prefilter，不重複建）
+  list.querySelectorAll('.sc-strategy-category').forEach(el => el.remove());
+  _renderStrategyCards();
+}
+
 // ─── 預過濾欄位（股價區間 + 成交量）────────────────────────────────────────
 function _renderPreFilter() {
   const list = document.getElementById('strategyList');

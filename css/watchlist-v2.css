@@ -1,0 +1,518 @@
+/* ============================================================
+   watchlist-v2.css — 自選清單 v3 新版樣式
+   建立：2026-05-29
+   用法：在 index.html 的 additions.css 之後引入
+         <link rel="stylesheet" href="css/watchlist-v2.css" />
+   ============================================================ */
+
+/* ─── 走勢圖模式切換 bar ─────────────────────────────────── */
+
+.wl-spark-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.06);
+  background: var(--wl-header-bg, rgba(255, 255, 255, 0.03));
+}
+
+.wl-spm-label {
+  font-size: 11px;
+  color: var(--wl-muted, #8b8d93);
+  flex: 1;
+}
+
+.wl-sptg {
+  display: flex;
+  border-radius: 5px;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.wl-spt {
+  background: none;
+  border: none;
+  color: #8b8d93;
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.wl-spt:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #cdd0d4;
+}
+
+.wl-spt.wl-spt-on {
+  background: rgba(255, 255, 255, 0.13);
+  color: #e8e8ea;
+}
+
+/* ─── 群組 header（扁平化） ──────────────────────────────── */
+
+.wl-group-header {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 10px;
+  background: var(--wl-header-bg, rgba(255, 255, 255, 0.03));
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.04);
+  /* 舊版 cursor:pointer 移到 .wl-group-name / .wl-chevron */
+  cursor: default;
+}
+
+/* 展開/收合箭頭和群組名稱才是點擊目標 */
+.wl-chevron,
+.wl-group-name {
+  cursor: pointer;
+}
+
+.wl-chevron {
+  font-size: 9px;
+  color: #8b8d93;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.wl-group-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #cdd0d4;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.wl-group-count {
+  font-size: 10px;
+  color: #8b8d93;
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+/* 隱藏舊版 .wl-group-title-wrap 和 .wl-group-actions（v2 殘留，不影響 v3 HTML） */
+.wl-group-title-wrap,
+.wl-group-actions {
+  display: none;
+}
+
+/* ─── 群組工具按鈕（⇅ 和 ···） ────────────────────────────── */
+
+.wl-gb {
+  background: none;
+  border: none;
+  color: #8b8d93;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.wl-gb:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #cdd0d4;
+}
+
+.wl-gb.wl-sort-on {
+  color: #e8e8ea;
+}
+
+/* 目前排序的簡短說明（如「漲跌幅↓」） */
+.wl-sort-label {
+  font-size: 10px;
+  color: #cdd0d4;
+  margin-left: 1px;
+}
+
+/* ─── Dropdown（排序 / 更多） ────────────────────────────── */
+
+.wl-dd-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.wl-sort-dd,
+.wl-more-dd {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 30px;
+  background: #252830;
+  border: 0.5px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  z-index: 9999;
+  min-width: 140px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  overflow: hidden;
+}
+
+.wl-sort-dd.open,
+.wl-more-dd.open {
+  display: block;
+}
+
+.wl-dd-lbl {
+  padding: 6px 13px 3px;
+  font-size: 10px;
+  color: #8b8d93;
+  font-weight: 500;
+}
+
+.wl-ddi {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  font-size: 12px;
+  color: #cdd0d4;
+  cursor: pointer;
+}
+
+.wl-ddi:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.wl-ddi.wl-ddi-act {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.wl-ddi.wl-ddi-danger {
+  color: #ef5350;
+}
+
+.wl-ddi.wl-ddi-danger:hover {
+  background: rgba(239, 83, 80, 0.08);
+}
+
+.wl-da {
+  margin-left: auto;
+  font-size: 11px;
+  color: #9aa0a6;
+  min-width: 10px;
+  text-align: right;
+}
+
+.wl-ddi.wl-ddi-act .wl-da {
+  color: #e8e8ea;
+}
+
+.wl-dd-sep {
+  border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ─── 個股行（v3 新版佈局） ──────────────────────────────── */
+
+.wl-item {
+  /* grid：左欄彈性 + 右欄固定 62px，兩欄同高（align-items:stretch） */
+  display: grid;
+  grid-template-columns: 1fr 62px;
+  column-gap: 8px;
+  align-items: stretch;
+  padding: 8px 32px 8px 10px;   /* right 留給 × 按鈕 */
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.04);
+  position: relative;
+  cursor: pointer;
+}
+
+.wl-item:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* 移除按鈕：hover 才出現 */
+.wl-remove-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: #4a4f59;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  line-height: 1;
+  z-index: 1;
+}
+
+.wl-item:hover .wl-remove-btn {
+  opacity: 1;
+}
+
+.wl-remove-btn:hover {
+  background: rgba(239, 83, 80, 0.15);
+  color: #ef5350;
+}
+
+/* 左欄：代號/名稱/價格/漲跌幅/燈號，縱向 flex */
+.wl-item-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+/* 代號行：code + name + ×N 同行 */
+.wl-code-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.wl-code {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e8e8ea;
+  font-family: var(--font-mono, monospace);
+  flex-shrink: 0;
+}
+
+.wl-name {
+  font-size: 10px;
+  color: #8b8d93;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ×N 重複清單標記 */
+.wl-dup-badge {
+  font-size: 9px;
+  color: #8b8d93;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+/* 股價（大字） */
+.wl-price {
+  font-size: 17px;
+  font-weight: 500;
+  color: #e8e8ea;
+  line-height: 1.15;
+  display: block;
+}
+
+/* 漲跌幅 */
+.wl-chg {
+  font-size: 12px;
+  display: block;
+}
+
+.wl-chg.up { color: #ef5350; }
+.wl-chg.dn { color: #26a69a; }
+
+/* ⚠️ 踩雷：additions.css 舊有 .up/.down 全域規則會覆蓋
+   改用 wl- 前綴新 class + !important，穩贏舊規則 */
+.wl-chg-up { color: #ef5350 !important; }   /* 台股：漲 = 紅 */
+.wl-chg-dn { color: #26a69a !important; }   /* 台股：跌 = 綠 */
+
+/* 右欄：sparkline，stretch 到與左欄同高，垂直置中 */
+.wl-item-right {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 高度由 grid align-items:stretch 撐起 */
+}
+
+/* 走勢圖載入中 placeholder */
+.wl-spark-ph {
+  width: 62px;
+  height: 48px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.wl-spark-ph::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,255,255,0.08) 50%,
+    transparent 100%);
+  animation: wl-shimmer 1.6s ease-in-out infinite;
+  transform: translateX(-100%);
+}
+
+@keyframes wl-shimmer {
+  to { transform: translateX(100%); }
+}
+
+/* 無資料狀態 */
+.wl-spark-empty {
+  width: 62px;
+  height: 48px;
+}
+
+/* ─── 燈號 + 妖股行 ────────────────────────────────────────── */
+
+.wl-lamps-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+/* .wl-lamps / .wl-lamp 沿用舊版 CSS，不覆蓋 */
+
+/* 妖股燈：五階段顏色 + 動畫
+   金閃(active) → 金亮(warn1) → 紅閃(warn2) → 藍閃(exit) → 灰亮(watching≤5日) */
+.wl-yaogu-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* 金閃 — 主升段：X1/X2/X5 亮，呼吸 2s */
+.wl-yaogu-active {
+  animation: wl-ya 2s ease-in-out infinite;
+}
+@keyframes wl-ya {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.55); }
+  50%       { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);    }
+}
+
+/* 金亮 — 弱妖：MACD 高位死叉，恆亮不閃 */
+.wl-yaogu-warn1 {
+  /* 無 animation，靜態金色 */
+}
+
+/* 紅閃 — 出貨警示：W5 急跌，快閃 0.9s */
+.wl-yaogu-warn2 {
+  animation: wl-yr 0.9s ease-in-out infinite;
+}
+@keyframes wl-yr {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.7); }
+  50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0);   }
+}
+
+/* 藍閃 — 最後出場警示：跌破 MA20，快閃 1.1s */
+.wl-yaogu-exit {
+  animation: wl-yb 1.1s ease-in-out infinite;
+}
+@keyframes wl-yb {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.7); }
+  50%       { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0);   }
+}
+
+/* 灰亮 — 曾是妖股（5日內），靜態，半透明 */
+.wl-yaogu-watching {
+  opacity: 0.55;
+  /* 無 animation */
+}
+
+/* ─── 群組拖曳中樣式（保留原版） ────────────────────────────── */
+
+.wl-group.drag-over {
+  outline: 1px dashed rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.wl-item.dragging {
+  opacity: 0.5;
+}
+
+/* ─── 自訂確認 Modal（取代 confirm()） ─────────────────────────
+   position:fixed 才能覆蓋整個視口，不受 sidebar overflow 影響 */
+
+.wl-confirm-overlay {
+  display: none;          /* _showConfirm 時改為 flex */
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: 99999;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.wl-confirm-modal {
+  background: #252830;
+  border-radius: 16px;
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  padding: 24px 20px 20px;
+  width: 100%;
+  max-width: 320px;
+  animation: wl-confirm-in 0.18s ease;
+}
+
+@keyframes wl-confirm-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.wl-confirm-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #e8e8ea;
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.wl-confirm-body {
+  font-size: 13px;
+  color: #9aa0a6;
+  margin: 0 0 22px;
+  line-height: 1.5;
+}
+
+.wl-confirm-btns {
+  display: flex;
+  gap: 10px;
+}
+
+.wl-confirm-cancel,
+.wl-confirm-ok {
+  flex: 1;
+  min-height: 48px;        /* 手機友善點擊區域 */
+  border-radius: 10px;
+  border: none;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.wl-confirm-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cdd0d4;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+
+.wl-confirm-cancel:hover  { background: rgba(255, 255, 255, 0.13); }
+.wl-confirm-cancel:active { background: rgba(255, 255, 255, 0.06); }
+
+.wl-confirm-ok {
+  background: #ef5350;
+  color: #fff;
+}
+
+.wl-confirm-ok:hover  { background: #e53935; }
+.wl-confirm-ok:active { background: #c62828; }
+

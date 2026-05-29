@@ -18,7 +18,7 @@
 /* ─── 整體版型 ─────────────────────────────────────────────── */
 .pattern-layout {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 0;
   height: 100%;
   overflow: hidden;
@@ -57,6 +57,14 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 結果面板內容區（進度+回測+列表合體滑軌容器）*/
+#patternResultPanel {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .pattern-result-header {
@@ -449,13 +457,14 @@
 /* 結果列表 header */
 .pr-list-header {
   display: grid;
-  grid-template-columns: 1fr 60px 70px 120px;
+  grid-template-columns: 1fr 56px 70px 70px 110px;
   padding: 6px 16px;
   font-size: 10px;
   color: var(--hint);
   letter-spacing: .05em;
   text-transform: uppercase;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .pr-sort-col {
   cursor: pointer; user-select: none; transition: color .15s;
@@ -465,12 +474,12 @@
 /* 結果列 */
 .pr-list {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
 }
 
 .pr-row {
   display: grid;
-  grid-template-columns: 1fr 60px 70px 120px;
+  grid-template-columns: 1fr 56px 70px 70px 110px;
   align-items: center;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
@@ -478,6 +487,23 @@
   transition: background .12s;
 }
 .pr-row:hover { background: var(--bg3); }
+
+/* 妖股 pill（與 theme-ui 同風格）*/
+.pr-yaogu-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pr-yaogu-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: .04em;
+}
+.pr-yaogu-pill--x2 { background: rgba(239,83,80,.2);  color: #ef5350; border: 1px solid rgba(239,83,80,.35); }
+.pr-yaogu-pill--x1 { background: rgba(245,158,11,.2); color: #f59e0b; border: 1px solid rgba(245,158,11,.35); }
+.pr-yaogu-pill--x5 { background: rgba(139,92,246,.2); color: #8b5cf6; border: 1px solid rgba(139,92,246,.35); }
 
 .pr-row-health { display: flex; align-items: center; justify-content: center; }
 .pr-health-badge {
@@ -647,8 +673,9 @@
   }
 
   .pr-list-header span:last-child { display: none; }
-  .pr-row { grid-template-columns: 1fr 60px 60px; }
+  .pr-row { grid-template-columns: 1fr 56px 60px; }
   .pr-row-health { display: none; }
+  .pr-yaogu-cell { display: none; }
   .pr-mini-chart { display: none; }
 
   .pr-backtest-stats { gap: 12px; }
@@ -656,3 +683,38 @@
 
   .pr-dist-bars { overflow-x: auto; }
 }
+
+/* ─── 妖股確認視窗 ───────────────────────────────────────── */
+.pr-yaogu-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(239,83,80,.08);
+  border-bottom: 1px solid rgba(239,83,80,.2);
+  font-size: 12px;
+  color: var(--text);
+  animation: prAlertIn .25s ease;
+  flex-shrink: 0;
+}
+
+@keyframes prAlertIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.pr-yaogu-alert-icon { font-size: 14px; }
+.pr-yaogu-alert-text { flex: 1; }
+.pr-yaogu-alert-text strong { color: #ef5350; }
+
+.pr-yaogu-alert-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color .15s;
+}
+.pr-yaogu-alert-close:hover { color: var(--text); }

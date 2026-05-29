@@ -5,10 +5,11 @@
 
 import { saveUserTheme, deleteUserTheme, reloadThemes } from './theme.js';
 import { loadHealthCacheBatch, saveHealthCache, getAllSignalsCache, getKlineCache } from './db.js';
-import { resolveYahooSymbol } from './api.js';
+import { resolveYahooSymbol, getChineseName } from './api.js';
 import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
-import { fsGetShared } from './firebase.js';
+import { fsGetShared, fsSetShared } from './firebase.js';
 import { scanOneCode } from './signal-scan.js';
+import { currentTier } from './auth-tier.js';
 
 // ── 顏色 Map ─────────────────────────────────────────────────
 const COLORS = {
@@ -41,15 +42,63 @@ let _hotDate    = null;        // 強勢資料日期
 // ── 健康度工具（直接用 health.js export）────────────────────
 // healthBadge(score, prefix) / healthBadgeDual(hs, hl, prefix) 已 import
 
+// ── 撥盤狀態（四撥盤新增）────────────────────────────────────
+let _activePanel = 'custom';   // 'passive' | 'active' | 'custom' | 'admin'
+let _etfPassive  = null;       // 快取，null 表示未載入
+let _etfActive   = null;
+const ETF_PASSIVE_KEY = 'etf/passive';
+const ETF_ACTIVE_KEY  = 'etf/active';
+
 // ── 主入口 ───────────────────────────────────────────────────
 export function renderThemePanel() {
-  const { themes = [], stockThemeMap = new Map() } = window.__themeData ?? {};
   const container = document.getElementById('tabTheme');
   if (!container) return;
 
+  const isVvvip = currentTier === 'vvvip';
+
+  // 外層：四撥盤切換列 + 內容區
+  container.innerHTML = `
+    <div class="theme-outer">
+      <div class="theme-panel-switcher">
+        <button class="theme-psw-btn ${_activePanel==='passive'?'active':''}" data-panel="passive">📊 被動型ETF</button>
+        <button class="theme-psw-btn ${_activePanel==='active' ?'active':''}" data-panel="active">🎯 主動型ETF</button>
+        <button class="theme-psw-btn ${_activePanel==='custom' ?'active':''}" data-panel="custom">🏷️ 自訂題材</button>
+        ${isVvvip ? `<button class="theme-psw-btn theme-psw-btn--admin ${_activePanel==='admin'?'active':''}" data-panel="admin">⚙️ 管理員</button>` : ''}
+      </div>
+      <div class="theme-panel-content" id="themePanelContent"></div>
+    </div>`;
+
+  // 綁定撥盤切換
+  container.querySelectorAll('.theme-psw-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.theme-psw-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _activePanel = btn.dataset.panel;
+      _renderActivePanel();
+    });
+  });
+
+  _renderActivePanel();
+}
+
+// ── 撥盤分派 ─────────────────────────────────────────────────
+function _renderActivePanel() {
+  const content = document.getElementById('themePanelContent');
+  if (!content) return;
+  switch (_activePanel) {
+    case 'passive': _renderEtfPanelInner(content, 'passive'); break;
+    case 'active':  _renderEtfPanelInner(content, 'active');  break;
+    case 'custom':  _renderCustomPanelInner(content); break;
+    case 'admin':   _renderAdminPanelInner(content); break;
+  }
+}
+
+// ── 自訂題材撥盤（原本的 theme-layout 搬進來）────────────────
+function _renderCustomPanelInner(content) {
+  const { themes = [], stockThemeMap = new Map() } = window.__themeData ?? {};
   if (_activeIdx > themes.length) _activeIdx = 0;
 
-  container.innerHTML = `
+  content.innerHTML = `
     <div class="theme-layout">
       <div class="theme-header">
         <div>
@@ -77,6 +126,397 @@ export function renderThemePanel() {
   document.getElementById('themeYaoguScanBtn').addEventListener('click', () => _openYaoguScanModal());
   _renderTabBar(themes, stockThemeMap);
   _showTab(_activeIdx, themes, stockThemeMap);
+}
+
+// ── ETF 撥盤（被動/主動共用）────────────────────────────────
+// ETF 資料轉換成 theme 格式，複用原本 _renderStocks 渲染
+const ETF_COLORS = ['blue', 'cyan', 'green', 'purple', 'orange', 'yellow', 'red', 'gray'];
+let _etfActiveIdx = { passive: 0, active: 0 };
+
+async function _renderEtfPanelInner(content, type) {
+  content.innerHTML = `<div class="theme-etf-loading">載入中…</div>`;
+
+  let etfList = type === 'passive' ? _etfPassive : _etfActive;
+
+  // 首次載入
+  if (etfList === null) {
+    try {
+      const key = type === 'passive' ? ETF_PASSIVE_KEY : ETF_ACTIVE_KEY;
+      const data = await fsGetShared(key);
+      etfList = Array.isArray(data) ? data : [];
+    } catch(e) {
+      etfList = [];
+    }
+    if (type === 'passive') _etfPassive = etfList;
+    else                    _etfActive  = etfList;
+  }
+
+  if (!etfList.length) {
+    content.innerHTML = `<div class="theme-empty-state">
+      <div class="theme-empty-icon">${type === 'passive' ? '📊' : '🎯'}</div>
+      <div class="theme-empty-title">${type === 'passive' ? '被動型' : '主動型'} ETF 成份股尚未設定</div>
+      ${type === 'active' && currentTier === 'vvvip' ? '<div class="theme-empty-desc">請切換到「管理員」撥盤匯入</div>' : ''}
+    </div>`;
+    return;
+  }
+
+  // ETF → theme 格式轉換
+  const themes = etfList.map((etf, i) => ({
+    id:     `etf_${etf.etfCode}`,
+    emoji:  type === 'passive' ? '📊' : '🎯',
+    name:   `${etf.etfCode} ${etf.etfName}`,
+    color:  ETF_COLORS[i % ETF_COLORS.length],
+    desc:   `${type === 'passive' ? '被動型' : '主動型'} ETF — ${etf.etfCode} ${etf.etfName}`,
+    stocks: etf.stocks ?? [],
+  }));
+
+  const stockThemeMap = new Map();
+  themes.forEach((t, ti) => {
+    (t.stocks ?? []).forEach(s => {
+      if (!stockThemeMap.has(s.code)) stockThemeMap.set(s.code, new Set());
+      stockThemeMap.get(s.code).add(ti);
+    });
+  });
+
+  let activeIdx = Math.min(_etfActiveIdx[type], themes.length - 1);
+
+  // 渲染外框（跟 _renderCustomPanelInner 同結構）
+  content.innerHTML = `
+    <div class="theme-layout">
+      <div class="theme-header">
+        <div>
+          <div class="theme-header-label">${type === 'passive' ? 'PASSIVE ETF' : 'ACTIVE ETF'}</div>
+          <div class="theme-header-title">${type === 'passive' ? '被動型 ETF' : '主動型 ETF'}</div>
+        </div>
+        <div class="theme-header-actions">
+          <span class="theme-header-count" id="themeHeaderCount"></span>
+        </div>
+      </div>
+      <div class="theme-tabbar-wrap">
+        <div class="theme-tabbar-fade theme-tabbar-fade--left"  id="themeTabFadeL"></div>
+        <div class="theme-tabbar" id="themeTabBar"></div>
+        <div class="theme-tabbar-fade theme-tabbar-fade--right" id="themeTabFadeR"></div>
+      </div>
+      <div class="theme-content" id="themeContent"></div>
+    </div>`;
+
+  // Tab Bar（複用 _renderTabBar 邏輯，但不含關聯Tab）
+  const bar = document.getElementById('themeTabBar');
+  let tabHtml = '';
+  themes.forEach((t, i) => {
+    const c = gc(t.color);
+    tabHtml += `<button class="theme-tab-btn ${i === activeIdx ? 'active' : ''}" data-idx="${i}"
+      style="--t-border:${c.border};--t-text:${c.text};--t-bg:${c.bg}">
+      <span class="theme-tab-emoji">${t.emoji}</span>
+      <span class="theme-tab-name">${t.name}</span>
+      <span class="theme-tab-count">${t.stocks.length}</span>
+    </button>`;
+  });
+  bar.innerHTML = tabHtml;
+
+  const themeContent = document.getElementById('themeContent');
+
+  bar.querySelectorAll('.theme-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeIdx = +btn.dataset.idx;
+      _etfActiveIdx[type] = activeIdx;
+      _sortCol = null; _sortAsc = false;
+      bar.querySelectorAll('.theme-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      btn.scrollIntoView({ inline: 'center', behavior: 'smooth' });
+      _renderStocks(themeContent, themes[activeIdx], activeIdx, themes, stockThemeMap, true);
+    });
+  });
+
+  // 漸層 + 滾輪
+  requestAnimationFrame(() => {
+    bar.querySelector('.theme-tab-btn.active')?.scrollIntoView({ inline: 'center', behavior: 'instant' });
+    _updateTabFade(bar);
+  });
+  bar.addEventListener('scroll', () => _updateTabFade(bar), { passive: true });
+  bar.addEventListener('wheel', e => {
+    if (e.deltaY === 0) return;
+    e.preventDefault();
+    bar.scrollLeft += e.deltaY * 0.8;
+    _updateTabFade(bar);
+  }, { passive: false });
+
+  // 渲染第一個 ETF
+  _renderStocks(themeContent, themes[activeIdx], activeIdx, themes, stockThemeMap, true);
+}
+
+// ── 管理員撥盤 ───────────────────────────────────────────────
+// adminType: 'active' | 'passive'，預設 active
+let _adminType = 'active';
+
+function _renderAdminPanelInner(content) {
+  if (currentTier !== 'vvvip') {
+    content.innerHTML = `<div class="theme-empty-state"><div class="theme-empty-icon">🔒</div><div class="theme-empty-title">無權限</div></div>`;
+    return;
+  }
+  _renderAdminBody(content, _adminType);
+}
+
+function _renderAdminBody(content, type) {
+  _adminType = type;
+  const isActive  = type === 'active';
+  const etfList   = (isActive ? _etfActive : _etfPassive) ?? [];
+  const fsKey     = isActive ? ETF_ACTIVE_KEY : ETF_PASSIVE_KEY;
+  const typeLabel = isActive ? '主動型' : '被動型';
+  const placeholder = isActive ? '代號，如 00981A' : '代號，如 0050';
+
+  let _editingCode  = null;
+  let _pendingStocks = null;
+
+  content.innerHTML = `
+  <div class="theme-admin-panel">
+    <div class="theme-admin-title">⚙️ ETF 成份股管理</div>
+
+    <!-- 被動/主動切換 -->
+    <div class="theme-admin-type-tabs">
+      <button class="theme-admin-type-btn ${!isActive?'active':''}" data-type="passive">📊 被動型ETF</button>
+      <button class="theme-admin-type-btn ${isActive?'active':''}"  data-type="active">🎯 主動型ETF</button>
+    </div>
+
+    <div class="theme-admin-section">
+      <div class="theme-admin-label">選擇 ${typeLabel} ETF</div>
+      <div class="theme-admin-etf-btns" id="adminEtfBtns">
+        ${etfList.map(e => `<button class="theme-admin-etf-btn" data-etf="${e.etfCode}">${e.etfCode} ${e.etfName}</button>`).join('')}
+        <button class="theme-admin-etf-btn theme-admin-etf-new" id="adminNewEtfBtn">＋ 新增ETF</button>
+      </div>
+    </div>
+
+    <div class="theme-admin-section" id="adminNewEtfForm" style="display:none">
+      <div class="theme-admin-label">新增 ${typeLabel} ETF</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input class="theme-admin-input" id="adminEtfCode" placeholder="${placeholder}" maxlength="8">
+        <input class="theme-admin-input" id="adminEtfName" placeholder="名稱" maxlength="30">
+        <button class="tm-btn" id="adminEtfCreate">建立</button>
+      </div>
+    </div>
+
+    <div id="adminStockEditor" style="display:none">
+      <div class="theme-admin-section">
+        <div class="theme-admin-label">
+          編輯：<strong id="adminEditingLabel"></strong>
+          <button class="tm-btn tm-btn--danger" id="adminDelEtfBtn" style="margin-left:8px;font-size:11px;padding:2px 8px">刪除此ETF</button>
+        </div>
+        <div class="theme-admin-label" style="margin-top:12px;font-size:11px;color:var(--muted)">
+          貼入 JSON / 表格複製 / 代號+股名 / 純代號 — 自動解析，取代現有名單
+        </div>
+        <textarea class="theme-admin-textarea" id="adminImportText"
+          placeholder='支援所有格式，直接貼上即可'></textarea>
+        <button class="tm-btn" id="adminImportBtn">🔍 解析預覽</button>
+      </div>
+
+      <div class="theme-admin-section" id="adminDiffArea" style="display:none">
+        <div class="theme-admin-label">差異比較</div>
+        <div id="adminDiffContent"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="tm-btn" id="adminConfirmBtn">✅ 確認匯入</button>
+          <button class="tm-btn tm-btn--cancel" id="adminCancelBtn">取消</button>
+        </div>
+      </div>
+
+      <div class="theme-admin-section">
+        <div class="theme-admin-label">現有成份股</div>
+        <div class="theme-admin-stocks-wrap" id="adminCurrentStocks"></div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── 被動/主動切換 ──
+  content.querySelectorAll('.theme-admin-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => _renderAdminBody(content, btn.dataset.type));
+  });
+
+  // ── ETF 選擇 ──
+  content.querySelectorAll('.theme-admin-etf-btn:not(#adminNewEtfBtn)').forEach(btn => {
+    btn.addEventListener('click', () => { _editingCode = btn.dataset.etf; _showEditor(); });
+  });
+
+  document.getElementById('adminNewEtfBtn')?.addEventListener('click', () => {
+    const f = document.getElementById('adminNewEtfForm');
+    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  });
+
+  // ── 建立新 ETF ──
+  document.getElementById('adminEtfCreate')?.addEventListener('click', async () => {
+    const code = document.getElementById('adminEtfCode')?.value.trim().toUpperCase();
+    const name = document.getElementById('adminEtfName')?.value.trim();
+    if (!code || !name) return alert('請輸入代號和名稱');
+    const list = isActive ? _etfActive : _etfPassive;
+    if ((list ?? []).find(e => e.etfCode === code)) return alert('此ETF已存在');
+    const newEntry = { etfCode: code, etfName: name, stocks: [], updatedAt: Date.now() };
+    if (isActive) { if (!_etfActive) _etfActive = []; _etfActive.push(newEntry); }
+    else          { if (!_etfPassive) _etfPassive = []; _etfPassive.push(newEntry); }
+    await fsSetShared(fsKey, isActive ? _etfActive : _etfPassive);
+    _renderAdminBody(content, type);
+  });
+
+  // ── 解析匯入 ──
+  document.getElementById('adminImportBtn')?.addEventListener('click', () => {
+    if (!_editingCode) return alert('請先選擇 ETF');
+    const text = document.getElementById('adminImportText')?.value.trim();
+    if (!text) return;
+    _pendingStocks = _parseEtfImport(text);
+    if (!_pendingStocks.length) return alert('解析失敗，請確認格式');
+
+    const list     = (isActive ? _etfActive : _etfPassive) ?? [];
+    const etf      = list.find(e => e.etfCode === _editingCode);
+    const oldCodes = new Set((etf?.stocks ?? []).map(s => s.code));
+    const newCodes = new Set(_pendingStocks.map(s => s.code));
+    const added    = _pendingStocks.filter(s => !oldCodes.has(s.code));
+    const removed  = (etf?.stocks ?? []).filter(s => !newCodes.has(s.code));
+    const kept     = _pendingStocks.filter(s => oldCodes.has(s.code));
+
+    document.getElementById('adminDiffArea').style.display = 'block';
+    document.getElementById('adminDiffContent').innerHTML = `
+      <div style="font-size:13px;margin-bottom:8px">
+        新增 <span style="color:var(--up);font-weight:600">${added.length} 檔</span>　
+        剔除 <span style="color:var(--down);font-weight:600">${removed.length} 檔</span>　
+        維持 <span style="color:var(--muted)">${kept.length} 檔</span>
+        ${_pendingStocks.length !== added.length + kept.length ? `<span style="color:var(--muted);font-size:11px">（已去重）</span>` : ''}
+      </div>
+      ${added.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;color:var(--up);margin-bottom:4px">＋ 新增</div>${added.map(s=>`<span class="theme-admin-diff-tag theme-admin-diff-tag--add">${s.code} ${s.name}</span>`).join('')}</div>` : ''}
+      ${removed.length ? `<div><div style="font-size:11px;color:var(--down);margin-bottom:4px">－ 剔除（確認後將從名單移除）</div>${removed.map(s=>`<span class="theme-admin-diff-tag theme-admin-diff-tag--del">${s.code} ${s.name}</span>`).join('')}</div>` : ''}`;
+  });
+
+  // ── 確認匯入 ──
+  document.getElementById('adminConfirmBtn')?.addEventListener('click', async () => {
+    if (!_pendingStocks || !_editingCode) return;
+    const list = isActive ? _etfActive : _etfPassive;
+    if (!list) return;
+    const idx = list.findIndex(e => e.etfCode === _editingCode);
+    if (idx < 0) return;
+    list[idx].stocks    = _pendingStocks;
+    list[idx].updatedAt = Date.now();
+    await fsSetShared(fsKey, list);
+    // 清除對應撥盤快取，下次切過去會重新載入
+    if (isActive) _etfActive = list; else _etfPassive = list;
+    document.getElementById('adminDiffArea').style.display = 'none';
+    document.getElementById('adminImportText').value = '';
+    _pendingStocks = null;
+    _showEditor();
+    _toast(`✅ ${_editingCode} 成份股已更新（${list[idx].stocks.length} 檔）`);
+  });
+
+  // ── 取消 ──
+  document.getElementById('adminCancelBtn')?.addEventListener('click', () => {
+    document.getElementById('adminDiffArea').style.display = 'none';
+    _pendingStocks = null;
+  });
+
+  // ── 刪除ETF ──
+  document.getElementById('adminDelEtfBtn')?.addEventListener('click', async () => {
+    if (!_editingCode) return;
+    if (!confirm(`確定刪除 ${_editingCode}？此操作無法復原。`)) return;
+    if (isActive) _etfActive  = (_etfActive  ?? []).filter(e => e.etfCode !== _editingCode);
+    else          _etfPassive = (_etfPassive ?? []).filter(e => e.etfCode !== _editingCode);
+    await fsSetShared(fsKey, isActive ? _etfActive : _etfPassive);
+    _editingCode = null;
+    _renderAdminBody(content, type);
+  });
+
+  // ── 顯示編輯區 ──
+  function _showEditor() {
+    const list = (isActive ? _etfActive : _etfPassive) ?? [];
+    const etf  = list.find(e => e.etfCode === _editingCode);
+    if (!etf) return;
+    document.getElementById('adminStockEditor').style.display = 'block';
+    document.getElementById('adminEditingLabel').textContent = `${etf.etfCode} ${etf.etfName}`;
+    const wrap = document.getElementById('adminCurrentStocks');
+    wrap.innerHTML = etf.stocks?.length
+      ? etf.stocks.map(s => `<span class="theme-admin-stock-chip"><span style="color:var(--accent)">${s.code}</span> ${s.name}</span>`).join('')
+      : '<span style="color:var(--muted);font-size:12px">尚無成份股，請貼入名單</span>';
+  }
+}
+
+// ── ETF 匯入解析 ─────────────────────────────────────────────
+// 支援格式：
+//   1. JSON 陣列（含 code+name 欄位，可有多餘欄位如 qty/weight）
+//   2. Tab/空格分隔表格（代號 名稱 股數 金額 權重% — 取前兩欄）
+//   3. 逐行「代號 股名」或純代號
+//   4. 換行分隔純欄位（每個欄位一行，代號行+名稱行交替或連續）
+// 自動去重（以代號為 key，保留第一次出現）
+// 自動過濾非股票列（期貨、現金、中文 header 等）
+function _parseEtfImport(text) {
+  const nc = window.__nameCache ?? {};
+  const _getName = code => (typeof nc.get === 'function' ? nc.get(code) : nc[code]) || '';
+  const _isStockCode = s => /^\d{4,6}[A-Za-z]?$/.test(s);
+  const _clean = s => (s ?? '').replace(/\*/g, '').replace(/-KY$/i, s => s).trim();
+
+  // ── 格式1：JSON ──────────────────────────────────────────────
+  try {
+    const arr = JSON.parse(text);
+    if (Array.isArray(arr)) {
+      return _dedup(arr
+        .map(item => ({
+          code: _clean(String(item.code ?? item['股票代號'] ?? item['證券代號'] ?? '')),
+          name: _clean(String(item.name ?? item['股票名稱'] ?? item['證券名稱'] ?? '')),
+        }))
+        .filter(item => _isStockCode(item.code))
+        .map(item => ({
+          code: item.code,
+          name: item.name || _getName(item.code) || item.code,
+        }))
+      );
+    }
+  } catch(_) {}
+
+  // ── 格式2/3/4：文字（逐行解析）──────────────────────────────
+  const rows = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // 偵測是否為「純欄位換行」格式（每行只有一個token，代號和名稱分開行）
+  // 例：2330\n台積電\n2383\n台光電…
+  const singleTokenLines = lines.filter(l => !l.includes('\t') && l.split(/\s+/).length === 1);
+  const isPureColumnMode = singleTokenLines.length > lines.length * 0.7;
+
+  if (isPureColumnMode) {
+    // 純欄位模式：找代號行，下一行當名稱
+    for (let i = 0; i < lines.length; i++) {
+      const code = _clean(lines[i]);
+      if (!_isStockCode(code)) continue;
+      const nextLine = lines[i + 1]?.trim() ?? '';
+      // 下一行是名稱（非代號）就取，否則從 nameCache 取
+      const name = (!_isStockCode(_clean(nextLine)) && nextLine && !/^\d/.test(nextLine))
+        ? _clean(nextLine)
+        : _getName(code) || code;
+      if (!_isStockCode(_clean(nextLine))) i++; // 消耗名稱行
+      rows.push({ code, name });
+    }
+  } else {
+    // Tab/空格分隔模式：每行取前兩欄
+    lines.forEach(line => {
+      // 先試 tab 分隔，再試空白
+      const parts = line.includes('\t')
+        ? line.split('\t').map(p => p.trim())
+        : line.split(/\s{2,}|\s+/).map(p => p.trim()); // 2+空格或單空格
+
+      const code = _clean(parts[0] ?? '');
+      if (!_isStockCode(code)) return; // 過濾 header/非股票列
+
+      // 名稱：取第二欄，若無則從 nameCache
+      let name = _clean(parts[1] ?? '');
+      // 過濾掉純數字欄（股數/金額欄誤判）
+      if (!name || /^[\d,]+$/.test(name)) name = _getName(code) || code;
+
+      rows.push({ code, name });
+    });
+  }
+
+  return _dedup(rows);
+}
+
+// 去重：以代號為 key，保留第一筆
+function _dedup(rows) {
+  const seen = new Set();
+  return rows.filter(r => {
+    if (seen.has(r.code)) return false;
+    seen.add(r.code);
+    return true;
+  });
 }
 
 // ── Tab Bar ───────────────────────────────────────────────────
@@ -278,7 +718,8 @@ function _renderHotBanner(themes) {
 }
 
 // ── 個股清單（含三種檢視）────────────────────────────────────
-async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap) {
+// isEtf=true 時隱藏「編輯/新增/刪除題材」按鈕（ETF 撥盤唯讀）
+async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap, isEtf = false) {
   const c = gc(theme.color);
   const stocks = theme.stocks ?? [];
 
@@ -339,9 +780,10 @@ async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap) 
         <button class="th-view-btn ${_viewMode==='table'?'active':''}" data-view="table" title="表格">☰</button>
       </div>
       <div class="theme-toolbar-right">
+        ${isEtf ? '' : `
         <button class="theme-tool-btn" id="themeEditBtn">✏️ 編輯題材</button>
         <button class="theme-tool-btn" id="themeAddStockBtn">＋ 新增個股</button>
-        <button class="theme-tool-btn theme-tool-btn--danger" id="themeDeleteBtn">🗑 刪除題材</button>
+        <button class="theme-tool-btn theme-tool-btn--danger" id="themeDeleteBtn">🗑 刪除題材</button>`}
       </div>
     </div>
     <div id="themeStockBody"></div>`;
@@ -1424,9 +1866,12 @@ function _openYaoguScanModal() {
       const reason = String(s.reason ?? s['理由'] ?? '').trim();
       if (!code) return null;
 
-      const realName = nameCache.get(code);
+      const realName = nameCache.get(code)
+        || getChineseName(code)
+        || (window.__priceCache ?? {})[code]?.name
+        || aiName;  // 最後 fallback 用 AI 給的名稱
       if (!realName) {
-        // 代號不在 nameCache → 無效代號
+        // 三層 fallback 都沒有 → 才視為無效代號
         invalidCodes.push(code);
         return null;
       }
