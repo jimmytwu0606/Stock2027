@@ -183,7 +183,7 @@ function _render(code, info, autoData) {
 // Advanced 3：自動資料區塊渲染
 // ============================================================================
 
-function _renderAutoSection(autoData) {
+function __renderAutoSection(autoData) {
   const sections = [];
 
   // ── 月營收 ──────────────────────────────────────────────────────────────────
@@ -306,7 +306,7 @@ function _formatRevenue(v) {
 // 手動 Prompt 資料卡片（A2 原版）
 // ============================================================================
 
-function _renderInfoCards(info) {
+function __renderInfoCards(info) {
   const cards = [];
   const today = new Date().toISOString().slice(0, 10);
 
@@ -360,6 +360,40 @@ function _renderInfoCards(info) {
     cards.push(`<div class="si-card"><div class="si-card-title">📝 備註</div><div class="si-card-note">${info.note}</div></div>`);
   }
 
+  // ── 前瞻面分析（forward）──────────────────────────────────────────────────
+  if (info.forward && (info.forward.story || info.forward.drivers?.length || info.forward.consensus)) {
+    const f = info.forward;
+    const driversHtml = (f.drivers || []).map(d =>
+      `<div class="si-forward-item si-forward-bull">
+        <span class="si-forward-dot" style="background:#ef5350"></span>${d}
+      </div>`
+    ).join('');
+    const risksHtml = (f.risks || []).map(r =>
+      `<div class="si-forward-item si-forward-bear">
+        <span class="si-forward-dot" style="background:#26a69a"></span>${r}
+      </div>`
+    ).join('');
+    const epsHtml = (f.epsEstNext || f.epsEstYear2) ? `
+      <div class="si-forward-eps-row">
+        ${f.epsEstNext  ? `<div class="si-forward-eps-item"><div class="si-forward-eps-label">法人 EPS 預估（明年）</div><div class="si-forward-eps-val">${f.epsEstNext} 元</div></div>` : ''}
+        ${f.epsEstYear2 ? `<div class="si-forward-eps-item"><div class="si-forward-eps-label">法人 EPS 預估（後年）</div><div class="si-forward-eps-val">${f.epsEstYear2} 元</div></div>` : ''}
+      </div>` : '';
+    const updatedHtml = f.updatedAt ? `<div class="si-forward-updated">資料截止：${f.updatedAt}</div>` : '';
+
+    cards.push(`<div class="si-card si-card-forward">
+      <div class="si-card-title">🔭 前瞻面分析</div>
+      ${f.story ? `<div class="si-forward-story">${f.story}</div>` : ''}
+      ${epsHtml}
+      ${driversHtml || risksHtml ? `
+        <div class="si-forward-grid">
+          ${driversHtml ? `<div><div class="si-forward-section-title" style="color:#ef5350">成長動能</div>${driversHtml}</div>` : ''}
+          ${risksHtml  ? `<div><div class="si-forward-section-title" style="color:#26a69a">主要風險</div>${risksHtml}</div>`  : ''}
+        </div>` : ''}
+      ${f.consensus ? `<div class="si-forward-consensus"><span class="si-forward-consensus-label">燈燈整合觀點</span>${f.consensus}</div>` : ''}
+      ${updatedHtml}
+    </div>`);
+  }
+
   return cards.length ? `<div class="si-cards">${cards.join('')}</div>` : '';
 }
 
@@ -378,10 +412,32 @@ function _copyPrompt(code) {
   "peRatio": null,
   "pbRatio": null,
   "dividendYield": null,
-  "note": ""
+  "note": "",
+
+  "forward": {
+    "story": null,
+    "drivers": [],
+    "risks": [],
+    "epsEstNext": null,
+    "epsEstYear2": null,
+    "consensus": null,
+    "updatedAt": null
+  }
 }
 
-（月營收、EPS、除息資料系統已自動抓取，Prompt 只需法說會日期、法人評等、估值、備註）
+欄位說明：
+- meetingDate：最新法說會日期（YYYY-MM-DD）
+- analystRating：法人評等（買進 / 中立 / 賣出）
+- targetPrice：法人目標價（數字，元）
+- forward.story：市場現在在賭的核心故事，一句話說清楚
+- forward.drivers：成長動能，條列式，3-5點
+- forward.risks：主要風險，條列式，2-4點
+- forward.epsEstNext：下一年度 EPS 共識預估（元）
+- forward.epsEstYear2：後年度 EPS 共識預估（元）
+- forward.consensus：整體評估一句話結論
+- forward.updatedAt：資料截止日期（YYYY-MM-DD）
+
+（月營收、EPS、除息資料系統已自動抓取，Prompt 只需上方欄位）
 只回覆 JSON，不要其他說明文字。`;
 
   navigator.clipboard.writeText(prompt).then(() => {

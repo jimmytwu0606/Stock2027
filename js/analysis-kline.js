@@ -31,6 +31,7 @@ export function initSRKline(wrapEl, candles, r, fetchFn) {
   _fetchFn = fetchFn ?? null;
   _candles = candles || [];
   _r       = r;
+  window.__srData = r;  // 橋接給 analysis-perspective.js 使用
   _curN    = Math.min(60, _candles.length);
   _layer   = 'sr';
   _selKey  = null;

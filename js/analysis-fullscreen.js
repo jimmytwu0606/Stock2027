@@ -267,11 +267,16 @@ export async function refreshFullscreenAnalysis() {
     _activeModId = (available[0] ?? allMods[0]).id;
   }
 
-  // summary 永遠排在 Tab Bar 第一個
+  // perspective 永遠排在第一個，summary 排第二
+  const perspIdx = allMods.findIndex(m => m.id === 'perspective');
+  if (perspIdx > 0) {
+    const [pvItem] = allMods.splice(perspIdx, 1);
+    allMods.unshift(pvItem);
+  }
   const summaryIdx = allMods.findIndex(m => m.id === 'summary');
-  if (summaryIdx > 0) {
+  if (summaryIdx > 1) {
     const [sumItem] = allMods.splice(summaryIdx, 1);
-    allMods.unshift(sumItem);
+    allMods.splice(1, 0, sumItem);
   }
 
   // 渲染 tab bar
@@ -301,7 +306,7 @@ function _isModuleActive(modId) {
   };
   // 型態/基本面/葛蘭碧 模組:永遠啟用(不受 indicators 開關控制)
   // 葛蘭碧 v2.6 — 沒有對應的 toolbar 開關,且讀的是 AppState.signals 不需綁定指標
-  if (modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries') return true;
+  if (modId === 'perspective' || modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries') return true;
   const stateKey = keyMap[modId];
   return stateKey ? !!AppState.indicators[stateKey] : false;
 }

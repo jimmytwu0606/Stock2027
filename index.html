@@ -3,12 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>選股台 — 台股盤後工具</title>
+  <title>dengdeng · 台股盤後工具</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="css/main.css" />
   <link rel="stylesheet" href="css/responsive.css" />
   <link rel="stylesheet" href="css/stock-tabs.css" />
+  <link rel="stylesheet" href="css/Healthcheck.css" />
   <link rel="stylesheet" href="css/stock-info.css" />
   <link rel="stylesheet" href="css/personas.css" />
   <link rel="stylesheet" href="css/auth-tier.css" />
@@ -30,6 +33,7 @@
   <link rel="stylesheet" href="css/analysis-panel.css" />
   <link rel="stylesheet" href="css/analysis-ai-prompt.css" />
   <link rel="stylesheet" href="css/multi-period.css" />
+  <link rel="stylesheet" href="css/mobile.css" /><!-- Phase 10 手機版 -->
   <style>
 /* ── Modal 雙 Tab 版 ────────────────────────── */
 .modal--wide { width: min(480px, 92vw); }
@@ -497,6 +501,46 @@
 #hgTrackModalConfirm { background: var(--accent); color: #fff; }
 #hgTrackModalConfirm:hover { opacity: .85; }
 #hgTrackModalCancel { background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); }
+
+/* ── Logo D ── */
+.logo { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+.logo-dots { display: block; flex-shrink: 0; }
+.logo-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 10px;
+  background: linear-gradient(to bottom, transparent, #ef5350 40%, #ef5350 60%, transparent);
+  flex-shrink: 0;
+}
+.logo-text {
+  font-family: 'DM Mono', 'Courier New', monospace;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  display: flex;
+}
+.logo-deng1 {
+  color: transparent;
+  background-image: linear-gradient(90deg, #ef5350 0%, #ff7043 20%, #ffb74d 40%, #ff7043 60%, #ef5350 80%, #ff7043 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: logo-marquee 2.8s linear infinite;
+}
+.logo-deng2 {
+  color: transparent;
+  background-image: linear-gradient(90deg, #90caf9 0%, #e3f2fd 20%, #ffffff 40%, #e3f2fd 60%, #90caf9 80%, #e3f2fd 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: logo-marquee 2.8s linear infinite;
+  animation-delay: -1.4s;
+}
+@keyframes logo-marquee {
+  0%   { background-position: 100% center; }
+  100% { background-position: -200% center; }
+}
   </style>
   <link rel="stylesheet" href="css/monte-carlo.css">
   <style>
@@ -664,7 +708,7 @@
   <text font-size="10.5" fill="rgba(239,83,80,.45)" font-family="-apple-system,sans-serif" font-weight="600" letter-spacing="0.5">
     <textPath href="#dsCp1" startOffset="0%">
       <animate attributeName="startOffset" from="0%" to="-100%" dur="28s" repeatCount="indefinite"/>
-      ▲ 2492 華新科 +10.00%　·　▲ 2478 大毅 +9.55%　·　▲ 6574 萬方 +9.81%　·　▲ 8109 博大 +10.00%　·　▲ 6155 鈞貴 +9.82%　·　▲ 2330 台積電 +3.2%　·　▲ 6669 緯穎 +7.3%　·　▲ 2492 華新科 +10.00%　·　▲ 2478 大毅 +9.55%　·
+      <tspan id="dsTpTopText">▲ 2492 華新科 +10.00%　·　▲ 2478 大毅 +9.55%　·　▲ 6574 萬方 +9.81%　·　▲ 8109 博大 +10.00%　·　▲ 6155 鈞貴 +9.82%　·　</tspan>
     </textPath>
   </text>
 </svg>
@@ -675,7 +719,7 @@
   <text font-size="10.5" fill="rgba(38,166,154,.42)" font-family="-apple-system,sans-serif" font-weight="600" letter-spacing="0.5">
     <textPath href="#dsCp2" startOffset="0%">
       <animate attributeName="startOffset" from="0%" to="-100%" dur="34s" repeatCount="indefinite"/>
-      散熱 5檔　·　PCB 4檔　·　半導體設備 4檔　·　面板光電 3檔　·　精密零組件 3檔　·　漲停 39檔 上市20 上櫃19　·　外資買超 +42億　·　散熱 5檔　·　PCB 4檔　·
+      <tspan id="dsTpBotText">散熱 5檔　·　PCB 4檔　·　漲停 39檔　·　外資買超 +42億　·　</tspan>
     </textPath>
   </text>
 </svg>
@@ -683,23 +727,21 @@
 <!-- 直線跑馬燈 上 RTL -->
 <div class="ds-ltick ds-ltick-top">
   <div class="ds-li ds-rtl">
-    <span class="ds-t"><span class="ds-mu">加權</span><span class="ds-up">載入中…</span></span>
-    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac">—檔</span></span>
-    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac">散熱 · PCB · 半導體</span></span>
-    <span class="ds-t"><span class="ds-mu">漲家</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">跌家</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">費半</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">那指</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">16:45 更新</span></span>
+    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac" data-sv="limit-up">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac" data-sv="sectors">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">漲家</span><span data-sv="up-count">—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌家</span><span data-sv="down-count">—</span></span>
+    <span class="ds-t"><span class="ds-mu">命中題材</span><span class="ds-ac" data-sv="theme-hit">偵測中…</span></span>
+    <span class="ds-t"><span class="ds-mu">妖股偵測</span><span class="ds-up" data-sv="yaogu-hit">掃描中…</span></span>
+    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">每日更新</span></span>
     <!-- 重複 -->
-    <span class="ds-t"><span class="ds-mu">加權</span><span class="ds-up">載入中…</span></span>
-    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac">—檔</span></span>
-    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac">散熱 · PCB · 半導體</span></span>
-    <span class="ds-t"><span class="ds-mu">漲家</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">跌家</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">費半</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">那指</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">16:45 更新</span></span>
+    <span class="ds-t"><span class="ds-mu">漲停</span><span class="ds-ac" data-sv="limit-up">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">強勢族群</span><span class="ds-ac" data-sv="sectors">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">漲家</span><span data-sv="up-count">—</span></span>
+    <span class="ds-t"><span class="ds-mu">跌家</span><span data-sv="down-count">—</span></span>
+    <span class="ds-t"><span class="ds-mu">命中題材</span><span class="ds-ac" data-sv="theme-hit">偵測中…</span></span>
+    <span class="ds-t"><span class="ds-mu">妖股偵測</span><span class="ds-up" data-sv="yaogu-hit">掃描中…</span></span>
+    <span class="ds-t"><span class="ds-mu">盤後</span><span class="ds-ac">每日更新</span></span>
   </div>
   <div class="ds-fl ds-fll"></div><div class="ds-fl ds-flr"></div>
 </div>
@@ -707,19 +749,17 @@
 <!-- 直線跑馬燈 下 LTR -->
 <div class="ds-ltick ds-ltick-bot">
   <div class="ds-li ds-ltr">
-    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up">—</span></span>
-    <span class="ds-t"><span class="ds-mu">投信</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac">載入中…</span></span>
-    <span class="ds-t"><span class="ds-cd">2330</span><span class="ds-mu">台積電</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up" data-sv="foreign">—</span></span>
+    <span class="ds-t"><span class="ds-mu">投信</span><span data-sv="invest">—</span></span>
+    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac" data-sv="main-axis">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn" data-sv="limit-down">—檔</span></span>
     <span class="ds-t"><span class="ds-mu">每日盤後</span><span class="ds-ac">自動更新</span></span>
     <span class="ds-t"><span class="ds-mu">資料來源</span><span>TWSE · Yahoo</span></span>
     <!-- 重複 -->
-    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up">—</span></span>
-    <span class="ds-t"><span class="ds-mu">投信</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac">載入中…</span></span>
-    <span class="ds-t"><span class="ds-cd">2330</span><span class="ds-mu">台積電</span><span>—</span></span>
-    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn">—檔</span></span>
+    <span class="ds-t"><span class="ds-mu">外資</span><span class="ds-up" data-sv="foreign">—</span></span>
+    <span class="ds-t"><span class="ds-mu">投信</span><span data-sv="invest">—</span></span>
+    <span class="ds-t"><span class="ds-mu">今日主軸</span><span class="ds-ac" data-sv="main-axis">載入中…</span></span>
+    <span class="ds-t"><span class="ds-mu">跌停</span><span class="ds-dn" data-sv="limit-down">—檔</span></span>
     <span class="ds-t"><span class="ds-mu">每日盤後</span><span class="ds-ac">自動更新</span></span>
     <span class="ds-t"><span class="ds-mu">資料來源</span><span>TWSE · Yahoo</span></span>
   </div>
@@ -842,42 +882,138 @@
 
 <script>
 (function(){
+  var _md = null, _td = null, _yd = null;
+  var _msgs = ['外資在買，注意籌碼', '今日漲停族群已更新', '開盤前做好功課喵', '記得看籌碼面喵~'];
+  var _mi = 0, _bubble = null;
+
+  function _setAll(key, text) {
+    document.querySelectorAll('[data-sv="' + key + '"]').forEach(function(el){ el.textContent = text; });
+  }
+  function _setAllCls(key, text, cls) {
+    document.querySelectorAll('[data-sv="' + key + '"]').forEach(function(el){ el.textContent = text; el.className = cls; });
+  }
+
+  function _fillCurves() {
+    // 上方曲線（紅）：漲停個股 + 妖股
+    var topParts = [];
+    if (_md) {
+      (_md.sectorRank || []).forEach(function(g){
+        (g.stocks || []).forEach(function(s){
+          if (s.chgPct >= 9.5) topParts.push(s);
+        });
+      });
+      topParts.sort(function(a,b){ return b.chgPct - a.chgPct; });
+      topParts = topParts.slice(0, 8).map(function(s){
+        return '▲ ' + s.code + ' ' + s.name + ' +' + (s.chgPct).toFixed(2) + '%';
+      });
+    }
+    if (_yd && _yd.length) {
+      _yd.slice(0, 3).forEach(function(y){
+        topParts.push('⚡ ' + y.name + ' ' + (y.signals || []).join('+'));
+      });
+    }
+    var topEl = document.getElementById('dsTpTopText');
+    if (topEl && topParts.length) topEl.textContent = topParts.join('　·　') + '　·　';
+
+    // 下方曲線（青）：族群 + 市場 + 題材
+    var botParts = [];
+    if (_md) {
+      (_md.sectorRank || []).slice(0, 4).forEach(function(g){ botParts.push(g.sector + ' ' + g.count + '檔'); });
+      var s = _md.stats;
+      botParts.push('漲停 ' + s.limitUp + '檔');
+      var f = Math.round((s.foreign || 0) / 1000);
+      if (f !== 0) botParts.push('外資' + (f > 0 ? '買超 +' : '賣超 ') + Math.abs(f) + '億');
+    }
+    if (_td && _td.length) {
+      botParts.push('題材命中：' + _td.slice(0, 2).map(function(h){ return h.name + '(' + h.count + ')'; }).join(' · '));
+    }
+    var botEl = document.getElementById('dsTpBotText');
+    if (botEl && botParts.length) botEl.textContent = botParts.join('　·　') + '　·　';
+  }
+
+  function _fillStraight() {
+    if (!_md) return;
+    var s = _md.stats, sr = _md.sectorRank || [];
+    _setAll('limit-up', s.limitUp + '檔');
+    _setAll('sectors', [sr[0] && sr[0].sector, sr[1] && sr[1].sector].filter(Boolean).join(' · ') || '—');
+    _setAll('up-count', s.up + '');
+    _setAll('down-count', s.down + '');
+    _setAll('limit-down', s.limitDown + '檔');
+    _setAll('main-axis', sr[0] ? sr[0].sector : '—');
+    var f = Math.round((s.foreign || 0) / 1000);
+    var inv = Math.round((s.invest || 0) / 1000);
+    _setAllCls('foreign', (f >= 0 ? '+' : '') + f + '億', f >= 0 ? 'ds-up' : 'ds-dn');
+    _setAllCls('invest', (inv >= 0 ? '+' : '') + inv + '億', inv >= 0 ? 'ds-up' : 'ds-dn');
+  }
+
+  function _fillThemes() {
+    if (!_td || !_td.length) return;
+    _setAll('theme-hit', _td.slice(0, 3).map(function(h){ return h.name + ' ' + h.count + '檔'; }).join(' · '));
+  }
+
+  function _fillYaogu() {
+    if (!_yd || !_yd.length) return;
+    _setAll('yaogu-hit', _yd.slice(0, 3).map(function(y){ return y.name + ' ' + (y.signals||[]).join('+'); }).join(' · '));
+  }
+
+  function _buildMsgs() {
+    var m = [];
+    if (_md) {
+      var s = _md.stats, sr = _md.sectorRank || [];
+      if (s.limitUp > 0) m.push('今日漲停 ' + s.limitUp + ' 檔！');
+      if (sr[0]) m.push(sr[0].sector + ' 族群強熱 ' + sr[0].count + ' 檔');
+      var f = Math.round((s.foreign || 0) / 1000);
+      if (f > 0)  m.push('外資買超 +' + f + '億 注意籌碼');
+      if (f < 0)  m.push('外資賣超 ' + Math.abs(f) + '億，留意風險');
+      m.push('漲跌家數 ' + s.up + ':' + s.down);
+    }
+    if (_td && _td.length) {
+      m.push('題材命中：' + _td.slice(0,2).map(function(h){ return h.name + ' ' + h.count + '檔'; }).join(' · '));
+    }
+    if (_yd && _yd.length) {
+      m.push('妖股偵測！' + _yd.slice(0,2).map(function(y){ return y.name + ' ' + (y.signals||[]).join('+'); }).join(' · '));
+    }
+    if (!m.length) m = ['外資在買，注意籌碼', '今日漲停族群已更新', '開盤前做好功課喵'];
+    _msgs = m;
+  }
+
+  // ── 公開介面：主程式呼叫 ──────────────────────────────────
+  // 市場資料：window.__splashFeed('market', {stats:{up,down,flat,limitUp,limitDown,totalVol,foreign,invest}, sectorRank:[{sector,count,stocks:[{code,name,chgPct}]}]})
+  // 題材命中：window.__splashFeed('themes', [{name, count, dateLabel}])
+  // 妖股偵測：window.__splashFeed('yaogu', [{code, name, signals:['X2','X1']}])
+  window.__splashFeed = function(type, data) {
+    var el = document.getElementById('dengSplash');
+    if (!el || el.classList.contains('ds-gone')) return;
+    if (type === 'market') { _md = data; _fillStraight(); _fillCurves(); _buildMsgs(); }
+    else if (type === 'themes') { _td = data; _fillThemes(); _fillCurves(); _buildMsgs(); }
+    else if (type === 'yaogu')  { _yd = data; _fillYaogu();  _fillCurves(); _buildMsgs(); }
+  };
+
   // 台詞輪播
-  const msgs = [
-    '今天散熱很強，去看看 👀',
-    '外資在買，注意籌碼',
-    '漲停族群剛更新 🔴',
-    '記得看籌碼面喵~',
-    '電子供應鏈接棒中',
-    '今日PCB也不錯',
-    '開盤前做好功課喵',
-    '五燈獎選股結果出來了',
-  ];
-  let mi = 0;
-  const bubble = document.getElementById('dsBubble');
   function rotatMsg() {
-    mi = (mi + 1) % msgs.length;
-    bubble.style.opacity = '0';
-    bubble.style.transform = 'translateY(-4px)';
+    _mi = (_mi + 1) % _msgs.length;
+    if (!_bubble) _bubble = document.getElementById('dsBubble');
+    if (!_bubble) return;
+    _bubble.style.opacity = '0';
+    _bubble.style.transform = 'translateY(-4px)';
     setTimeout(function(){
-      bubble.textContent = msgs[mi];
-      bubble.style.opacity = '1';
-      bubble.style.transform = 'translateY(0)';
+      _bubble.textContent = _msgs[_mi];
+      _bubble.style.opacity = '1';
+      _bubble.style.transform = 'translateY(0)';
     }, 300);
   }
   setInterval(rotatMsg, 3800);
 
   // 日期
-  const dl = document.getElementById('dsDateline');
+  var dl = document.getElementById('dsDateline');
   if (dl) {
-    const d = new Date();
-    const yy = d.getFullYear(), mm = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+    var d = new Date();
+    var yy = d.getFullYear(), mm = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
     dl.textContent = yy + ' · ' + mm + ' · ' + dd + ' · 盤後版';
   }
 
-  // 全域 hide 函式（main.js init 完成後可呼叫，也可以直接按按鈕）
   window.__hideSplash = function() {
-    const el = document.getElementById('dengSplash');
+    var el = document.getElementById('dengSplash');
     if (!el || el.classList.contains('ds-gone')) return;
     el.classList.add('ds-exit');
     setTimeout(function(){ el.classList.add('ds-gone'); }, 520);
@@ -890,7 +1026,21 @@
 
 <!-- ── Topbar ── -->
   <header class="topbar">
-    <div class="logo">選股<em>台</em></div>
+    <div class="logo">
+      <svg class="logo-dots" width="22" height="22" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="32" cy="32" r="8" fill="#ff6b6b"><animate attributeName="opacity" values="1;0.4;1" dur="2s" begin="0s" repeatCount="indefinite"/><animate attributeName="r" values="8;6.5;8" dur="2s" begin="0s" repeatCount="indefinite"/></circle>
+        <circle cx="32" cy="18" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+        <circle cx="18" cy="32" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+        <circle cx="46" cy="32" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+        <circle cx="32" cy="46" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+        <circle cx="18" cy="18" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+        <circle cx="46" cy="18" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+        <circle cx="18" cy="46" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+        <circle cx="46" cy="46" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+      </svg>
+      <div class="logo-sep"></div>
+      <span class="logo-text"><span class="logo-deng1">deng</span><span class="logo-deng2">deng</span></span>
+    </div>
     <div class="search-box">
       <input id="searchInput" type="text" placeholder="代號 or 股名…" autocomplete="off" />
       <button class="search-btn" title="查詢">&#9906;</button>
@@ -998,7 +1148,7 @@
         <button class="stock-tab"        data-stock-tab="fundamental">基本面</button>
         <button class="stock-tab"        data-stock-tab="news">新聞</button>
         <button class="stock-tab"        data-stock-tab="announcement">公告</button>
-        <button class="stock-tab"        data-stock-tab="stockinfo">補充資訊</button>
+        <!-- 補充資訊 tab 已整合進智能分析觀點卡 -->
       </nav>
 
       <!-- 個股面板：K線圖 -->
@@ -2159,7 +2309,7 @@
 <button id="marketMiniBtn" class="mm-fab" title="市場總覽">📊</button>
 
 <div id="marketMiniPanel" class="mm-panel">
-  <div class="mm-header">
+  <div id="mmHeader" class="mm-header">
     <span class="mm-title">市場總覽</span>
     <button id="mmRefresh" class="mm-icon-btn" title="手動更新">↻</button>
     <button id="mmClose"   class="mm-icon-btn" title="收起">✕</button>

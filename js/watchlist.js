@@ -25,7 +25,7 @@ import {
 import { getChineseName, toYahooSymbol, FEATURE_INTRADAY_5M } from './api.js';
 import { calcSignalLamps } from './strategy.js';
 import { getYaoguStatus }  from './signal-scan.js';
-import { getYaoguRecord }  from './db.js';
+import { getYaoguRecord, loadStockInfo } from './db.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,7 @@ const _SPARK_PAD = 4;                   // 上下留邊
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let _groups    = [];
+let _siInfoCache = {};  // code → stockInfo（有 forward 時顯示邊框）
 let _collapsed = new Set();
 let _sortState = {};                    // { [groupId]: { key: string|null, dir: 1|-1 } }
 // ★ 無 FinMind token → 強制鎖定 '40d'，完全不打 Yahoo 5m（引信：訂閱後填 token 自動開通）
@@ -409,6 +410,18 @@ export function renderWatchlist() {
   const container = document.getElementById('watchlistContainer');
   if (!container) return;
 
+  // ── 背景批次讀 stockInfo（有 JSON 的個股顯示邊框）──
+  const _allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+  Promise.all(_allCodes.map(c => loadStockInfo(c).then(info => [c, info]).catch(() => [c, null])))
+    .then(pairs => {
+      const newCache = {};
+      pairs.forEach(([c, info]) => { if (info) newCache[c] = info; });
+      // 有變化才重繪
+      const changed = _allCodes.some(c => !!newCache[c] !== !!_siInfoCache[c]);
+      _siInfoCache = newCache;
+      if (changed) renderWatchlist();
+    });
+
   // ── 從 __priceCache 補最新報價 ──
   // ⚠️ 判斷不能只看 s.price === p.price：chgPct 可能已更新，初次載入 s.price 是 undefined
   const cache = window.__priceCache ?? {};
@@ -545,8 +558,19 @@ function _renderStock(stock, groupId) {
   // 走勢圖（同步取快取；未命中 → placeholder + 排隊載入）
   const sparkHtml = _sparkHtmlSync(stock.code, isUp);
 
+  // stockInfo 邊框 class（只有 forward 才顯示）
+  const _si = _siInfoCache[stock.code] ?? null;
+  let _siBorderCls = '';
+  if (_si?.forward?.story || _si?.forward?.consensus) {
+    const _updatedAt = _si.forward.updatedAt;
+    const daysSince = _updatedAt
+      ? Math.floor((Date.now() - new Date(_updatedAt).getTime()) / 86400000)
+      : 0;
+    _siBorderCls = daysSince > 30 ? 'wl-si-stale' : 'wl-si-fresh';
+  }
+
   return `
-<div class="wl-item" data-code="${stock.code}" data-group-id="${groupId}"
+<div class="wl-item ${_siBorderCls}" data-code="${stock.code}" data-group-id="${groupId}"
      draggable="true" data-action="select-stock">
   <button class="wl-remove-btn" data-action="remove-stock"
           data-code="${stock.code}" data-group-id="${groupId}" title="移除">×</button>

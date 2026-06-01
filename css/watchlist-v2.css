@@ -516,3 +516,63 @@
 .wl-confirm-ok:hover  { background: #e53935; }
 .wl-confirm-ok:active { background: #c62828; }
 
+
+/* ─── stockInfo 跑馬燈邊框（有 forward 的個股） ─────────────── */
+
+/* 跑馬燈用 ::before 偽元素做旋轉漸層邊框 */
+.wl-item.wl-si-fresh,
+.wl-item.wl-si-stale {
+  position: relative;
+  border: none;
+  border-radius: 6px;
+  margin: 2px 4px;
+  padding: 8px 28px 8px 8px;
+  z-index: 0;
+}
+
+/* 旋轉漸層背景（跑馬燈效果） */
+.wl-item.wl-si-fresh::before,
+.wl-item.wl-si-stale::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 7px;
+  z-index: -1;
+  background: conic-gradient(
+    from var(--wl-si-angle, 0deg),
+    transparent 0deg,
+    transparent 200deg,
+    #f59e0b 240deg,
+    #fbbf24 270deg,
+    #f59e0b 300deg,
+    transparent 340deg,
+    transparent 360deg
+  );
+  animation: wl-si-spin 3s linear infinite;
+}
+
+/* 內層遮罩還原背景色 */
+.wl-item.wl-si-fresh::after,
+.wl-item.wl-si-stale::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  border-radius: 5px;
+  background: var(--bg-card, #0d1117);
+  z-index: -1;
+}
+
+@property --wl-si-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes wl-si-spin {
+  to { --wl-si-angle: 360deg; }
+}
+
+/* 超過 30 天：跑馬燈速度加快提醒 */
+.wl-item.wl-si-stale::before {
+  animation-duration: 1.2s;
+}

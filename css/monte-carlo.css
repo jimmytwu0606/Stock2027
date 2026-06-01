@@ -197,8 +197,24 @@
 
 .mc-sim-controls {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 按鈕換行列 */
+.mc-bt-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
-  gap: 12px;
+}
+
+/* hint + close 底列 */
+.mc-sim-controls-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .mc-sim-hint {

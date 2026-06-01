@@ -6,19 +6,17 @@
  * 盤中每 3 分鐘自動更新，盤後僅手動更新
  */
 
-import { fetchQuote, fetchIntraday, getChineseName } from './api.js';
+import { fetchIntraday, getChineseName } from './api.js';
 import { fsGetShared } from './firebase.js';
 import { calcSignalLamps } from './strategy.js';
-import { matchSignals } from './signal-scan.js';
+
 import { AppState } from './state.js';
 
-let _chart      = null;
-let _series     = null;
 let _timerId    = null;
 let _isOpen     = false;
-let _miCache    = null;     // 共用 market.js 的 _cache（fetchMIIndex 本身有 5min TTL）
 const REFRESH_MS = 3 * 60 * 1000;
-const SELF_PROXY = 'https://stock-2027.luffy0606.workers.dev/?url=';
+const SELF_PROXY    = 'https://stock-2027.luffy0606.workers.dev/?url=';
+const PROXY_TOKEN   = 'e99ecdc813d9a203d1951613de68e7a22f83e5b22ffd458f';
 
 // ─── 盤中判斷（UTC+8 週一到週五 09:00–13:35）───
 function _isTradingHours() {
@@ -41,7 +39,10 @@ async function _fetchMI() {
   let json = null;
   for (const proxyUrl of proxies) {
     try {
-      const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+      const isWorker = proxyUrl.startsWith(SELF_PROXY);
+      const opts = { signal: AbortSignal.timeout(8000) };
+      if (isWorker && PROXY_TOKEN) opts.headers = { 'X-Proxy-Token': PROXY_TOKEN };
+      const res = await fetch(proxyUrl, opts);
       if (!res.ok) continue;
       const text = await res.text();
       if (!text || text.trim().startsWith('<')) continue;  // HTML 錯誤頁
@@ -93,74 +94,6 @@ function _calcBreadth() {
     if (r.chgPct <= -9.5) limitDown++;
   }
   return { up, down, flat, limitUp, limitDown, total: up + down + flat };
-}
-
-// ─── 初始化迷你 K 圖 ───
-function _initChart() {
-  if (_chart) return;
-  const el = document.getElementById('mmChart');
-  if (!el || !window.LightweightCharts) return;
-
-  const w = el.clientWidth || 280;
-  _chart = LightweightCharts.createChart(el, {
-    width: w,
-    height: 100,
-    layout: {
-      background: { color: 'transparent' },
-      textColor: 'rgba(232,234,237,0.55)',
-      fontSize: 10,
-    },
-    grid: {
-      vertLines: { visible: false },
-      horzLines: { color: 'rgba(255,255,255,0.04)' },
-    },
-    rightPriceScale: {
-      borderVisible: false,
-      scaleMargins: { top: 0.15, bottom: 0.15 },
-    },
-    localization: {
-      timeFormatter: (ts) => {
-        // ts 是 UTC 秒，+8 小時轉台灣時間顯示
-        const d = new Date((ts + 8 * 3600) * 1000);
-        const h = String(d.getUTCHours()).padStart(2, '0');
-        const m = String(d.getUTCMinutes()).padStart(2, '0');
-        return `${h}:${m}`;
-      },
-    },
-    timeScale: {
-      borderVisible: false,
-      timeVisible: true,
-      secondsVisible: false,
-      rightOffset: 2,
-      tickMarkFormatter: (ts) => {
-        const d = new Date((ts + 8 * 3600) * 1000);
-        const h = String(d.getUTCHours()).padStart(2, '0');
-        const m = String(d.getUTCMinutes()).padStart(2, '0');
-        return `${h}:${m}`;
-      },
-    },
-    handleScroll: false,
-    handleScale:  false,
-    crosshair:    { mode: 0 },
-  });
-
-  _series = _chart.addAreaSeries({
-    lineColor:   '#3b82f6',
-    topColor:    'rgba(59,130,246,0.35)',
-    bottomColor: 'rgba(59,130,246,0)',
-    lineWidth:   2,
-    priceLineVisible: false,
-    lastValueVisible: false,
-  });
-
-  // 響應式
-  if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => {
-      if (_chart && el.clientWidth > 0) {
-        _chart.applyOptions({ width: el.clientWidth });
-      }
-    }).observe(el);
-  }
 }
 
 // ─── 渲染大盤燈號 ───
@@ -223,23 +156,6 @@ function _renderHero(taiex) {
   }
 }
 
-// ─── 渲染分時 K ───
-function _renderChart(points) {
-  if (!_series) return;
-  if (!points || points.length === 0) return;
-  // 去重（Yahoo 偶爾回重複 timestamp）
-  const seen = new Set();
-  const data = [];
-  for (const p of points) {
-    if (seen.has(p.time)) continue;
-    seen.add(p.time);
-    data.push(p);
-  }
-  data.sort((a, b) => a.time - b.time);
-  _series.setData(data);
-  _chart.timeScale().fitContent();
-}
-
 // ─── 渲染漲跌家數 ───
 function _renderBreadth(b) {
   const setText = (id, v) => {
@@ -272,7 +188,7 @@ async function _renderSectors(miRows) {
     const today = new Date().toISOString().slice(0, 10);
     const snap  = await fsGetShared(`market/${today}/limit_up`);
     if (snap?.sectorRank) {
-      const top3 = snap.sectorRank.slice(0, 3);
+      const top3 = snap.sectorRank.slice(0, 10);
       if (top3.length > 0) {
         el.innerHTML = top3.map((s, i) => `
           <div class="mm-sector-row">
@@ -290,7 +206,7 @@ async function _renderSectors(miRows) {
     .filter(r => _isSector(r.name))
     .filter(r => !isNaN(r.chgPct))
     .sort((a, b) => b.chgPct - a.chgPct)
-    .slice(0, 3);
+    .slice(0, 10);
 
   if (!sectors.length) {
     el.innerHTML = '<div class="mm-empty">尚無類股資料</div>';
@@ -314,29 +230,22 @@ async function _refresh() {
   const tsEl = document.getElementById('mmTime');
   if (tsEl) tsEl.textContent = '更新中…';
 
-  // 平行：分時 K + MI_INDEX；漲跌家數從 window.__priceCache 算（純本地）
-  const [intradayRes, miRes] = await Promise.allSettled([
-    fetchIntraday('^TWII'),
+  // 平行：MI_INDEX + 加權指數 K線（取最後收盤價）；漲跌家數從 window.__priceCache 算
+  const [miRes, intradayRes] = await Promise.allSettled([
     _fetchMI(),
+    fetchIntraday('^TWII'),
   ]);
 
-  // 1) 分時 K（fetchIntraday 現在回傳 { points, prevClose }）
-  const intradayData   = intradayRes.status === 'fulfilled' ? intradayRes.value : { points: [], prevClose: null };
-  const intradayPoints = intradayData.points ?? [];
-  const prevClose      = intradayData.prevClose ?? null;
-  if (intradayPoints.length > 0) {
-    _renderChart(intradayPoints);
-  }
-
-  // 2) 加權指數 hero + 類股
-  // ⚠️ 踩雷：MI_INDEX 的 close 是盤後收盤價，盤中不更新
-  //   → 不管 MI_INDEX 成不成功，只要有分時K就用分時K最後一點當現價
   const miRows = miRes.status === 'fulfilled' ? miRes.value : [];
   const taiex  = miRows.find(r => r.name === '發行量加權股價指數')
               ?? miRows.find(r => r.name?.includes('加權'));
 
-  if (intradayPoints.length > 0) {
-    // 有分時K → 現價用即時，方向/漲跌幅自己算
+  // 加權指數 hero：優先用分時K最後一點（盤中即時），fallback MI_INDEX
+  const intradayData   = intradayRes.status === 'fulfilled' ? intradayRes.value : null;
+  const intradayPoints = intradayData?.points ?? [];
+  const prevClose      = intradayData?.prevClose ?? null;
+
+  if (intradayPoints.length > 1) {
     const last = intradayPoints[intradayPoints.length - 1];
     const base = prevClose
               ?? (taiex ? parseFloat(String(taiex.close).replace(/,/g,'')) : null)
@@ -345,7 +254,6 @@ async function _refresh() {
     const pct  = base > 0 ? (pts / base) * 100 : 0;
     _renderHero({ close: last.value, points: pts.toFixed(2), chgPct: pct, dir: pts >= 0 ? 'up' : 'down' });
   } else if (taiex) {
-    // 沒有分時K → fallback 到 MI_INDEX（盤後收盤，標示清楚）
     _renderHero(taiex);
   } else {
     _renderHero(null);
@@ -374,7 +282,6 @@ function _open() {
   if (btn) btn.style.display = 'none';
   _isOpen = true;
 
-  _initChart();
   _refresh();
 
   // 啟動定時器（只在盤中）
@@ -392,6 +299,10 @@ function _close() {
   const btn   = document.getElementById('marketMiniBtn');
   if (!panel) return;
   panel.classList.remove('open');
+  // 重置拖移位置，下次開啟回右下角預設位
+  panel.style.left = panel.style.top = '';
+  panel.style.right = '20px';
+  panel.style.bottom = '20px';
   if (btn) btn.style.display = '';
   _isOpen = false;
   _stopTimer();
@@ -403,15 +314,81 @@ function _stopTimer() {
 
 // ─── 對外入口 ───
 export function initMarketMini() {
-  const btn       = document.getElementById('marketMiniBtn');
-  const closeBtn  = document.getElementById('mmClose');
+  const btn        = document.getElementById('marketMiniBtn');
+  const closeBtn   = document.getElementById('mmClose');
   const refreshBtn = document.getElementById('mmRefresh');
   if (!btn || !closeBtn) {
     console.warn('[market-mini] HTML 元素缺失，跳過初始化');
     return;
   }
 
-  btn.addEventListener('click', _open);
+  // ─── FAB 拖移邏輯 ───
+  let _fabDragged = false;
+  {
+    let _dragging = false, _ox = 0, _oy = 0, _moved = false;
+    btn.addEventListener('mousedown', e => {
+      const r = btn.getBoundingClientRect();
+      _ox = e.clientX - r.left;
+      _oy = e.clientY - r.top;
+      _dragging = true;
+      _moved = false;
+      btn.style.transition = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!_dragging) return;
+      _moved = true;
+      btn.style.right  = 'auto';
+      btn.style.bottom = 'auto';
+      const x = Math.max(0, Math.min(window.innerWidth  - btn.offsetWidth,  e.clientX - _ox));
+      const y = Math.max(0, Math.min(window.innerHeight - btn.offsetHeight, e.clientY - _oy));
+      btn.style.left = x + 'px';
+      btn.style.top  = y + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!_dragging) return;
+      _dragging = false;
+      btn.style.transition = '';
+      _fabDragged = _moved;
+    });
+  }
+
+  btn.addEventListener('click', e => { if (!_fabDragged) _open(); _fabDragged = false; });
   closeBtn.addEventListener('click', _close);
   refreshBtn?.addEventListener('click', _refresh);
+
+  // ─── Panel 拖移邏輯（標題列 drag handle）───
+  const header = document.getElementById('mmHeader');
+  if (header) {
+    let _dragging = false, _ox = 0, _oy = 0;
+    header.addEventListener('mousedown', e => {
+      if (e.target === closeBtn || e.target === refreshBtn) return;
+      const panel = document.getElementById('marketMiniPanel');
+      if (!panel) return;
+      const r = panel.getBoundingClientRect();
+      // 切換成 fixed + 絕對位置
+      panel.style.right  = 'auto';
+      panel.style.bottom = 'auto';
+      panel.style.left   = r.left + 'px';
+      panel.style.top    = r.top  + 'px';
+      _ox = e.clientX - r.left;
+      _oy = e.clientY - r.top;
+      _dragging = true;
+      header.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!_dragging) return;
+      const panel = document.getElementById('marketMiniPanel');
+      if (!panel) return;
+      const x = Math.max(0, Math.min(window.innerWidth  - panel.offsetWidth,  e.clientX - _ox));
+      const y = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, e.clientY - _oy));
+      panel.style.left = x + 'px';
+      panel.style.top  = y + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      _dragging = false;
+      header.classList.remove('dragging');
+    });
+  }
 }

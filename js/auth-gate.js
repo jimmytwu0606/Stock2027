@@ -36,9 +36,10 @@ export const DEFAULT_GATES = {
   stocktab_stockinfo:  'free',   // 補充資訊
 
   // 特定元素
-  el_btnMonteCarlo:  'vvvip',    // 蒙地卡羅按鈕
-  el_msStrategyTab:  'pro',      // 追蹤清單策略選股
-  el_yaoguQuery:     'pro',      // 妖股查詢按鈕
+  el_btnMonteCarlo:    'vvvip',  // 蒙地卡羅按鈕
+  el_msStrategyTab:    'pro',    // 追蹤清單策略選股
+  el_yaoguQuery:       'pro',    // 妖股查詢按鈕
+  el_btnStockBacktest: 'free',   // 個股歷史回測按鈕
 
   // K線指標按鈕
   ind_ICHI: 'free',
@@ -77,6 +78,7 @@ export const GATE_LABELS = {
   el_btnMonteCarlo:   { label: '蒙地卡羅模擬',    group: '特定功能' },
   el_msStrategyTab:   { label: '追蹤清單策略選股', group: '特定功能' },
   el_yaoguQuery:      { label: '🚀 妖股查詢',      group: '特定功能' },
+  el_btnStockBacktest:{ label: '📅 個股歷史回測',  group: '特定功能' },
 
   // K線指標
   ind_ICHI: { label: '☁️ Ichimoku 一目均衡表', group: 'K線指標' },
@@ -155,6 +157,7 @@ export function applyTierGate(tier) {
 
   // ── 特定元素 ──────────────────────────────────────────
   _showEl('btnMonteCarlo',     canAccess('el_btnMonteCarlo'));
+  _showEl('btnStockBacktest',  canAccess('el_btnStockBacktest'));
   _showEl('msStrategyTab',     canAccess('el_msStrategyTab'));
   _showEl('themeYaoguScanBtn', canAccess('el_yaoguQuery'));
   // 庫存追蹤 Modal 的策略選股 Tab（pfModal，selector 不同）

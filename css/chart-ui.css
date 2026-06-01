@@ -553,7 +553,7 @@
   position: fixed;
   right: 20px;
   bottom: 20px;
-  width: 320px;
+  width: 300px;
   max-height: calc(100vh - 40px);
   background: var(--bg2);
   border: 1px solid var(--border2);
@@ -579,6 +579,11 @@
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+.mm-header.dragging {
+  cursor: grabbing;
 }
 .mm-title {
   flex: 1;
@@ -638,13 +643,7 @@
 .mm-change.up   { color: var(--down); }   /* 台股紅漲 */
 .mm-change.down { color: var(--up); }     /* 台股綠跌 */
 
-.mm-chart {
-  width: 100%;
-  height: 100px;
-  margin: 8px 0 4px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
-}
+/* mm-chart 已移除（分時圖移除）*/
 
 .mm-section-title {
   font-size: 10px;
@@ -686,16 +685,17 @@
 .mm-sectors {
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 .mm-sector-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--bg3);
-  border-radius: 4px;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
+}
+.mm-sector-row:last-child {
+  border-bottom: none;
 }
 .mm-sector-rank {
   color: var(--muted);

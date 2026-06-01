@@ -702,6 +702,15 @@ function _renderHotBanner(themes) {
   wrap.innerHTML = html;
   wrap.style.display = '';
 
+  // ── Splash 跑馬燈：推送題材命中資料 ──────────────────────────
+  if (window.__splashFeed && hits.length) {
+    window.__splashFeed('themes', hits.map(({ t, todayHit, prevHit }) => ({
+      name: t.name,
+      count: todayHit.length + prevHit.length,
+      dateLabel: todayHit.length ? '今日' : (_hotDate || ''),
+    })));
+  }
+
   // 點擊跳到該題材
   wrap.querySelectorAll('.th-hot-banner-tag').forEach(tag => {
     tag.addEventListener('click', () => {

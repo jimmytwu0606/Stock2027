@@ -538,8 +538,11 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
         } else {
           // 盤後/假日/凌晨：先判斷 validUntil
           if (cached.validUntil > now) {
+            // ⚠️ ^ 開頭指數（^DJI, ^GSPC 等）跳過台灣交易日檢查：
+            //   _lastTradingDayTs() 只懂台灣交易日，美股時區不同會永遠誤判「缺最近交易日」→ 無限重抓
+            const isIndexSymbol = symbol.startsWith('^');
             const lastCandleTime = cached.candles[cached.candles.length - 1].time * 1000;
-            const lastTradingDay = _lastTradingDayTs();
+            const lastTradingDay = isIndexSymbol ? 0 : _lastTradingDayTs();
             if (lastTradingDay > 0 && lastCandleTime < lastTradingDay) {
               console.log(`[api] kline_cache 資料缺最近交易日 → 重抓 ${symbol}_${period}`,
                 new Date(lastCandleTime).toLocaleDateString('zh-TW'),
@@ -1330,6 +1333,130 @@ export async function fetchFundamentalsBatch(codes) {
     ))
   );
   return new Map(arr);
+}
+
+// ─────────────────────────────────────────────
+// 健診資料：BalanceSheet / CashFlow / Dividend
+//
+// 設計：
+//   - 優先讀 Firestore（GAS 寫入）→ 存 IndexedDB cache（TTL 7天）
+//   - Firestore 無資料 → 直接打 FinMind（需 token）
+//   - 回傳三包資料：{ bsMap, cfMap, divRows }
+//     bsMap: Map<date, { Liabilities, TotalAssets, CurrentAssets, CurrentLiabilities, Equity }>
+//     cfMap: Map<date, { operatingCF }>
+//     divRows: [{ date, year, CashEarningsDistribution, CashStatutorySurplus }, ...]
+// ─────────────────────────────────────────────
+export async function fetchHealthData(code) {
+  if (!/^\d{4}/.test(code)) return null;
+
+  const cacheKey = `health_${code}`;
+  const cached   = await _cacheGet(cacheKey);
+  if (cached) return cached;
+
+  // ── 從 Firestore 讀（GAS 寫入路徑）──
+  const [bsRaw, cfRaw, divRaw] = await Promise.all([
+    fsGetShared(`stocks/${code}/balance_sheet`).catch(() => null),
+    fsGetShared(`stocks/${code}/cash_flow`).catch(() => null),
+    fsGetShared(`stocks/${code}/dividend`).catch(() => null),
+  ]);
+
+  // ── 解析 BalanceSheet → Map<date, {欄位}> ──
+  const bsMap = new Map();
+  const bsArr = _parseHealthRaw(bsRaw);
+  for (const r of bsArr) {
+    if (!bsMap.has(r.date)) bsMap.set(r.date, {});
+    bsMap.get(r.date)[r.type] = parseFloat(r.value);
+  }
+
+  // ── 解析 CashFlow → Map<date, {operatingCF}> ──
+  const cfMap = new Map();
+  const cfArr = _parseHealthRaw(cfRaw);
+  for (const r of cfArr) {
+    if (!cfMap.has(r.date)) cfMap.set(r.date, {});
+    const v = parseFloat(r.value);
+    // 兩個 type 取較精確的那個（CashFlowsFromOperatingActivities 優先）
+    if (r.type === 'CashFlowsFromOperatingActivities') {
+      cfMap.get(r.date).operatingCF = v;
+    } else if (r.type === 'NetCashInflowFromOperatingActivities' &&
+               cfMap.get(r.date).operatingCF == null) {
+      cfMap.get(r.date).operatingCF = v;
+    }
+  }
+
+  // ── 解析 Dividend ──
+  let divRows = [];
+  if (divRaw) {
+    const arr = Array.isArray(divRaw) ? divRaw
+      : (divRaw.data ? (typeof divRaw.data === 'string' ? JSON.parse(divRaw.data) : divRaw.data) : []);
+    divRows = Array.isArray(arr) ? arr : [];
+  }
+
+  // ── Firestore 無資料 → fallback 直打 FinMind ──
+  const token = getFinMindToken();
+  if (bsMap.size === 0 && token) {
+    try {
+      const startDate = _nYearsAgo(3);
+      const bsFallback = await _fetchFinMindHealthRaw('TaiwanStockBalanceSheet', code, token, startDate);
+      for (const r of bsFallback) {
+        if (!bsMap.has(r.date)) bsMap.set(r.date, {});
+        bsMap.get(r.date)[r.type] = parseFloat(r.value);
+      }
+    } catch (_) {}
+  }
+  if (cfMap.size === 0 && token) {
+    try {
+      const startDate = _nYearsAgo(3);
+      const cfFallback = await _fetchFinMindHealthRaw('TaiwanStockCashFlowsStatement', code, token, startDate);
+      for (const r of cfFallback) {
+        if (!cfMap.has(r.date)) cfMap.set(r.date, {});
+        const v = parseFloat(r.value);
+        if (r.type === 'CashFlowsFromOperatingActivities') cfMap.get(r.date).operatingCF = v;
+        else if (r.type === 'NetCashInflowFromOperatingActivities' && cfMap.get(r.date).operatingCF == null)
+          cfMap.get(r.date).operatingCF = v;
+      }
+    } catch (_) {}
+  }
+  if (divRows.length === 0 && token) {
+    try {
+      const startDate = _nYearsAgo(5);
+      const text = await fetchWithProxy(
+        `https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id=${code}&start_date=${startDate}&token=${token}`,
+        12000
+      );
+      const rows = JSON.parse(text)?.data ?? [];
+      divRows = rows.map(r => ({
+        date:  r.date,
+        year:  r.year,
+        CashEarningsDistribution: parseFloat(r.CashEarningsDistribution) || 0,
+        CashStatutorySurplus:     parseFloat(r.CashStatutorySurplus)     || 0,
+      })).sort((a, b) => b.date.localeCompare(a.date));
+    } catch (_) {}
+  }
+
+  if (bsMap.size === 0 && cfMap.size === 0 && divRows.length === 0) return null;
+
+  const result = { bsMap, cfMap, divRows };
+  await _cacheSet(cacheKey, result).catch(() => {});
+  return result;
+}
+
+/** 輔助：從 fsGetShared 回傳值中解出 rows 陣列 */
+function _parseHealthRaw(raw) {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw
+    : (raw.data ? (typeof raw.data === 'string' ? JSON.parse(raw.data) : raw.data) : raw);
+  return Array.isArray(arr) ? arr : [];
+}
+
+/** 輔助：打 FinMind 並回傳 rows（給 fetchHealthData fallback 用）*/
+async function _fetchFinMindHealthRaw(dataset, code, token, startDate) {
+  const BS_KEEP = new Set(['Liabilities','TotalAssets','CurrentAssets','CurrentLiabilities','Equity']);
+  const CF_KEEP = new Set(['CashFlowsFromOperatingActivities','NetCashInflowFromOperatingActivities']);
+  const keep    = dataset === 'TaiwanStockBalanceSheet' ? BS_KEEP : CF_KEEP;
+  const url = `https://api.finmindtrade.com/api/v4/data?dataset=${dataset}&data_id=${code}&start_date=${startDate}&token=${token}`;
+  const text = await fetchWithProxy(url, 15000);
+  const rows = JSON.parse(text)?.data ?? [];
+  return rows.filter(r => keep.has(r.type));
 }
 
 // ─────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   toYahooSymbol,
   fetchFundamentals,
   fetchFinMindRevenue,
+  fetchHealthData,
   fetchChipData,
   fetchForeignBuyDays,
   fetchNews,
@@ -281,15 +282,17 @@ async function _loadFundamental(symbol, code) {
   el.innerHTML = `
     <div class="fund-subtab-bar">
       <button class="fund-subtab active" data-fund-tab="overview">總覽</button>
+      <button class="fund-subtab" data-fund-tab="healthcheck">健診</button>
       <button class="fund-subtab" data-fund-tab="eps">EPS 季報</button>
       <button class="fund-subtab" data-fund-tab="revenue">月營收</button>
       <button class="fund-subtab" data-fund-tab="margin">三率</button>
       <button class="fund-refresh-btn" id="fundRefreshBtn" title="清除快取，重新抓取">↺</button>
     </div>
-    <div id="fundOverview" class="fund-subpanel active"><div class="panel-loading">載入中</div></div>
-    <div id="fundEps"      class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>
-    <div id="fundRevenue"  class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>
-    <div id="fundMargin"   class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>`;
+    <div id="fundOverview"     class="fund-subpanel active"><div class="panel-loading">載入中</div></div>
+    <div id="fundHealthcheck"  class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>
+    <div id="fundEps"          class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>
+    <div id="fundRevenue"      class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>
+    <div id="fundMargin"       class="fund-subpanel"><div class="panel-loading" style="display:none"></div></div>`;
 
   el.querySelectorAll('.fund-subtab').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -336,10 +339,11 @@ async function _renderFundTab(tab, code, hasToken) {
   if (!panelEl || panelEl.dataset.loaded === '1') return;
   try {
     switch (tab) {
-      case 'overview': await _fundOverview(panelEl, code, hasToken); break;
-      case 'eps':      await _fundEps(panelEl, code, hasToken);      break;
-      case 'revenue':  await _fundRevenue(panelEl, code, hasToken);  break;
-      case 'margin':   await _fundMargin(panelEl, code, hasToken);   break;
+      case 'overview':     await _fundOverview(panelEl, code, hasToken);    break;
+      case 'healthcheck':  await _fundHealthcheck(panelEl, code, hasToken); break;
+      case 'eps':          await _fundEps(panelEl, code, hasToken);         break;
+      case 'revenue':      await _fundRevenue(panelEl, code, hasToken);     break;
+      case 'margin':       await _fundMargin(panelEl, code, hasToken);      break;
     }
     panelEl.dataset.loaded = '1';
   } catch (e) {
@@ -470,6 +474,522 @@ function _cellColor(label, display, raw) {
   </div>`;
 }
 
+// ── 股票健診 ──────────────────────────────────
+async function _fundHealthcheck(el, code, hasToken) {
+  const symbol = toYahooSymbol(code);
+  await _ensureFund(symbol, code);
+  const f = _fundData;
+  if (!f) { el.innerHTML = '<div class="panel-error">基本面資料載入失敗</div>'; return; }
+
+  // 載入健診專屬資料（BS / CF / Dividend）
+  el.innerHTML = '<div class="panel-loading">載入健診資料中…</div>';
+  const hd = await fetchHealthData(code).catch(() => null);
+
+  // ── 輔助：取 bsMap 最新季某欄位 ──
+  function _bsLatest(key) {
+    if (!hd?.bsMap?.size) return null;
+    const dates = [...hd.bsMap.keys()].sort((a,b) => b.localeCompare(a));
+    for (const d of dates) {
+      const v = hd.bsMap.get(d)?.[key];
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  // ── 輔助：取 cfMap 最新 N 季 operatingCF 序列（升冪）──
+  function _cfSeries(n) {
+    if (!hd?.cfMap?.size) return [];
+    return [...hd.cfMap.entries()]
+      .sort((a,b) => a[0].localeCompare(b[0]))
+      .slice(-n)
+      .map(([date, v]) => ({ date, operatingCF: v.operatingCF ?? null }));
+  }
+
+  // ── 輔助：Dividend 近 N 年平均現金股利 ──
+  function _avgCashDiv(years) {
+    if (!hd?.divRows?.length) return null;
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - years);
+    const cutStr = cutoff.toISOString().slice(0,10);
+    const rows = hd.divRows.filter(r => r.date >= cutStr && r.CashEarningsDistribution > 0);
+    if (!rows.length) return null;
+    const total = rows.reduce((s,r) => s + r.CashEarningsDistribution + (r.CashStatutorySurplus||0), 0);
+    return total / rows.length;
+  }
+
+  // ── 輔助：連續配息年數 ──
+  function _consecutiveDivYears() {
+    if (!hd?.divRows?.length) return 0;
+    const byYear = {};
+    for (const r of hd.divRows) {
+      const y = r.date.slice(0,4);
+      if (r.CashEarningsDistribution > 0) byYear[y] = true;
+    }
+    const curYear = new Date().getFullYear();
+    let count = 0;
+    for (let y = curYear - 1; y >= curYear - 10; y--) {
+      if (byYear[String(y)]) count++;
+      else break;
+    }
+    return count;
+  }
+
+  // ── 輔助：近 N 季現金流為正的比例 ──
+  function _cfPositiveRatio(n) {
+    const series = _cfSeries(n);
+    if (!series.length) return null;
+    const valid = series.filter(s => s.operatingCF != null);
+    if (!valid.length) return null;
+    return valid.filter(s => s.operatingCF > 0).length / valid.length;
+  }
+
+  // ── 計算衍生指標 ──
+  const liabilities   = _bsLatest('Liabilities');
+  const totalAssets   = _bsLatest('TotalAssets');
+  const currentAssets = _bsLatest('CurrentAssets');
+  const currentLiab   = _bsLatest('CurrentLiabilities');
+  const equity        = _bsLatest('Equity');
+  const debtRatio     = (liabilities != null && totalAssets) ? liabilities / totalAssets : null;
+  const currentRatio  = (currentAssets != null && currentLiab) ? currentAssets / currentLiab : null;
+  const cfPositive    = _cfPositiveRatio(8);
+  const avgDiv5y      = _avgCashDiv(5);
+  const consecDivYrs  = _consecutiveDivYears();
+  // ROE = 淨利 / 股東權益（用 profitMargin × revenue 近似）
+  const netIncome = (f.profitMargin != null && f.eps != null && equity)
+    ? f.profitMargin * (f.eps > 0 ? equity * 0.1 : null)  // 近似值
+    : null;
+  // 直接從 marginSeries 拿最新季 netIncome / equity
+  const ms0 = f._marginSeries?.[0];
+  const roe = (ms0?.netIncome != null && equity && equity > 0)
+    ? (ms0.netIncome / equity) * 100 * 4  // 季轉年化
+    : null;
+
+  const epsSeries    = (f._epsSeries    || []).slice(0, 8);
+  const marginSeries = (f._marginSeries || []).slice(0, 8);
+
+  // ════════════════════════════════════════════
+  // SAR 折線圖
+  // ════════════════════════════════════════════
+  function _sarChart(data, colorPos, colorNeg, yKey, W=260, H=64) {
+    if (!data || data.length < 2) return '';
+    const pts = data.slice().reverse().map(d => d[yKey] ?? null);
+    const valid = pts.filter(v => v !== null);
+    if (valid.length < 2) return '';
+    const min = Math.min(...valid), max = Math.max(...valid);
+    const range = max - min || 1;
+    const pad = 8;
+    const coords = pts.map((v, i) => {
+      if (v === null) return null;
+      const x = pad + (i / (pts.length - 1)) * (W - pad * 2);
+      const y = pad + (1 - (v - min) / range) * (H - pad * 2);
+      return { x, y, v };
+    });
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible">`;
+    const base0 = pad + (1 - (0 - min) / range) * (H - pad * 2);
+    const cb = Math.min(H - pad, Math.max(pad, base0));
+    svg += `<line x1="${pad}" y1="${cb.toFixed(1)}" x2="${W-pad}" y2="${cb.toFixed(1)}" stroke="#2d3748" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const a = coords[i], b = coords[i+1];
+      if (!a || !b) continue;
+      svg += `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="${a.v >= 0 ? colorPos : colorNeg}" stroke-width="1" stroke-opacity="0.5"/>`;
+    }
+    for (const c of coords) {
+      if (!c) continue;
+      svg += `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3" fill="${c.v >= 0 ? colorPos : colorNeg}" stroke="#0d1117" stroke-width="1.5"/>`;
+    }
+    svg += '</svg>';
+    return svg;
+  }
+
+  function _sarMultiChart(data, lines, W=260, H=72) {
+    if (!data || data.length < 2) return '';
+    const reversed = data.slice().reverse();
+    const allVals = lines.flatMap(l => reversed.map(d => d[l.key] ?? null).filter(v => v !== null));
+    if (allVals.length < 2) return '';
+    const min = Math.min(...allVals), max = Math.max(...allVals);
+    const range = max - min || 1;
+    const pad = 8;
+    let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;overflow:visible">`;
+    const base0 = pad + (1 - (0 - min) / range) * (H - pad * 2);
+    const cb = Math.min(H - pad, Math.max(pad, base0));
+    svg += `<line x1="${pad}" y1="${cb.toFixed(1)}" x2="${W-pad}" y2="${cb.toFixed(1)}" stroke="#2d3748" stroke-width="0.5" stroke-dasharray="3,2"/>`;
+    for (const l of lines) {
+      const coords = reversed.map((d, i) => {
+        const v = d[l.key] ?? null;
+        if (v === null) return null;
+        const x = pad + (i / (reversed.length - 1)) * (W - pad * 2);
+        const y = pad + (1 - (v - min) / range) * (H - pad * 2);
+        return { x, y };
+      });
+      for (let i = 0; i < coords.length - 1; i++) {
+        const a = coords[i], b = coords[i+1];
+        if (!a || !b) continue;
+        svg += `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="${l.color}" stroke-width="1" stroke-opacity="0.6"/>`;
+      }
+      for (const c of coords) {
+        if (!c) continue;
+        svg += `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="2.5" fill="${l.color}" stroke="#0d1117" stroke-width="1.2"/>`;
+      }
+    }
+    svg += '</svg>';
+    return svg;
+  }
+
+  function _quarterLabels(data, W=260) {
+    if (!data || !data.length) return '';
+    const items = data.slice().reverse();
+    const n = items.length;
+    const pad = 8;
+    const indices = n <= 2 ? [0, n-1] : [0, Math.floor((n-1)/2), n-1];
+    const unique = [...new Set(indices)];
+    const toLabel = d => {
+      const m = parseInt(d.date.slice(5,7));
+      return d.date.slice(0,4) + 'Q' + Math.ceil(m/3);
+    };
+    const ticks = unique.map(i => {
+      const x = pad + (i / (n-1||1)) * (W - pad*2);
+      const anchor = i === 0 ? 'start' : i === n-1 ? 'end' : 'middle';
+      return `<text x="${x.toFixed(1)}" y="10" text-anchor="${anchor}" font-size="9" fill="#6e7681" font-family="monospace">${toLabel(items[i])}</text>`;
+    });
+    return `<svg width="${W}" height="14" viewBox="0 0 ${W} 14" style="display:block">${ticks.join('')}</svg>`;
+  }
+
+  // ── 年份分組表格 ──
+  function _groupedTable(items) {
+    if (!items.length) return '<span style="font-size:11px;color:#6e7681">無資料</span>';
+    const groups = [];
+    let curYear = null, curGroup = null;
+    for (const item of items) {
+      const year = item.lbl.slice(0,4);
+      if (year !== curYear) { curYear = year; curGroup = { year, rows:[] }; groups.push(curGroup); }
+      curGroup.rows.push(item);
+    }
+    let html = '<div style="display:inline-flex;flex-direction:column;gap:0;min-width:160px">';
+    for (const g of groups) {
+      html += `<div style="display:flex;align-items:flex-start;border-bottom:1px solid #21262d">
+        <div style="width:38px;flex-shrink:0;padding:5px 0;font-size:11px;font-weight:600;color:#e6edf3;line-height:1.8">${g.year}</div>
+        <div style="display:flex;flex-direction:column">`;
+      for (const row of g.rows) {
+        html += `<div style="display:flex;align-items:center;gap:12px;padding:4px 0;border-bottom:1px solid #1c2128">
+          <span style="font-size:12px;color:#6e7681;width:20px">${row.lbl.slice(4)}</span>
+          <span style="font-size:13px;font-weight:500;color:${row.color}">${row.val}</span>
+        </div>`;
+      }
+      html += '</div></div>';
+    }
+    return html + '</div>';
+  }
+
+  // ── Detail 產生器 ──
+  function _epsDetail() {
+    const chart  = _sarChart(epsSeries, '#26a69a', '#ef5350', 'eps');
+    const labels = _quarterLabels(epsSeries);
+    const items  = epsSeries.map(d => {
+      const m = parseInt(d.date.slice(5,7));
+      return { lbl: d.date.slice(0,4)+'Q'+Math.ceil(m/3), val: (d.eps>=0?'+':'')+d.eps.toFixed(2), color: d.eps>=0?'#26a69a':'#ef5350' };
+    });
+    return `<div class="hc-detail"><div>${chart}${labels}</div><div style="margin-top:10px">${_groupedTable(items)}</div></div>`;
+  }
+
+  function _marginDetail(key, posColor='#58a6ff') {
+    const chart  = _sarChart(marginSeries, posColor, '#ef5350', key);
+    const labels = _quarterLabels(marginSeries);
+    const items  = marginSeries.map(d => {
+      const v = d[key]; if (v == null) return null;
+      const m = parseInt(d.date.slice(5,7));
+      return { lbl: d.date.slice(0,4)+'Q'+Math.ceil(m/3), val: (v>=0?'+':'')+v.toFixed(1)+'%', color: v>=0?posColor:'#ef5350' };
+    }).filter(Boolean);
+    return `<div class="hc-detail"><div>${chart}${labels}</div><div style="margin-top:10px">${_groupedTable(items)}</div></div>`;
+  }
+
+  function _threeRateDetail() {
+    const chart  = _sarMultiChart(marginSeries, [
+      { key:'grossMargin',     color:'#ffa726' },
+      { key:'operatingMargin', color:'#58a6ff' },
+      { key:'netMargin',       color:'#26a69a' },
+    ]);
+    const labels = _quarterLabels(marginSeries);
+    const legend = `<div style="display:flex;gap:12px;font-size:10px;color:#8b949e;margin-top:4px">
+      <span><span style="color:#ffa726">●</span> 毛利率</span>
+      <span><span style="color:#58a6ff">●</span> 營業利益率</span>
+      <span><span style="color:#26a69a">●</span> 淨利率</span>
+    </div>`;
+    const items3 = marginSeries.map(d => {
+      const m = parseInt(d.date.slice(5,7));
+      return { lbl: d.date.slice(0,4)+'Q'+Math.ceil(m/3), gm:d.grossMargin, om:d.operatingMargin, nm:d.netMargin };
+    });
+    const fmt = (v,c) => v!=null ? `<span style="font-size:12px;font-weight:500;color:${c}">${v>=0?'+':''}${v.toFixed(1)}%</span>` : '<span style="color:#444">—</span>';
+    const groups = []; let cy=null, cg=null;
+    for (const item of items3) {
+      const y = item.lbl.slice(0,4);
+      if (y!==cy) { cy=y; cg={year:y,rows:[]}; groups.push(cg); }
+      cg.rows.push(item);
+    }
+    let tbl = '<div style="display:inline-flex;flex-direction:column;gap:0;min-width:220px">';
+    tbl += `<div style="display:flex;align-items:center;padding:3px 0;border-bottom:1px solid #21262d">
+      <div style="width:38px"></div><div style="width:24px"></div>
+      <div style="width:52px;text-align:right;font-size:10px;color:#ffa726">毛利率</div>
+      <div style="width:52px;text-align:right;font-size:10px;color:#58a6ff">營業</div>
+      <div style="width:52px;text-align:right;font-size:10px;color:#26a69a">淨利率</div>
+    </div>`;
+    for (const g of groups) {
+      tbl += `<div style="display:flex;align-items:flex-start;border-bottom:1px solid #21262d">
+        <div style="width:38px;flex-shrink:0;padding:5px 0;font-size:11px;font-weight:600;color:#e6edf3;line-height:1.8">${g.year}</div>
+        <div style="display:flex;flex-direction:column">`;
+      for (const row of g.rows) {
+        tbl += `<div style="display:flex;align-items:center;padding:3px 0;border-bottom:1px solid #1c2128">
+          <span style="font-size:12px;color:#6e7681;width:24px">${row.lbl.slice(4)}</span>
+          <div style="width:52px;text-align:right">${fmt(row.gm,'#ffa726')}</div>
+          <div style="width:52px;text-align:right">${fmt(row.om,'#58a6ff')}</div>
+          <div style="width:52px;text-align:right">${fmt(row.nm,'#26a69a')}</div>
+        </div>`;
+      }
+      tbl += '</div></div>';
+    }
+    tbl += '</div>';
+    return `<div class="hc-detail"><div>${chart}${labels}${legend}</div><div style="margin-top:10px">${tbl}</div></div>`;
+  }
+
+  function _bsDetail() {
+    if (!hd?.bsMap?.size) return `<div class="hc-detail"><span style="font-size:12px;color:#8b949e">GAS 尚未建庫，資料待補充。目前依賴 FinMind 即時抓取。</span></div>`;
+    const dates = [...hd.bsMap.keys()].sort((a,b)=>b.localeCompare(a)).slice(0,8);
+    const items = dates.map(d => {
+      const v = hd.bsMap.get(d);
+      const dr = (v.Liabilities && v.TotalAssets) ? (v.Liabilities/v.TotalAssets*100) : null;
+      const m = parseInt(d.slice(5,7));
+      return dr != null ? { lbl: d.slice(0,4)+'Q'+Math.ceil(m/3), val: dr.toFixed(1)+'%', color: dr<60?'#26a69a':'#ef5350' } : null;
+    }).filter(Boolean);
+    const chartData = dates.map(d => {
+      const v = hd.bsMap.get(d);
+      const dr = (v.Liabilities && v.TotalAssets) ? v.Liabilities/v.TotalAssets*100 : null;
+      return { date: d, debtRatio: dr };
+    }).filter(r=>r.debtRatio!=null).reverse();
+    const chart  = _sarChart(chartData, '#26a69a', '#ef5350', 'debtRatio');
+    const labels = _quarterLabels(chartData);
+    return `<div class="hc-detail"><div style="font-size:10px;color:#6e7681;margin-bottom:4px">負債比率趨勢</div><div>${chart}${labels}</div><div style="margin-top:10px">${_groupedTable(items)}</div></div>`;
+  }
+
+  function _cfDetail() {
+    if (!hd?.cfMap?.size) return `<div class="hc-detail"><span style="font-size:12px;color:#8b949e">GAS 尚未建庫，資料待補充。</span></div>`;
+    const series = _cfSeries(8);
+    const items = series.slice().reverse().map(d => {
+      if (d.operatingCF == null) return null;
+      const m = parseInt(d.date.slice(5,7));
+      const yi = d.operatingCF / 100000;
+      return { lbl: d.date.slice(0,4)+'Q'+Math.ceil(m/3), val: (yi>=0?'+':'')+yi.toFixed(1)+'億', color: yi>=0?'#26a69a':'#ef5350' };
+    }).filter(Boolean);
+    const chart  = _sarChart(series, '#26a69a', '#ef5350', 'operatingCF');
+    const labels = _quarterLabels(series);
+    return `<div class="hc-detail"><div style="font-size:10px;color:#6e7681;margin-bottom:4px">營業現金流（千元）</div><div>${chart}${labels}</div><div style="margin-top:10px">${_groupedTable(items)}</div></div>`;
+  }
+
+  function _divDetail() {
+    if (!hd?.divRows?.length) return `<div class="hc-detail"><span style="font-size:12px;color:#8b949e">GAS 尚未建庫，資料待補充。</span></div>`;
+    const items = hd.divRows.slice(0,10).map(r => {
+      const cash = r.CashEarningsDistribution + (r.CashStatutorySurplus||0);
+      return { lbl: r.date.slice(0,4)+'  ', val: cash.toFixed(2)+'元', color: cash>0?'#ffa726':'#6e7681' };
+    });
+    const chartData = hd.divRows.slice(0,10).slice().reverse().map(r => ({
+      date: r.date,
+      cash: r.CashEarningsDistribution + (r.CashStatutorySurplus||0),
+    }));
+    const chart  = _sarChart(chartData, '#ffa726', '#6e7681', 'cash');
+    const labels = _quarterLabels(chartData);
+    return `<div class="hc-detail"><div style="font-size:10px;color:#6e7681;margin-bottom:4px">現金股利（元）</div><div>${chart}${labels}</div><div style="margin-top:10px">${_groupedTable(items)}</div></div>`;
+  }
+
+  // ════════════════════════════════════════════
+  // 健診條目定義（三模組，無重複）
+  // ════════════════════════════════════════════
+
+  // 🛡️ 地雷股：財務安全性
+  const landmineChecks = [
+    {
+      label: '負債比 < 60%',
+      pass:  debtRatio != null ? debtRatio < 0.6 : null,
+      hint:  `負債比 ${debtRatio!=null?(debtRatio*100).toFixed(1)+'%':'N/A'}，財務結構穩健`,
+      failHint: `負債比 ${debtRatio!=null?(debtRatio*100).toFixed(1)+'%':'N/A'}，槓桿偏高需留意`,
+      detail: () => _bsDetail(),
+    },
+    {
+      label: '流動比率 > 1',
+      pass:  currentRatio != null ? currentRatio > 1 : null,
+      hint:  `流動比率 ${currentRatio!=null?currentRatio.toFixed(2):'N/A'}，短期償債能力充足`,
+      failHint: `流動比率 ${currentRatio!=null?currentRatio.toFixed(2):'N/A'}，短期流動性偏緊`,
+      detail: () => `<div class="hc-detail"><span style="font-size:12px;color:#8b949e">流動比率 = 流動資產 ÷ 流動負債，> 1 代表短期資產能覆蓋短期負債。目前 ${currentRatio!=null?currentRatio.toFixed(2):'N/A'}，${currentRatio!=null&&currentRatio>2?'財務彈性充裕':'注意流動性風險'}。</span></div>`,
+    },
+    {
+      label: '營業現金流近兩年多為正',
+      pass:  cfPositive != null ? cfPositive >= 0.5 : null,
+      hint:  `近8季中 ${cfPositive!=null?Math.round(cfPositive*8):'-'} 季現金流為正，獲利品質佳`,
+      failHint: `近8季現金流為正比例偏低，獲利含金量不足`,
+      detail: () => _cfDetail(),
+    },
+    {
+      label: 'EPS 近四季無連虧',
+      pass:  (() => { const s=epsSeries.slice(0,4); return s.length>=2 && s.every(q=>q.eps>=0); })(),
+      hint:  '近4季均有獲利，公司營運穩定',
+      failHint: '近期有虧損季度，需留意獲利能力',
+      detail: () => _epsDetail(),
+    },
+  ];
+
+  // 💰 定存股：股息穩定性
+  const dividendChecks = [
+    {
+      label: '現金殖利率 ≥ 4%',
+      pass:  f.dividendYield != null ? f.dividendYield >= 0.04 : null,
+      hint:  `殖利率 ${f.dividendYield!=null?(f.dividendYield*100).toFixed(2)+'%':'N/A'}，高於定存水準`,
+      failHint: `殖利率 ${f.dividendYield!=null?(f.dividendYield*100).toFixed(2)+'%':'N/A'}，股息吸引力有限`,
+      detail: () => `<div class="hc-detail"><span style="font-size:12px;color:#8b949e">現金殖利率 = 現金股利 ÷ 股價。4% 為台股定存股常用門檻。目前殖利率 ${f.dividendYield!=null?(f.dividendYield*100).toFixed(2)+'%':'N/A'}，現金股利 ${f.dividendRate!=null?f.dividendRate.toFixed(2):'N/A'} 元。</span></div>`,
+    },
+    {
+      label: '連續配息 ≥ 3 年',
+      pass:  consecDivYrs >= 3 ? true : (consecDivYrs === 0 && !hd?.divRows?.length ? null : false),
+      hint:  `連續配息 ${consecDivYrs} 年，股利發放穩定`,
+      failHint: `連續配息僅 ${consecDivYrs} 年，配息穩定性不足`,
+      detail: () => _divDetail(),
+    },
+    {
+      label: '近5年平均現金股利 > 0',
+      pass:  avgDiv5y != null ? avgDiv5y > 0 : null,
+      hint:  `近5年平均現金股利 ${avgDiv5y!=null?avgDiv5y.toFixed(2):'N/A'} 元`,
+      failHint: `近5年平均現金股利偏低`,
+      detail: () => _divDetail(),
+    },
+    {
+      label: 'EPS 為正（支撐配息）',
+      pass:  f.eps != null ? f.eps > 0 : null,
+      hint:  `EPS ${f.eps!=null?f.eps.toFixed(2):'N/A'} 元，具備配息能力`,
+      failHint: `EPS ${f.eps!=null?f.eps.toFixed(2):'N/A'}，獲利不足以支撐長期配息`,
+      detail: () => '',
+    },
+  ];
+
+  // 🚀 成長股：成長動能
+  const growthChecks = [
+    {
+      label: 'EPS 年增率為正',
+      pass:  f.earningsGrowth != null ? f.earningsGrowth > 0 : null,
+      hint:  `EPS 年增 ${f.earningsGrowth!=null?(f.earningsGrowth*100).toFixed(1)+'%':'N/A'}，獲利持續成長`,
+      failHint: `EPS 年增 ${f.earningsGrowth!=null?(f.earningsGrowth*100).toFixed(1)+'%':'N/A'}，獲利出現衰退`,
+      detail: () => _epsDetail(),
+    },
+    {
+      label: '營收年增率為正',
+      pass:  f.revenueGrowth != null ? f.revenueGrowth > 0 : null,
+      hint:  `營收年增 ${f.revenueGrowth!=null?(f.revenueGrowth*100).toFixed(1)+'%':'N/A'}，業績持續擴張`,
+      failHint: `營收年增 ${f.revenueGrowth!=null?(f.revenueGrowth*100).toFixed(1)+'%':'N/A'}，業績成長動能不足`,
+      detail: () => '',  // 月營收頁已有詳細，不重複
+    },
+    {
+      label: '毛利率趨勢向上',
+      pass:  (() => {
+        const gm = marginSeries.filter(d=>d.grossMargin!=null).slice(0,4);
+        if (gm.length < 3) return null;
+        return gm[0].grossMargin > gm[gm.length-1].grossMargin;
+      })(),
+      hint:  `毛利率最新 ${marginSeries[0]?.grossMargin!=null?(marginSeries[0].grossMargin.toFixed(1)+'%'):'N/A'}，呈上升趨勢`,
+      failHint: `毛利率呈下滑趨勢，需留意競爭壓力`,
+      detail: () => _threeRateDetail(),
+    },
+    {
+      label: 'ROE > 15%',
+      pass:  roe != null ? roe > 15 : null,
+      hint:  `ROE ${roe!=null?roe.toFixed(1)+'%':'N/A'}（年化），股東報酬率佳`,
+      failHint: `ROE ${roe!=null?roe.toFixed(1)+'%':'N/A'}，股東報酬率偏低`,
+      detail: () => _marginDetail('netMargin', '#26a69a'),
+    },
+  ];
+
+  // ════════════════════════════════════════════
+  // 渲染
+  // ════════════════════════════════════════════
+  let _moduleIdx = 0;
+  const renderModule = (title, icon, iconBg, checks, desc) => {
+    const mid    = `hcm${_moduleIdx++}`;
+    const valid  = checks.filter(c => c.pass !== null);
+    const passed = valid.filter(c => c.pass === true).length;
+    const total  = valid.length;
+    const pct    = total > 0 ? Math.round((passed / total) * 100) : 0;
+    const radius = 34, circ = 2 * Math.PI * radius;
+    const dash   = (pct / 100) * circ;
+    const color  = pct >= 80 ? '#26a69a' : pct >= 50 ? '#ffa726' : '#ef5350';
+
+    const rows = checks.map((c, i) => {
+      if (c.pass === null) {
+        return `<div class="hc-row hc-na">
+          <span class="hc-row-icon" style="color:#6e7681">—</span>
+          <div class="hc-row-body">
+            <span class="hc-row-label">${c.label}</span>
+          </div>
+          <span class="hc-badge" style="background:#2d3748;color:#6e7681">資料不足</span>
+        </div>`;
+      }
+      const detailHtml = c.detail();
+      const badgeBg  = c.pass ? '#0d2b22' : '#2b1215';
+      const badgeFg  = c.pass ? '#26a69a' : '#ef5350';
+      return `<div class="hc-row hc-clickable ${c.pass?'hc-pass':'hc-fail'}"
+          onclick="(function(el){
+            const det=el.querySelector('.hc-detail-wrap');
+            if(!det||det.dataset.empty==='1')return;
+            const open=det.style.display==='block';
+            det.style.display=open?'none':'block';
+            el.querySelector('.hc-chevron').style.transform=open?'rotate(0deg)':'rotate(180deg)';
+          })(this)" style="${detailHtml?'':'cursor:default'}">
+        <span class="hc-row-icon">${c.pass?'✓':'✗'}</span>
+        <div class="hc-row-body">
+          <span class="hc-row-label">${c.label}</span>
+          <span class="hc-row-sub" style="color:${c.pass?'#8b949e':'#ef5350'}">${c.pass?c.hint:c.failHint}</span>
+          <div class="hc-detail-wrap" style="display:none" data-empty="${detailHtml?'0':'1'}">${detailHtml}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+          <span class="hc-badge" style="background:${badgeBg};color:${badgeFg}">${c.pass?'通過':'未通過'}</span>
+          ${detailHtml?`<span class="hc-chevron" style="font-size:10px;color:#6e7681;transition:transform .2s;display:block">▼</span>`:''}
+        </div>
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="hc-card">
+      <div class="hc-top">
+        <div class="hc-ring-col">
+          <div class="hc-ring-wrap">
+            <svg width="84" height="84" viewBox="0 0 84 84">
+              <circle cx="42" cy="42" r="${radius}" fill="none" stroke="#21262d" stroke-width="7"/>
+              <circle cx="42" cy="42" r="${radius}" fill="none" stroke="${color}" stroke-width="7"
+                stroke-dasharray="${dash.toFixed(1)} ${circ.toFixed(1)}"
+                stroke-dashoffset="${(circ/4).toFixed(1)}"
+                stroke-linecap="round"/>
+            </svg>
+            <div class="hc-ring-center">
+              <span class="hc-ring-num" style="color:${color}">${passed}</span>
+              <span class="hc-ring-denom">/${total}</span>
+            </div>
+          </div>
+          <div class="hc-ring-label">通過 ${pct}%</div>
+        </div>
+        <div class="hc-info">
+          <div class="hc-head">
+            <div class="hc-icon-wrap" style="background:${iconBg}">${icon}</div>
+            <span class="hc-title">${title}</span>
+          </div>
+          <div class="hc-pct-bar"><div class="hc-pct-fill" style="width:${pct}%;background:${color}"></div></div>
+          <div class="hc-desc">${desc}</div>
+        </div>
+      </div>
+      <div class="hc-rows">${rows}</div>
+    </div>`;
+  };
+
+  el.innerHTML = `
+  <div class="hc-wrap">
+    <div class="hc-disclaimer">⚠️ 健診為輔助參考，不構成投資建議。數據來源：FinMind / Yahoo Finance</div>
+    ${renderModule('地雷股健診','🛡️','#0d2416', landmineChecks,'排除財務危險訊號，評估公司財務安全性。')}
+    ${renderModule('定存股健診','💰','#2b1e0a', dividendChecks,'評估股息穩定性與殖利率吸引力，適合追求被動收入的長期持有者。')}
+    ${renderModule('成長股健診','🚀','#0d1f2b', growthChecks,  '評估業績成長動能與獲利品質，適合追求資本利得的成長型投資人。')}
+  </div>`;
+}
 // ── EPS 季報 ──────────────────────────────────
 async function _fundEps(el, code, hasToken) {
   if (!hasToken) { _noToken(el); return; }

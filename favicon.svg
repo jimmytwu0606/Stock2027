@@ -1,0 +1,18 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="14" fill="#161b22"/>
+  <!-- 中心 -->
+  <circle cx="32" cy="32" r="8" fill="#ff6b6b">
+    <animate attributeName="opacity" values="1;0.4;1" dur="2s" begin="0s" repeatCount="indefinite"/>
+    <animate attributeName="r" values="8;6.5;8" dur="2s" begin="0s" repeatCount="indefinite"/>
+  </circle>
+  <!-- 中圈 4點 -->
+  <circle cx="32" cy="18" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+  <circle cx="18" cy="32" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+  <circle cx="46" cy="32" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+  <circle cx="32" cy="46" r="6" fill="#ef5350"><animate attributeName="opacity" values="0.9;0.1;0.9" dur="2s" begin="0.3s" repeatCount="indefinite"/></circle>
+  <!-- 外圈 4角 -->
+  <circle cx="18" cy="18" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+  <circle cx="46" cy="18" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+  <circle cx="18" cy="46" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+  <circle cx="46" cy="46" r="5" fill="#c0392b"><animate attributeName="opacity" values="0.6;0.05;0.6" dur="2s" begin="0.65s" repeatCount="indefinite"/></circle>
+</svg>

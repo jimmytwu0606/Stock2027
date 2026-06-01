@@ -407,17 +407,23 @@ function _openSimWindow(candles) {
         <div class="mc-accuracy-panel" id="mcAccuracyPanel">
           <span class="mc-accuracy-loading">📊 準確率載入中...</span>
         </div>
-        <button class="mc-bt-btn" id="mcBtRun" title="用 1 年歷史 K 線,假裝站在過去每一天用 v1.8 公式分派預測,跟真實答案對照">📈 跑歷史回測</button>
-        <button class="mc-bt-btn mc-bt-btn-cross" id="mcBtCross" title="跨 10 檔不同型股(大型/牛皮/妖股/ETF/空頭...)跑v1.8 公式分派回測,看公式泛化能力">🎯 跨股測試</button>
-        <button class="mc-bt-btn mc-bt-btn-signal" id="mcBtSignal" title="集合回測 30+ 個技術訊號策略 (S1 量增底部 / S20 葛蘭碧 / S33 GMMA 等),9 種出場組合對照,看哪個策略真有效">⚔️ 策略勝率</button>
-        <button class="mc-bt-btn mc-bt-btn-combo" id="mcBtCombo" title="三件套組合驗證 — 你指定的 5 組組合,看「三亮」vs「過濾」哪個邏輯勝率高(業界稱 Triple Confirmation)">🎰 組合驗證</button>
-        <button class="mc-bt-btn mc-bt-btn-exit" id="mcBtExit" title="出場策略驗證 — 3 進場 (W6/S11/S40) × 4 出場 (固定 20 天/追蹤停損 5%/跌破 MA20/RSI<60),看哪個出場最配哪個進場">🎯 出場驗證</button>
-        <button class="mc-bt-btn mc-bt-btn-basket" id="mcBtBasketEdit" title="自選回測 basket（最多 20 檔）">🧺 自選標的</button>
-        <button class="mc-bt-btn mc-bt-btn-strategy" id="mcBtStrategy" title="針對 basket 每檔股票跑所有策略，找出最適合的進出場方式">🎯 操作建議</button>
-        <button class="mc-bt-btn mc-bt-btn-sandbox" id="mcBtSandbox" title="生成未來模擬K柱，自動偵測進出場訊號（沙盒模式）">🧪 沙盒K線</button>
-        <button class="mc-bt-btn mc-bt-btn-copy-sim" id="mcBtCopySim" title="複製模擬摘要，方便貼給 AI 討論" style="display:none">📋 複製模擬</button>
-        <span class="mc-sim-hint">扇形 = 機率區間,非預測</span>
-        <button class="mc-sim-close-btn" id="mcSimClose">✕ 關閉</button>
+        <div class="mc-bt-btn-row">
+          <button class="mc-bt-btn" id="mcBtRun" title="用 1 年歷史 K 線,假裝站在過去每一天用 v1.8 公式分派預測,跟真實答案對照">📈 跑歷史回測</button>
+          <button class="mc-bt-btn mc-bt-btn-cross" id="mcBtCross" title="跨 10 檔不同型股(大型/牛皮/妖股/ETF/空頭...)跑v1.8 公式分派回測,看公式泛化能力">🎯 跨股測試</button>
+          <button class="mc-bt-btn mc-bt-btn-signal" id="mcBtSignal" title="集合回測 30+ 個技術訊號策略 (S1 量增底部 / S20 葛蘭碧 / S33 GMMA 等),9 種出場組合對照,看哪個策略真有效">⚔️ 策略勝率</button>
+          <button class="mc-bt-btn mc-bt-btn-combo" id="mcBtCombo" title="三件套組合驗證 — 你指定的 5 組組合,看「三亮」vs「過濾」哪個邏輯勝率高(業界稱 Triple Confirmation)">🎰 組合驗證</button>
+          <button class="mc-bt-btn mc-bt-btn-exit" id="mcBtExit" title="出場策略驗證 — 3 進場 (W6/S11/S40) × 4 出場 (固定 20 天/追蹤停損 5%/跌破 MA20/RSI<60),看哪個出場最配哪個進場">🎯 出場驗證</button>
+          <button class="mc-bt-btn mc-bt-btn-basket" id="mcBtBasketEdit" title="自選回測 basket（最多 20 檔）">🧺 自選標的</button>
+          <button class="mc-bt-btn mc-bt-btn-strategy" id="mcBtStrategy" title="針對 basket 每檔股票跑所有策略，找出最適合的進出場方式">🎯 操作建議</button>
+          <button class="mc-bt-btn mc-bt-btn-sandbox" id="mcBtSandbox" title="生成未來模擬K柱，自動偵測進出場訊號（沙盒模式）">🧪 沙盒K線</button>
+          <button class="mc-bt-btn mc-bt-btn-copy-sim" id="mcBtCopySim" title="複製模擬摘要，方便貼給 AI 討論" style="display:none">📋 複製模擬</button>
+          <button class="mc-bt-btn mc-bt-btn-stockbt" id="mcBtStockBt" title="輸入個股代號 + 起始日期，查看那天的進場訊號與持倉報酬（Free 可用）">📅 個股回測</button>
+          <button class="mc-bt-btn mc-bt-btn-simulator" id="mcBtSimulator" title="逐日模擬操作，虛擬資金 $100,000，練習訊號判讀與倉位管理">🎮 策略練習器</button>
+        </div>
+        <div class="mc-sim-controls-bottom">
+          <span class="mc-sim-hint">扇形 = 機率區間,非預測</span>
+          <button class="mc-sim-close-btn" id="mcSimClose">✕ 關閉</button>
+        </div>
       </div>
     </div>
     <div class="mc-sim-body">
@@ -549,9 +555,25 @@ function _openSimWindow(candles) {
     }).catch(err => console.error('[mc-strategy]', err));
   });
 
+  // 個股回測按鈕
+  document.getElementById('mcBtStockBt')?.addEventListener('click', () => {
+    console.log('[mc] 個股回測按鈕點擊，開始 import stock-backtest.js');
+    import('./stock-backtest.js').then(({ openStockBacktestPanel }) => {
+      console.log('[mc] stock-backtest.js import 成功');
+      openStockBacktestPanel();
+    }).catch(err => {
+      console.error('[stock-backtest] import 失敗:', err);
+    });
+  });
+
+  document.getElementById('mcBtSimulator')?.addEventListener('click', () => {
+    import('./strategy-simulator.js').then(({ openSimulator }) => {
+      openSimulator();
+    }).catch(err => console.error('[strategy-simulator] import 失敗:', err));
+  });
+
   // 複製模擬摘要按鈕
-  document.getElementById('mcBtCopySim')?.addEventListener('click', () => {
-    import('./mc-strategy.js').then(({ buildSimSummary }) => {
+  document.getElementById('mcBtCopySim')?.addEventListener('click', () => {    import('./mc-strategy.js').then(({ buildSimSummary }) => {
       const text = buildSimSummary(_lastResult, _refs, _refs?.getCandles?.());
       const btn = document.getElementById('mcBtCopySim');
       navigator.clipboard.writeText(text).then(() => {

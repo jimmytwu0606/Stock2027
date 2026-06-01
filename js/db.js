@@ -931,9 +931,9 @@ export async function loadStockInfo(code) {
 export async function saveStockInfo(code, info) {
   if (!code) return;
   await initDB();
-  const data = { code, ...info, savedAt: Date.now() };
+  const data = { code, id: code, ...info, savedAt: Date.now() };
   await wrap(tx('stockInfo', 'readwrite').put(data));
-  // 同步到 Firestore 個人區
+  // 同步到 Firestore 個人區（id: code 供 _fsPushOne 用）
   _fsPushOne('stockInfo', data);
 }
 

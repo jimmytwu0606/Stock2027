@@ -1,0 +1,265 @@
+/* ============================================================
+   strategy-simulator.css — 策略練習器 v2（看盤風格）
+   ============================================================ */
+
+.ss-panel {
+  background: #0d1117;
+  color: #e2e8f0;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── 設定畫面 ────────────────────────────────────────────── */
+.ss-setup-wrap {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ss-setup-title {
+  font-size: 13px; font-weight: 700; color: #e2e8f0;
+  display: flex; align-items: center; gap: 8px;
+}
+.ss-setup-desc {
+  font-size: 11px; color: #6b7280; line-height: 1.6;
+}
+.ss-form-row {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+}
+.ss-field { display: flex; flex-direction: column; gap: 4px; }
+.ss-label { font-size: 11px; color: #6b7280; }
+.ss-input {
+  padding: 5px 10px; background: #161b22;
+  border: 1px solid #2a2d3a; border-radius: 6px;
+  color: #e2e8f0; font-size: 13px; outline: none;
+  width: 100px; transition: border-color .15s;
+}
+.ss-input-sm { width: 60px; text-align: center; }
+.ss-input:focus { border-color: #3b82f6; }
+.ss-start-btn {
+  padding: 7px 18px; background: #1d4ed8; border: none;
+  border-radius: 6px; color: #fff; font-size: 13px;
+  font-weight: 700; cursor: pointer; transition: background .15s;
+}
+.ss-start-btn:hover { background: #2563eb; }
+.ss-hint { font-size: 11px; padding: 5px 10px; border-radius: 5px; }
+.ss-hint-warn  { background: rgba(251,191,36,.1);  color: #fbbf24; }
+.ss-hint-error { background: rgba(239,83,80,.1);   color: #ef5350; }
+.ss-hint-info  { background: rgba(59,130,246,.08); color: #93c5fd; }
+
+/* ── 模擬主畫面 ─────────────────────────────────────────── */
+
+/* 頂部：股票資訊列 */
+.ss-stock-bar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 18px;
+  background: #161b22;
+  border-bottom: 1px solid #1e2028;
+  flex-wrap: wrap;
+}
+.ss-stock-name  { font-size: 15px; font-weight: 700; }
+.ss-stock-code  { font-size: 12px; color: #6b7280; margin-left: 4px; }
+.ss-stock-price { font-size: 22px; font-weight: 700; margin-left: 8px; }
+.ss-stock-chg   { font-size: 13px; font-weight: 600; }
+.ss-stock-date  { font-size: 11px; color: #6b7280; margin-left: auto; }
+.ss-stock-day   { font-size: 11px; color: #6b7280; }
+
+/* 停損觸發警告 */
+.ss-stop-bar {
+  background: rgba(239,83,80,.12);
+  border-bottom: 1px solid rgba(239,83,80,.3);
+  color: #ef5350; font-size: 12px; font-weight: 600;
+  padding: 6px 18px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* 主體：左右分欄 */
+.ss-main {
+  display: flex; gap: 0;
+  flex: 1; min-height: 0;
+}
+
+/* 左側：訊號 + 建議 */
+.ss-left {
+  flex: 1; min-width: 0;
+  padding: 12px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+  border-right: 1px solid #1e2028;
+}
+
+/* 訊號標籤區 */
+.ss-sig-section { display: flex; flex-direction: column; gap: 6px; }
+.ss-sig-label   { font-size: 10px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.ss-sig-tags    { display: flex; flex-wrap: wrap; gap: 5px; }
+.ss-sig-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 9px; border-radius: 20px;
+  font-size: 12px; font-weight: 600; border: 1px solid;
+  white-space: nowrap;
+}
+.ss-sig-tag-bull { border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.1); color: #34d399; }
+.ss-sig-tag-warn { border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.1); color: #fbbf24; }
+.ss-sig-tag-exit { border-color: rgba(239,83,80,.4);  background: rgba(239,83,80,.1);  color: #ef5350; }
+.ss-no-sig       { font-size: 12px; color: #4b5563; }
+
+/* 系統建議 */
+.ss-advice {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 9px 12px; border-radius: 7px; border: 1px solid;
+}
+.ss-advice-neutral  { border-color: #1e2028; background: #111827; }
+.ss-advice-hold     { border-color: rgba(96,165,250,.2);  background: rgba(96,165,250,.05); }
+.ss-advice-buy      { border-color: rgba(52,211,153,.3);  background: rgba(52,211,153,.06); }
+.ss-advice-add      { border-color: rgba(38,166,154,.3);  background: rgba(38,166,154,.06); }
+.ss-advice-strong   { border-color: rgba(52,211,153,.5);  background: rgba(52,211,153,.1);  }
+.ss-advice-caution  { border-color: rgba(251,191,36,.3);  background: rgba(251,191,36,.06); }
+.ss-advice-warn     { border-color: rgba(249,115,22,.3);  background: rgba(249,115,22,.06); }
+.ss-advice-exit     { border-color: rgba(239,83,80,.35);  background: rgba(239,83,80,.07);  }
+.ss-advice-danger   { border-color: rgba(239,83,80,.5);   background: rgba(239,83,80,.1);   }
+.ss-advice-icon     { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.ss-advice-body     { display: flex; flex-direction: column; gap: 2px; }
+.ss-advice-title    { font-size: 13px; font-weight: 700; }
+.ss-advice-desc     { font-size: 11px; color: #9ca3af; line-height: 1.5; }
+
+/* 操作記錄（左側底部） */
+.ss-trades-mini { display: flex; flex-direction: column; gap: 0; }
+.ss-trades-mini-title { font-size: 10px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.ss-trade-row {
+  display: grid;
+  grid-template-columns: 78px 40px 50px 50px 72px 1fr;
+  gap: 6px; font-size: 11px; padding: 4px 0;
+  border-bottom: 1px solid #1e2028; align-items: center;
+}
+.ss-trade-row:last-child { border-bottom: none; }
+.ss-trade-date   { color: #6b7280; }
+.ss-trade-type   { font-weight: 700; font-size: 11px; }
+.ss-trade-buy    { color: #34d399; }
+.ss-trade-sell   { color: #fbbf24; }
+.ss-trade-price  { color: #e2e8f0; }
+.ss-trade-shares { color: #9ca3af; }
+.ss-trade-amt    { font-weight: 600; }
+.ss-trade-note   { color: #6b7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 右側：持倉面板 */
+.ss-right {
+  width: 200px; flex-shrink: 0;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  background: #0d1117;
+}
+.ss-right-title { font-size: 10px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+
+/* 持股數字顯示 */
+.ss-hold-block {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 8px 10px; background: #161b22;
+  border: 1px solid #1e2028; border-radius: 7px;
+}
+.ss-hold-row { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; }
+.ss-hold-lbl { font-size: 10px; color: #6b7280; white-space: nowrap; }
+.ss-hold-val { font-size: 12px; color: #e2e8f0; font-weight: 600; text-align: right; }
+.ss-hold-val.up   { color: #ef5350; }
+.ss-hold-val.down { color: #26a69a; }
+.ss-hold-divider  { border: none; border-top: 1px solid #1e2028; margin: 2px 0; }
+.ss-total-val  { font-size: 14px; font-weight: 700; }
+
+/* 操作按鈕（右側） */
+.ss-action-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.ss-btn {
+  padding: 6px 4px; border: 1px solid; border-radius: 6px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all .15s; text-align: center; white-space: nowrap;
+}
+.ss-btn:disabled { opacity: .3; cursor: default; }
+.ss-btn-buy    { background: rgba(52,211,153,.1); border-color: rgba(52,211,153,.3); color: #34d399; }
+.ss-btn-buy:not(:disabled):hover { background: rgba(52,211,153,.2); }
+.ss-btn-add    { background: rgba(38,166,154,.1); border-color: rgba(38,166,154,.3); color: #26a69a; }
+.ss-btn-add:not(:disabled):hover { background: rgba(38,166,154,.2); }
+.ss-btn-reduce { background: rgba(251,191,36,.08); border-color: rgba(251,191,36,.3); color: #fbbf24; }
+.ss-btn-reduce:not(:disabled):hover { background: rgba(251,191,36,.18); }
+.ss-btn-watch  { background: rgba(107,114,128,.08); border-color: #2a2d3a; color: #9ca3af; }
+.ss-btn-watch:hover { background: rgba(107,114,128,.18); }
+.ss-btn-exit   { background: rgba(239,83,80,.1);  border-color: rgba(239,83,80,.3); color: #ef5350; grid-column: span 2; }
+.ss-btn-exit:not(:disabled):hover { background: rgba(239,83,80,.2); }
+
+/* GO 按鈕 */
+.ss-go-btn {
+  width: 100%; padding: 9px; background: #1d4ed8; border: none;
+  border-radius: 7px; color: #fff; font-size: 13px;
+  font-weight: 700; cursor: pointer; transition: background .15s;
+  margin-top: auto;
+}
+.ss-go-btn:hover:not(:disabled) { background: #2563eb; }
+.ss-go-btn:disabled { opacity: .4; cursor: default; background: #374151; }
+
+/* ── 結算畫面 ─────────────────────────────────────────────── */
+.ss-settle-wrap {
+  padding: 14px 18px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.ss-settle-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.ss-settle-title  { font-size: 14px; font-weight: 700; }
+.ss-settle-period { font-size: 11px; color: #6b7280; }
+
+.ss-settle-compare {
+  display: flex; gap: 12px; align-items: stretch;
+}
+.ss-settle-col {
+  flex: 1; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid; display: flex; flex-direction: column; gap: 4px;
+}
+.ss-settle-col-user { border-color: rgba(96,165,250,.3); background: rgba(96,165,250,.06); }
+.ss-settle-col-hold { border-color: #2a2d3a; background: #161b22; }
+.ss-settle-col-label { font-size: 11px; color: #6b7280; }
+.ss-settle-col-ret   { font-size: 26px; font-weight: 700; }
+.ss-settle-col-amt   { font-size: 12px; color: #9ca3af; }
+
+.ss-settle-badge {
+  text-align: center; font-size: 13px; font-weight: 700;
+  padding: 8px; border-radius: 6px;
+}
+.ss-win  { background: rgba(52,211,153,.1); color: #34d399; }
+.ss-lose { background: rgba(107,114,128,.1); color: #9ca3af; }
+
+.ss-deng-comment {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; background: rgba(59,130,246,.05);
+  border: 1px solid rgba(59,130,246,.2); border-radius: 7px;
+}
+.ss-deng-icon { font-size: 22px; flex-shrink: 0; }
+.ss-deng-text { font-size: 12px; color: #9ca3af; line-height: 1.7; }
+
+/* 結算操作記錄（全部） */
+.ss-settle-trades { display: flex; flex-direction: column; gap: 0; }
+.ss-settle-trades-title { font-size: 10px; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+.ss-trades-head {
+  display: grid; grid-template-columns: 78px 40px 50px 50px 72px 1fr;
+  gap: 6px; font-size: 10px; color: #6b7280; padding: 3px 0;
+  border-bottom: 1px solid #2a2d3a;
+}
+
+.ss-restart-btn {
+  padding: 8px 18px; background: #374151; border: none;
+  border-radius: 6px; color: #e2e8f0; font-size: 12px;
+  font-weight: 600; cursor: pointer; transition: background .15s;
+  align-self: flex-start;
+}
+.ss-restart-btn:hover { background: #4b5563; }
+
+/* mc 按鈕 */
+.mc-bt-btn-simulator {
+  background: rgba(52,211,153,.12);
+  border-color: rgba(52,211,153,.35);
+  color: #34d399;
+}
+.mc-bt-btn-simulator:hover {
+  background: rgba(52,211,153,.22);
+  border-color: #34d399;
+}

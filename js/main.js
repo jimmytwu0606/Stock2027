@@ -39,6 +39,7 @@ import {
   showDengLoading, hideDengLoading,
   dengToast, pickDengMessage, initDengWakeup,
 } from './loading-deng.js';
+import './deng-messages.js';  // 燈燈台詞庫 → window.__DENG_MESSAGES
 
 // ── Phase 7.2/7.3：AI 解說疊圖 + 說明區 ──
 import {
@@ -60,9 +61,9 @@ import {
   showLoading, updateDataInfo, showToast, initUIEvents,
 } from './ui.js';
 import { initSettingsDrawer, openSettings } from './settings.js';
-import { initStockTabs, reloadStockTabs, renderStockSignals } from './stock-tabs.js';
+import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
 import { initScreener } from './screener-ui.js';
-import { initStrategyPanel, getSignalPeriod, refreshStrategyCards } from './strategy.js';
+import { initStrategyPanel, getSignalPeriod, refreshStrategyCards, calcSignalLamps, STRATEGIES } from './strategy.js';
 import { initStrategyModal, renderStrategyGrid } from './modal-strategy.js';
 import { initPortfolio } from './portfolio-ui.js';
 import { initPatternDraw, updateScreenerCount } from './pattern-draw.js';
@@ -75,9 +76,10 @@ import { renderThemePanel } from './theme-ui.js';
 
 // Phase 7.3 v2 — 全視窗深度解讀
 import { initFullscreenAnalysis, destroyFullscreenAnalysis, refreshFullscreenAnalysis } from './analysis-fullscreen.js';
+import './analysis-perspective.js';  // 觀點 Tab — 自動 registerAnalysisModule
 
 // ── 資料庫 / 設定 ──
-import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices } from './db.js';
+import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices, deleteKlineCache } from './db.js';
 import { loadConfig }    from './config.js';
 import { initWatchlist, reloadWatchlist, addStockToGroup, getDefaultGroupId, updateStockPrices, createGroup } from './watchlist.js';
 import * as PriceHub from './price-hub.js';
@@ -210,15 +212,18 @@ async function loadStock(code, opts = {}) {
         // v2.8 訊號掃完才跑分析卡片，確保 AppState.signals[code] 已填入
         // 讓 calcHealthWithSignals 能拿到 X 系列加成
         renderAnalysisPanel(code);
+        ensureFundamentals(code).catch(() => {});  // 預先載入基本面，觀點卡用
       }).catch(() => {
         renderStockSignals(candles, code);
         renderAnalysisPanel(code);
+        ensureFundamentals(code).catch(() => {});  // 預先載入基本面，觀點卡用
       });
     } else {
       // 圖表週期根數已足夠（6mo/1y/2y），直接用，不多打 API
       renderStockSignals(candles, code);
       // v2.8 同步路徑：renderStockSignals 是同步的，訊號已寫入，直接接著跑
       renderAnalysisPanel(code);
+      ensureFundamentals(code).catch(() => {});  // 預先載入基本面，觀點卡用
     }
 
     // ── Phase 7：載入該檔的標註 + 跑智能分析 ──
@@ -1219,7 +1224,13 @@ function _initRefreshKline() {
     btn.classList.add('refreshing');
     try {
       // force: true → 跳過 K 線快取,重新打 Yahoo
-      await loadStock(AppState.activeCode, { force: true });
+      // 同時刪除 IndexedDB 快取，確保真的重抓而非讀舊資料
+      const _code = AppState.activeCode;
+      const _sym  = toYahooSymbol(_code);
+      for (const p of ['5d','1mo','3mo','6mo','1y','2y']) {
+        await deleteKlineCache(_sym, p).catch(() => {});
+      }
+      await loadStock(_code, { force: true });
       showToast('已重新抓取 K 線 ~');
     } catch (e) {
       showToast('⚠ 刷新失敗:' + e.message);
@@ -1434,7 +1445,46 @@ function _initFullscreen() {
   initSettingsDrawer();
   initStockTabs();
   initMainTabs();
+
+  // 觀點 Tab 所需的 window 橋接
+  window.__STRATEGIES        = STRATEGIES;
+  window.calcSignalLamps     = calcSignalLamps;
+  window.__AppState          = AppState;
+  window.__ensureFundamentals = ensureFundamentals;  // 觀點卡背景預拉基本面用
   initMobileTabs();
+
+  // ── Phase 10：手機版 View Engine ──────────────────────────
+  if (window.matchMedia('(max-width: 767px)').matches) {
+    const { initMobileScreener } = await import('./mobile-screener.js');
+    initMobileScreener({
+      AppState,
+      showToast,
+      getChineseName,
+      fetchTWSEPrices,
+    });
+
+    // 策略掃描橋接：mobile-screener 發事件 → 呼叫現有 screener-ui 邏輯
+    document.addEventListener('mobileRunStrat', async (e) => {
+      const opts = e.detail ?? {};
+      // 把過濾條件寫入 Config
+      const { Config } = await import('./config.js');
+      Config.priceMin  = opts.priceMin  ?? 10;
+      Config.priceMax  = opts.priceMax  ?? 9999;
+      Config.volumeMin = opts.volumeMin ?? 0;
+      // 觸發現有選股流程（screener-ui.js 監聽 screenerRunFromMobile）
+      document.dispatchEvent(new CustomEvent('screenerRunFromMobile', { detail: opts }));
+    });
+
+    // 追蹤 / 題材行情更新橋接
+    document.addEventListener('mobileRefreshTrack', () => {
+      document.dispatchEvent(new CustomEvent('portfolioRefresh'));
+    });
+    document.addEventListener('mobileRefreshTheme', async () => {
+      const { reloadThemes } = await import('./theme.js');
+      await reloadThemes();
+    });
+  }
+  // ── Phase 10 end ──────────────────────────────────────────
 
   // 4. 新版自選清單（群組版）
   await initWatchlist();
@@ -1476,6 +1526,28 @@ function _initFullscreen() {
   initStrategyPanel();
   initTheme();  // 預載題材資料（IndexedDB + Firestore），不阻塞 UI
   initPortfolio();
+
+  // ── Splash 跑馬燈：背景拉今日市場摘要（fire-and-forget，不擋 init）──────
+  (async () => {
+    try {
+      const { db } = await import('./firebase.js');
+      const sdk = window.__firestoreSDK;
+      if (!db || !sdk?.getDoc || !sdk?.doc) return;
+      const d = new Date(Date.now() + 8 * 3600000);
+      const dateStr = d.toISOString().slice(0, 10);
+      const toRef = (key) => sdk.doc(db, 'shared', key.replace(/\//g, '--'));
+      const [cmSnap, luSnap] = await Promise.all([
+        sdk.getDoc(toRef(`market/${dateStr}/commentary`)),
+        sdk.getDoc(toRef(`market/${dateStr}/limit_up`)),
+      ]);
+      if (!cmSnap.exists() || !luSnap.exists()) return;
+      const cm = cmSnap.data();
+      const lu = luSnap.data();
+      const stats = typeof cm.stats === 'string' ? JSON.parse(cm.stats) : (cm.stats ?? {});
+      const luParsed = typeof lu.data === 'string' ? JSON.parse(lu.data) : (lu.data ?? {});
+      window.__splashFeed?.('market', { stats, sectorRank: luParsed.sectorRank ?? [] });
+    } catch (_) { /* splash 資料失敗不影響主流程 */ }
+  })();
 
   // 策略庫事件橋接（strategy.js → screener-ui.js）
   // strategyClear：清空現有條件
@@ -1550,6 +1622,27 @@ function _initFullscreen() {
 
   // 11. 還原上次的訊號結果(背景,不擋初始化)
   restoreSignalsFromCache();
+
+  // ── Splash 跑馬燈：收集 yaoguUpdated 事件，3s debounce 後批次推送 ──────
+  {
+    let _splashYaoguTimer = null;
+    document.addEventListener('yaoguUpdated', () => {
+      clearTimeout(_splashYaoguTimer);
+      _splashYaoguTimer = setTimeout(() => {
+        if (!window.__splashFeed) return;
+        const detected = Object.entries(AppState.yaoguStatus ?? {})
+          .filter(([, ys]) => ys?.color)
+          .map(([code, ys]) => {
+            const sigs = (AppState.signals?.[code] ?? [])
+              .filter(s => s.category === 'X 系列')
+              .map(s => { const m = (s.name ?? '').match(/X\d/); return m ? m[0] : 'X'; });
+            return { code, name: getChineseName(code) || code, signals: [...new Set(sigs)] };
+          })
+          .filter(d => d.signals.length);
+        if (detected.length) window.__splashFeed('yaogu', detected);
+      }, 3000);
+    });
+  }
 
   // 11b. 初次掃描延遲 90 秒：等 loadStock K線穩定完成再掃
   // ⚠️ 踩雷備忘：延遲太短（5秒）會與 loadStock K線並發衝爆 Worker，造成 K線 25 分鐘空白

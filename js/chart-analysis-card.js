@@ -9,6 +9,8 @@
 // ============================================================================
 
 import { analyze, analyzeEntryPlan } from './chart-analysis.js';
+import { loadStockInfo, saveStockInfo, deleteStockInfo } from './db.js';
+import { fsGetShared } from './firebase.js';
 import { calcHealthWithSignals } from './stock-tabs.js';
 import { calcHealthLong } from './health.js';
 import { fetchHistory, fetchFundamentalsFromFirestore, toYahooSymbol } from './api.js';
@@ -40,8 +42,9 @@ let _longHealthCache = null;
 let _io              = null;
 let _pendingCode     = null;
 
-// ── 5 個 Tab 定義 ──
+// ── 6 個 Tab 定義（觀點排第一）──
 const TABS = [
+  { icon: '👁', label: '觀點'  },
   { icon: '📊', label: '總覽'  },
   { icon: '📈', label: '均線'  },
   { icon: '🎯', label: '籌碼'  },
@@ -120,6 +123,7 @@ function _doCompute() {
   if (!candles.length) { _containerEl.innerHTML = `<div class="ca-empty">尚無 K 線資料</div>`; return; }
   try {
     _lastResult = analyze(candles);
+    window.__lastAnalysisResult = _lastResult;  // Modal 重繪用
     _renderShell(_lastResult, candles);
     _pendingCode = null;
   } catch(e) {
@@ -164,12 +168,1126 @@ function _renderTab(tab, r, candles) {
   if (!body) return;
   body.innerHTML = '';
   requestAnimationFrame(() => {
-    if (tab === 0) _tabOverview(body, r, candles);
-    if (tab === 1) _tabEMA(body, candles);
-    if (tab === 2) _tabQuant(body, candles, r);
-    if (tab === 3) _tabMomentum(body, candles);
-    if (tab === 4) _tabOscillator(body, candles);
+    if (tab === 0) {
+      _tabPerspective(body, r, candles).then(() => {
+        // 引導按鈕：跳補充資訊 tab（矛盾偵測用）
+        body.querySelector('.pv-goto-stockinfo')?.addEventListener('click', () => {
+          document.querySelector('.stock-tab[data-stock-tab="stockinfo"]')?.click();
+        });
+        // 複製 Prompt 按鈕
+        body.querySelectorAll('.si-copy-prompt-btn').forEach(btn => {
+          btn.addEventListener('click', () => _siCopyPrompt(btn.dataset.siCode));
+        });
+        // 開啟補充資訊 → Modal
+        body.querySelectorAll('.si-open-tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => _siShowModal(window.__stockDashCode ?? ''));
+        });
+      }).catch(e => console.warn('[perspective]', e));
+      return;
+    }
+    if (tab === 1) _tabOverview(body, r, candles);
+    if (tab === 2) _tabEMA(body, candles);
+    if (tab === 3) _tabQuant(body, candles, r);
+    if (tab === 4) _tabMomentum(body, candles);
+    if (tab === 5) _tabOscillator(body, candles);
   });
+}
+
+// ============================================================================
+// Tab 0 — 觀點（Strategy × 診斷 × 決策 × 燈燈）
+// ============================================================================
+
+// 觀點卡背景預拉基本面（不阻塞渲染，拉到後重新渲染）
+function _prefetchFundForPerspective(code, body, r, candles) {
+  // 避免重複觸發
+  if (window.__fundFetchingFor === code) return;
+  window.__fundFetchingFor = code;
+
+  // 監聽 fundamentalsUpdated 事件（stock-tabs.js 載完後會 dispatch）
+  const handler = (e) => {
+    if (e.detail?.code !== code) return;
+    document.removeEventListener('fundamentalsUpdated', handler);
+    window.__fundFetchingFor = null;
+    // 確認還在觀點 tab 才重繪
+    const activeTab = document.querySelector('.ca-tab.active');
+    if (activeTab?.dataset?.tab === '0') {
+      _tabPerspective(body, r, candles);
+    }
+  };
+  document.addEventListener('fundamentalsUpdated', handler);
+
+  // 10 秒後自動清除監聽（防 leak）
+  setTimeout(() => {
+    document.removeEventListener('fundamentalsUpdated', handler);
+    window.__fundFetchingFor = null;
+  }, 10000);
+
+  // 觸發基本面載入（借用 stock-tabs 的 ensureFundamentals）
+  window.__ensureFundamentals?.(code).catch(() => {});
+}
+
+// ============================================================================
+// 財報摘要卡（觀點卡專用）
+// ============================================================================
+function _buildFundSummaryCard(fund, chips, C_UP, C_DOWN, C_AMBER, C_MUTED) {
+  if (!fund) return '';
+
+  const _pct  = v => v != null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '—';
+  const _num  = v => v != null ? Number(v).toFixed(2) : '—';
+  const _col  = v => v == null ? '' : v > 0 ? C_UP : v < 0 ? C_DOWN : C_MUTED;
+  const _colM = v => v == null ? '' : v > 20 ? C_UP : v > 10 ? C_AMBER : C_DOWN;
+
+  // ── 取值 ──
+  const eps        = fund.eps;
+  const epsGrowth  = fund.earningsGrowth;
+  const revGrowth  = fund.revenueGrowth;
+  const pe         = fund.pe;
+  const pb         = fund.pbRatio;
+  const divYield   = fund.dividendYield;
+
+  // 三率：優先從 _marginSeries 取
+  const ms0        = fund._marginSeries?.[0];
+  const grossM     = ms0?.grossMargin    ?? null;
+  const opM        = ms0?.operatingMargin ?? null;
+  const netMraw    = ms0?.netMargin       ?? null;
+  const netM       = netMraw != null ? netMraw : (fund.profitMargin != null ? fund.profitMargin * 100 : null);
+
+  // 三率趨勢（和上季比）
+  const ms1        = fund._marginSeries?.[1];
+  const grossTrend = (grossM != null && ms1?.grossMargin != null) ? grossM - ms1.grossMargin : null;
+
+  // PEG
+  const peg = (pe != null && epsGrowth != null && epsGrowth > 0)
+    ? (pe / (epsGrowth * 100)).toFixed(2) : null;
+
+  // ── 成長動能條列（rule-based）──
+  const upsides = [];
+  if (epsGrowth != null && epsGrowth > 0.1)
+    upsides.push(`EPS 年增 ${(epsGrowth*100).toFixed(0)}%，獲利加速擴張`);
+  else if (epsGrowth != null && epsGrowth > 0)
+    upsides.push(`EPS 年增 ${(epsGrowth*100).toFixed(1)}%，獲利持續成長`);
+
+  if (revGrowth != null && revGrowth > 0.1)
+    upsides.push(`營收年增 ${(revGrowth*100).toFixed(0)}%，業務擴張動能強勁`);
+  else if (revGrowth != null && revGrowth > 0)
+    upsides.push(`營收年增 ${(revGrowth*100).toFixed(1)}%，成長軌道穩健`);
+
+  if (grossM != null && grossM > 40)
+    upsides.push(`毛利率 ${grossM.toFixed(1)}%，競爭護城河深`);
+  else if (grossM != null && grossM > 25)
+    upsides.push(`毛利率 ${grossM.toFixed(1)}%，獲利品質良好`);
+
+  if (grossTrend != null && grossTrend > 1)
+    upsides.push(`毛利率較上季提升 ${grossTrend.toFixed(1)} 個百分點，成本控制改善`);
+
+  if (peg != null && parseFloat(peg) < 0.5)
+    upsides.push(`PEG ${peg}，用低估值買高成長，CP 值高`);
+  else if (peg != null && parseFloat(peg) < 1)
+    upsides.push(`PEG ${peg}，成長速度超過本益比，估值合理`);
+
+  if (chips?.foreignNet > 2000)
+    upsides.push(`外資買超 ${Math.round(chips.foreignNet/1000)} 千張，法人認同基本面`);
+
+  if (divYield != null && divYield > 0.04)
+    upsides.push(`殖利率 ${(divYield*100).toFixed(1)}%，股息收益具吸引力`);
+
+  // ── 風險因素條列（rule-based）──
+  const risks = [];
+  if (epsGrowth != null && epsGrowth < 0)
+    risks.push(`EPS 年衰退 ${Math.abs(epsGrowth*100).toFixed(1)}%，獲利能力下滑`);
+
+  if (revGrowth != null && revGrowth < 0)
+    risks.push(`營收年衰退 ${Math.abs(revGrowth*100).toFixed(1)}%，業務動能轉弱`);
+
+  if (grossTrend != null && grossTrend < -2)
+    risks.push(`毛利率較上季下滑 ${Math.abs(grossTrend).toFixed(1)} 個百分點，成本壓力增加`);
+
+  if (pe != null && pe > 30 && (epsGrowth == null || epsGrowth < 0.15))
+    risks.push(`PE ${pe.toFixed(1)} 倍偏高，若獲利成長不及預期估值壓力大`);
+
+  if (pe != null && pe > 50)
+    risks.push(`PE ${pe.toFixed(1)} 倍，高估值需持續高成長支撐，修正風險高`);
+
+  if (netM != null && netM < 5)
+    risks.push(`淨利率 ${netM.toFixed(1)}% 偏低，獲利品質有待改善`);
+
+  if (divYield != null && divYield < 0.005)
+    risks.push(`殖利率 ${(divYield*100).toFixed(1)}%，不適合股息投資策略`);
+
+  if (chips?.foreignNet < -2000)
+    risks.push(`外資賣超 ${Math.abs(Math.round(chips.foreignNet/1000))} 千張，法人持續出清`);
+
+  if (upsides.length === 0 && risks.length === 0) return '';
+
+  // ── 燈燈結論句（rule-based，不依賴台詞庫）──
+  let dengConclusion = '';
+  let verdictLabel = '', verdictClass = '';
+
+  const bullCount = upsides.length;
+  const bearCount = risks.length;
+
+  if (epsGrowth != null && epsGrowth > 0.3 && peg != null && parseFloat(peg) < 0.8) {
+    dengConclusion = `EPS 年增 ${(epsGrowth*100).toFixed(0)}%、PEG ${peg}——用這個估值買這個成長速度，燈燈覺得市場還沒充分定價。風險只有一個：這個成長速度能不能持續。`;
+    verdictLabel = '基本面優質'; verdictClass = 'bull';
+  } else if (epsGrowth != null && epsGrowth > 0.15 && grossM != null && grossM > 30) {
+    dengConclusion = `獲利在成長、毛利率撐著——公司本身的體質不錯。技術面如果站多頭，基本面是這波的底氣，喵。`;
+    verdictLabel = '基本面穩健'; verdictClass = 'bull';
+  } else if (epsGrowth != null && epsGrowth > 0 && bullCount > bearCount) {
+    dengConclusion = `獲利小幅成長，算是及格。動能不算強，但也沒有明顯破口。這種公司適合等技術面訊號出來再進，不用搶。`;
+    verdictLabel = '基本面普通'; verdictClass = 'watch';
+  } else if (epsGrowth != null && epsGrowth < -0.1) {
+    dengConclusion = `獲利在縮水，財報說話很誠實。技術面就算有反彈，燈燈也會擔心這是逃命波，喵。`;
+    verdictLabel = '基本面偏弱'; verdictClass = 'bear';
+  } else if (bearCount > bullCount) {
+    dengConclusion = `風險點比成長動能多，財報整體偏保守。燈燈建議基本面改善之前，倉位輕一點。`;
+    verdictLabel = '基本面保守'; verdictClass = 'watch';
+  } else {
+    dengConclusion = `財報數字平穩，沒有特別亮眼，也沒有明顯警訊。這種情況燈燈通常以技術面為主要判斷依據。`;
+    verdictLabel = '基本面中性'; verdictClass = 'watch';
+  }
+
+  const verdictStyle = verdictClass === 'bull'
+    ? `background:rgba(239,83,80,.12);color:${C_UP};border:0.5px solid rgba(239,83,80,.3)`
+    : verdictClass === 'bear'
+    ? `background:rgba(38,166,154,.12);color:${C_DOWN};border:0.5px solid rgba(38,166,154,.3)`
+    : `background:rgba(245,158,11,.12);color:${C_AMBER};border:0.5px solid rgba(245,158,11,.3)`;
+
+  // ── 指標格子 ──
+  const _metricHtml = (label, val, color) => `
+    <div style="background:rgba(255,255,255,.03);border-radius:6px;padding:7px 9px;border:0.5px solid rgba(255,255,255,.06)">
+      <div style="font-size:11px;color:${C_MUTED};margin-bottom:3px">${label}</div>
+      <div style="font-size:16px;font-weight:500;color:${color || '#e8eaed'}">${val}</div>
+    </div>`;
+
+  const _itemHtml = (text, color) => `
+    <div style="display:flex;align-items:flex-start;gap:7px;font-size:13px;color:#c9d1d9;line-height:1.45;margin-bottom:5px">
+      <div style="width:5px;height:5px;border-radius:50%;background:${color};flex-shrink:0;margin-top:5px"></div>
+      ${text}
+    </div>`;
+
+  return `<div class="cao-card">
+    <div style="font-size:11px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:10px">財報摘要</div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px">
+      ${_metricHtml('EPS（最新季）',   eps != null ? _num(eps) : '—',               eps != null && eps > 0 ? C_UP : C_DOWN)}
+      ${_metricHtml('EPS 年增率',      _pct(epsGrowth),                              _col(epsGrowth))}
+      ${_metricHtml('營收年增率',      _pct(revGrowth),                              _col(revGrowth))}
+      ${_metricHtml('毛利率',          grossM != null ? grossM.toFixed(1) + '%' : '—', _colM(grossM))}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px">
+      ${_metricHtml('本益比（PE）',    pe != null ? pe.toFixed(1) : '—',             pe != null && pe < 20 ? C_UP : pe > 40 ? C_DOWN : C_AMBER)}
+      ${_metricHtml('淨利率',          netM != null ? netM.toFixed(1) + '%' : '—',   _colM(netM))}
+      ${_metricHtml('股息殖利率',      divYield != null ? (divYield*100).toFixed(1) + '%' : '—', divYield != null && divYield > 0.04 ? C_UP : C_MUTED)}
+      ${_metricHtml('PEG',             peg ?? '—',                                   peg != null && parseFloat(peg) < 1 ? C_UP : peg != null && parseFloat(peg) < 2 ? C_AMBER : C_DOWN)}
+    </div>
+
+    <div style="height:0.5px;background:rgba(255,255,255,.07);margin-bottom:10px"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      ${upsides.length ? `<div>
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:7px">
+          <div style="width:6px;height:6px;border-radius:50%;background:${C_UP}"></div>
+          <div style="font-size:12px;font-weight:500;color:${C_UP}">成長動能</div>
+        </div>
+        ${upsides.map(t => _itemHtml(t, C_UP)).join('')}
+      </div>` : '<div></div>'}
+      ${risks.length ? `<div>
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:7px">
+          <div style="width:6px;height:6px;border-radius:50%;background:${C_DOWN}"></div>
+          <div style="font-size:12px;font-weight:500;color:${C_DOWN}">風險因素</div>
+        </div>
+        ${risks.map(t => _itemHtml(t, C_DOWN)).join('')}
+      </div>` : '<div></div>'}
+    </div>
+
+    <div style="height:0.5px;background:rgba(255,255,255,.07);margin-bottom:10px"></div>
+
+    <div style="display:flex;gap:10px;align-items:flex-start">
+      <div style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.07);border:0.5px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">🐱</div>
+      <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.08);border-radius:0 10px 10px 10px;padding:9px 12px;flex:1">
+        <div style="font-size:13px;color:#e8eaed;line-height:1.65">${dengConclusion}</div>
+        <div style="margin-top:7px">
+          <span style="font-size:11px;font-weight:500;padding:2px 10px;border-radius:20px;${verdictStyle}">${verdictLabel}</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ============================================================================
+// 補充資訊區塊（整合進觀點卡）
+// ============================================================================
+function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_MUTED) {
+  const hasManual = info && Object.keys(info).filter(k => k !== 'code' && k !== 'savedAt').length > 0;
+  const hasAuto   = autoData?.revenue?.data?.length > 0 ||
+                    autoData?.eps?.data?.length > 0 ||
+                    autoData?.dividend?.data?.length > 0;
+  const forward   = info?.forward;
+  const hasForward = !!(forward && (forward.story || forward.consensus || forward.drivers?.length));
+
+  if (!hasManual && !hasAuto) {
+    // 無資料：只顯示 Prompt 操作區
+    return `<div class="cao-card">
+      <div style="font-size:11px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:10px">補充資訊</div>
+      <div style="font-size:13px;color:${C_MUTED};margin-bottom:12px">尚未補充法說會、法人評等等資訊。複製 Prompt 給 AI，貼回 JSON 後匯入。</div>
+      ${_siPromptArea(code, C_UP, C_AMBER, C_MUTED)}
+    </div>`;
+  }
+
+  const parts = [];
+
+  // ── 前瞻面分析（新版圖文卡）──────────────────────────────────────────────
+  if (hasForward) {
+    const f = forward;
+    // 計算 EPS 成長率
+    // 近四季 EPS TTM：從 autoData.eps 最新 4 季加總，fallback 單季 * 4
+    const _epsRows = autoData?.eps?.data
+      ? [...autoData.eps.data].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
+      : [];
+    const _ttmEps = _epsRows.length === 4
+      ? _epsRows.reduce((s, r) => s + (r.eps ?? 0), 0)
+      : _epsRows.length > 0
+        ? _epsRows.reduce((s, r) => s + (r.eps ?? 0), 0)
+        : null;
+    const curEps  = _ttmEps ?? (window.__lastFundamentals?.eps ? window.__lastFundamentals.eps * 4 : null);
+    const nextPct = (curEps && f.epsEstNext)  ? ((f.epsEstNext  / curEps - 1) * 100).toFixed(0) : null;
+    const yr2Pct  = (curEps && f.epsEstYear2) ? ((f.epsEstYear2 / curEps - 1) * 100).toFixed(0) : null;
+    const epsLabel = _epsRows.length >= 4 ? '近四季 EPS（TTM）' : _epsRows.length > 0 ? `近${_epsRows.length}季 EPS 合計` : '近四季 EPS（實績）';
+
+    const epsRow = (f.epsEstNext || f.epsEstYear2) ? `
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:stretch">
+        ${curEps ? `<div style="flex:1;background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px;border:0.5px solid rgba(255,255,255,.07)">
+          <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">${epsLabel}</div>
+          <div style="font-size:20px;font-weight:500;color:#e8eaed">${curEps.toFixed(1)}</div>
+          <div style="font-size:11px;color:${C_MUTED};margin-top:3px">歷史基準</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;color:${C_MUTED};font-size:18px;flex-shrink:0;padding:0 4px">→</div>` : ''}
+        ${f.epsEstNext ? `<div style="flex:1;background:rgba(239,83,80,.06);border-radius:8px;padding:10px 12px;border:0.5px solid rgba(239,83,80,.2)">
+          <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">法人預估（明年）</div>
+          <div style="font-size:20px;font-weight:500;color:${C_UP}">${f.epsEstNext}</div>
+          ${nextPct ? `<div style="font-size:11px;color:${C_UP};margin-top:3px">+${nextPct}%</div>` : ''}
+        </div>` : ''}
+        ${f.epsEstNext && f.epsEstYear2 ? `<div style="display:flex;align-items:center;justify-content:center;color:${C_MUTED};font-size:18px;flex-shrink:0;padding:0 4px">→</div>` : ''}
+        ${f.epsEstYear2 ? `<div style="flex:1;background:rgba(239,83,80,.1);border-radius:8px;padding:10px 12px;border:0.5px solid rgba(239,83,80,.3)">
+          <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">法人預估（後年）</div>
+          <div style="font-size:20px;font-weight:500;color:${C_UP}">${f.epsEstYear2}</div>
+          ${yr2Pct ? `<div style="font-size:11px;color:${C_UP};margin-top:3px">+${yr2Pct}%</div>` : ''}
+        </div>` : ''}
+      </div>` : '';
+
+    const driversHtml = (f.drivers || []).map(d =>
+      `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:7px;font-size:13px;color:#c9d1d9;line-height:1.5">
+        <div style="width:5px;height:5px;border-radius:50%;background:${C_UP};flex-shrink:0;margin-top:6px"></div>${d}
+      </div>`
+    ).join('');
+
+    const risksHtml = (f.risks || []).map(r =>
+      `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:7px;font-size:13px;color:#c9d1d9;line-height:1.5">
+        <div style="width:5px;height:5px;border-radius:50%;background:${C_DOWN};flex-shrink:0;margin-top:6px"></div>${r}
+      </div>`
+    ).join('');
+
+    parts.push(`
+      <div style="background:rgba(129,140,248,.06);border:0.5px solid rgba(129,140,248,.25);border-radius:8px;padding:14px 16px;margin-bottom:10px">
+        <div style="font-size:11px;color:#818cf8;font-weight:500;margin-bottom:6px">市場核心押注</div>
+        <div style="font-size:15px;font-weight:500;color:#e8eaed;line-height:1.6">${f.story}</div>
+      </div>
+      ${epsRow}
+      ${driversHtml || risksHtml ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;font-weight:500;color:${C_UP};margin-bottom:8px">成長動能</div>
+          ${driversHtml}
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:500;color:${C_DOWN};margin-bottom:8px">主要風險</div>
+          ${risksHtml}
+        </div>
+      </div>` : ''}
+      ${f.consensus ? `<div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:0.5px solid rgba(255,255,255,.07)">
+          <div style="width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center;font-size:14px">🐱</div>
+          <div style="font-size:12px;font-weight:500;color:#e8eaed">燈燈整合觀點</div>
+          <span style="font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(129,140,248,.12);color:#818cf8;border:0.5px solid rgba(129,140,248,.3);margin-left:auto">🔭 前瞻資料</span>
+        </div>
+        <div style="padding:12px 14px">
+          <div style="font-size:13px;color:#e8eaed;line-height:1.7">${f.consensus}</div>
+          ${f.updatedAt ? `<div style="font-size:11px;color:${C_MUTED};margin-top:8px;text-align:right">資料截止：${f.updatedAt}</div>` : ''}
+        </div>
+      </div>` : ''}`);
+  }
+
+  // ── 法說會 + 法人評等 + 估值（手動）────────────────────────────────────
+  if (info?.meetingDate || info?.analystRating || info?.targetPrice || info?.peRatio) {
+    const today = new Date().toISOString().slice(0, 10);
+    const metaItems = [];
+    if (info.meetingDate) {
+      const daysLeft = Math.round((new Date(info.meetingDate) - new Date(today)) / 86400000);
+      metaItems.push(`<div style="flex:1;background:rgba(255,255,255,.03);border-radius:6px;padding:8px 10px;border:0.5px solid rgba(255,255,255,.07)">
+        <div style="font-size:11px;color:${C_MUTED};margin-bottom:3px">法說會</div>
+        <div style="font-size:13px;font-weight:500;color:#e8eaed">${info.meetingDate}</div>
+        <div style="font-size:11px;color:${C_MUTED};margin-top:2px">${daysLeft >= 0 ? daysLeft + ' 天後' : '已過'}</div>
+      </div>`);
+    }
+    if (info.analystRating || info.targetPrice) {
+      const ratingColor = info.analystRating === '買進' ? C_UP : info.analystRating === '賣出' ? C_DOWN : C_AMBER;
+      metaItems.push(`<div style="flex:1;background:rgba(255,255,255,.03);border-radius:6px;padding:8px 10px;border:0.5px solid rgba(255,255,255,.07)">
+        <div style="font-size:11px;color:${C_MUTED};margin-bottom:3px">法人評等</div>
+        ${info.analystRating ? `<div style="font-size:14px;font-weight:500;color:${ratingColor}">${info.analystRating}</div>` : ''}
+        ${info.targetPrice   ? `<div style="font-size:12px;color:${C_MUTED};margin-top:2px">目標價 $${info.targetPrice}</div>` : ''}
+      </div>`);
+    }
+    if (info.peRatio || info.pbRatio || info.dividendYield) {
+      metaItems.push(`<div style="flex:1;background:rgba(255,255,255,.03);border-radius:6px;padding:8px 10px;border:0.5px solid rgba(255,255,255,.07)">
+        <div style="font-size:11px;color:${C_MUTED};margin-bottom:3px">估值參考</div>
+        ${info.peRatio       ? `<div style="font-size:12px;color:#e8eaed">PE ${info.peRatio}x</div>` : ''}
+        ${info.pbRatio       ? `<div style="font-size:12px;color:#e8eaed">PB ${info.pbRatio}x</div>` : ''}
+        ${info.dividendYield ? `<div style="font-size:12px;color:#e8eaed">殖利率 ${info.dividendYield}%</div>` : ''}
+      </div>`);
+    }
+    if (metaItems.length) {
+      parts.push(`<div style="display:flex;gap:8px;margin-bottom:10px">${metaItems.join('')}</div>`);
+    }
+  }
+
+  // ── 月營收（autoData）────────────────────────────────────────────────────
+  if (autoData?.revenue?.data?.length > 0) {
+    const rows = [...autoData.revenue.data]
+      .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
+    const trs = rows.map(r => {
+      const yc = r.yoy > 0 ? C_UP : r.yoy < 0 ? C_DOWN : '';
+      const mc = r.mom > 0 ? C_UP : r.mom < 0 ? C_DOWN : '';
+      const rev = r.revenue >= 1e8 ? (r.revenue/1e8).toFixed(1)+'億' : r.revenue >= 1e4 ? (r.revenue/1e4).toFixed(0)+'萬' : r.revenue;
+      return `<tr style="border-bottom:0.5px solid rgba(255,255,255,.05)">
+        <td style="padding:5px 6px;font-size:12px;color:#e8eaed">${r.date?.slice(0,7)??''}</td>
+        <td style="padding:5px 6px;font-size:12px;color:#e8eaed;text-align:right">${rev}</td>
+        <td style="padding:5px 6px;font-size:12px;color:${yc||C_MUTED};text-align:right">${r.yoy!=null?(r.yoy>0?'+':'')+r.yoy.toFixed(1)+'%':'-'}</td>
+        <td style="padding:5px 6px;font-size:12px;color:${mc||C_MUTED};text-align:right">${r.mom!=null?(r.mom>0?'+':'')+r.mom.toFixed(1)+'%':'-'}</td>
+      </tr>`;
+    }).join('');
+    parts.push(`<div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:500;color:${C_MUTED};margin-bottom:7px">📈 月營收</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:0.5px solid rgba(255,255,255,.1)">
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:left;font-weight:500">月份</th>
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:right;font-weight:500">營收</th>
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:right;font-weight:500">年增率</th>
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:right;font-weight:500">月增率</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>`);
+  }
+
+  // ── EPS（autoData）───────────────────────────────────────────────────────
+  if (autoData?.eps?.data?.length > 0) {
+    const rows = [...autoData.eps.data]
+      .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+    const trs = rows.map(r => {
+      const c = r.eps > 0 ? C_UP : r.eps < 0 ? C_DOWN : '';
+      return `<tr style="border-bottom:0.5px solid rgba(255,255,255,.05)">
+        <td style="padding:5px 6px;font-size:12px;color:#e8eaed">${r.quarter??r.date?.slice(0,7)??''}</td>
+        <td style="padding:5px 6px;font-size:12px;color:${c||'#e8eaed'};text-align:right;font-weight:500">${r.eps!=null?'$'+r.eps.toFixed(2):'-'}</td>
+      </tr>`;
+    }).join('');
+    parts.push(`<div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:500;color:${C_MUTED};margin-bottom:7px">💰 EPS（近期財報）</div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:0.5px solid rgba(255,255,255,.1)">
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:left;font-weight:500">季度</th>
+          <th style="padding:4px 6px;font-size:11px;color:${C_MUTED};text-align:right;font-weight:500">EPS</th>
+        </tr></thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>`);
+  }
+
+  // ── 備註 ─────────────────────────────────────────────────────────────────
+  if (info?.note) {
+    parts.push(`<div style="background:rgba(255,255,255,.03);border-radius:6px;padding:10px 12px;border:0.5px solid rgba(255,255,255,.07);font-size:13px;color:#c9d1d9;line-height:1.6;margin-bottom:10px">
+      <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">📝 備註</div>
+      ${info.note}
+    </div>`);
+  }
+
+  // ── Prompt 操作區 ─────────────────────────────────────────────────────────
+  parts.push(_siPromptArea(code, C_UP, C_AMBER, C_MUTED));
+
+  return `<div class="cao-card">
+    <div style="font-size:11px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:12px">補充資訊</div>
+    ${parts.join('')}
+  </div>`;
+}
+
+// ── Prompt 操作區（共用）──────────────────────────────────────────────────
+function _siPromptArea(code, C_UP, C_AMBER, C_MUTED) {
+  return `<div style="border-top:0.5px solid rgba(255,255,255,.07);padding-top:10px;margin-top:4px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:500;color:${C_MUTED}">更新資料</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="si-copy-prompt-btn" data-si-code="${code}"
+        style="flex:1;padding:8px 12px;border-radius:6px;background:rgba(239,83,80,.1);color:#ef5350;border:0.5px solid rgba(239,83,80,.3);font-size:13px;cursor:pointer;font-weight:500">
+        📋 複製 Prompt
+      </button>
+      <button class="si-open-tab-btn"
+        style="flex:1;padding:8px 12px;border-radius:6px;background:rgba(255,255,255,.05);color:#e8eaed;border:0.5px solid rgba(255,255,255,.1);font-size:13px;cursor:pointer">
+        ↗ 開啟補充資訊
+      </button>
+    </div>
+  </div>`;
+}
+
+// ── 複製 Prompt（觀點卡內用）──────────────────────────────────────────────
+function _siCopyPrompt(code) {
+  const prompt = `請提供台股 ${code} 的最新資訊，以下列 JSON 格式回覆，不確定的欄位填 null：
+
+{
+  "code": "${code}",
+  "meetingDate": null,
+  "analystRating": null,
+  "targetPrice": null,
+  "peRatio": null,
+  "pbRatio": null,
+  "dividendYield": null,
+  "note": "",
+  "forward": {
+    "story": null,
+    "drivers": [],
+    "risks": [],
+    "epsEstNext": null,
+    "epsEstYear2": null,
+    "consensus": null,
+    "updatedAt": null
+  }
+}
+
+欄位說明：
+- forward.story：市場現在在賭的核心故事，一句話說清楚
+- forward.drivers：成長動能，條列式，3-5點
+- forward.risks：主要風險，條列式，2-4點
+- forward.epsEstNext：下一年度 EPS 共識預估（元）
+- forward.epsEstYear2：後年度 EPS 共識預估（元）
+- forward.consensus：整體評估一句話結論
+- forward.updatedAt：資料截止日期（YYYY-MM-DD）
+
+只回覆 JSON，不要其他說明文字。`;
+
+  navigator.clipboard.writeText(prompt).then(() => {
+    window.dengToast?.('Prompt 已複製！貼給你的 AI 吧 ~', { mood: 'happy', duration: 3000 });
+  }).catch(() => {
+    window.dengToast?.('請手動複製', { mood: 'curious', duration: 2500 });
+  });
+}
+
+// ── 補充資訊 Modal ────────────────────────────────────────────────────────
+function _siShowModal(code) {
+  // 移除舊的
+  document.getElementById('siModal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'siModal';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML = `
+    <div style="background:#161b22;border:0.5px solid rgba(255,255,255,.12);border-radius:12px;padding:20px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:500;color:#e8eaed">📋 補充資訊 — ${code}</div>
+        <button id="siModalClose" style="background:none;border:none;color:#8a8f99;font-size:18px;cursor:pointer;padding:0 4px">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button id="siModalCopyPrompt" style="flex:1;padding:8px 12px;border-radius:6px;background:rgba(239,83,80,.1);color:#ef5350;border:0.5px solid rgba(239,83,80,.3);font-size:13px;cursor:pointer;font-weight:500">📋 複製 Prompt</button>
+      </div>
+      <div style="font-size:12px;color:#8a8f99;margin-bottom:6px">貼上 AI 回傳的 JSON</div>
+      <textarea id="siModalJson" rows="10" style="width:100%;background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.12);border-radius:6px;padding:10px;color:#e8eaed;font-size:13px;resize:vertical;font-family:monospace" placeholder='貼上 AI 回傳的 JSON'></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="siModalImport" style="flex:1;padding:9px;border-radius:6px;background:rgba(239,83,80,.15);color:#ef5350;border:0.5px solid rgba(239,83,80,.35);font-size:13px;cursor:pointer;font-weight:500">✅ 匯入</button>
+        <button id="siModalClear" style="padding:9px 14px;border-radius:6px;background:rgba(255,255,255,.05);color:#8a8f99;border:0.5px solid rgba(255,255,255,.1);font-size:13px;cursor:pointer">🗑 清除</button>
+      </div>
+      <div id="siModalMsg" style="font-size:12px;color:#8a8f99;margin-top:8px;min-height:18px"></div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  document.getElementById('siModalClose').addEventListener('click', close);
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+  document.getElementById('siModalCopyPrompt').addEventListener('click', () => _siCopyPrompt(code));
+
+  document.getElementById('siModalImport').addEventListener('click', async () => {
+    const raw = document.getElementById('siModalJson')?.value?.trim();
+    const msg = document.getElementById('siModalMsg');
+    if (!raw) { msg.textContent = '請先貼上 JSON ~'; return; }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim());
+    } catch(e) { msg.textContent = 'JSON 格式有誤，請確認後再試'; return; }
+    if (parsed.code && parsed.code !== code) parsed.code = code;
+    try {
+      await saveStockInfo(code, parsed);
+      msg.style.color = '#ef5350';
+      msg.textContent = '✓ 已儲存！重新整理觀點卡中…';
+      setTimeout(() => {
+        close();
+        // 重新渲染觀點卡
+        const body = document.getElementById('caBody');
+        const r    = window.__lastAnalysisResult;
+        const candles = window.__AppState?.lastCandles ?? [];
+        if (body && candles.length) _tabPerspective(body, r, candles).catch(() => {});
+      }, 800);
+    } catch(e) { msg.textContent = '儲存失敗：' + e.message; }
+  });
+
+  document.getElementById('siModalClear').addEventListener('click', async () => {
+    if (!confirm(`確定清除 ${code} 的補充資訊？`)) return;
+    const { deleteStockInfo } = await import('./db.js');
+    await deleteStockInfo(code);
+    document.getElementById('siModalMsg').textContent = '已清除';
+    setTimeout(close, 600);
+  });
+}
+
+// ============================================================================
+// 燈燈觀點卡選句引擎
+// ============================================================================
+// 根據技術面、基本面、籌碼面的組合，從 DENG_MESSAGES 挑出最貼切的場景
+// 再隨機取一句，填入插值佔位符後回傳
+// ============================================================================
+
+// 台詞庫：優先用 import，fallback 用 window（處理模組快取問題）
+const _getDengMessages = () => (typeof DENG_MESSAGES !== 'undefined' ? DENG_MESSAGES : null)
+  ?? window.__DENG_MESSAGES
+  ?? {};
+
+function _dengPickScene(ctx) {
+  const { lamps, rsiVal, sigIds, fundQuality, chips, hasFund } = ctx;
+
+  // 特殊訊號優先
+  if (sigIds.has('X2')) return 'perspective_yaogu_x2';
+  if (sigIds.has('X5')) return 'perspective_yaogu_x5';
+
+  // 三合一共振（基本面 + 籌碼 + 技術全部站多）
+  if (fundQuality === 'good' && (chips?.foreignNet ?? 0) > 1000 && lamps >= 2)
+    return 'perspective_triple_confirm';
+
+  // 背離警告（技術多但基本面+法人空）
+  if (lamps >= 2 && fundQuality === 'poor' && (chips?.foreignNet ?? 0) < -1000)
+    return 'perspective_divergence_warning';
+
+  // 無基本面資料
+  if (!hasFund) {
+    if (rsiVal > 78) return 'perspective_overheat';
+    if (rsiVal < 32) return 'perspective_oversold';
+    if (lamps >= 3)  return 'perspective_bull_strong_fund_neutral';
+    if (lamps >= 1.5) return 'perspective_bull_mid_fund_neutral';
+    if (lamps <= -3) return 'perspective_bear_strong';
+    if (lamps <= -1.5) return 'perspective_bear_mid_fund_neutral';
+    return 'perspective_neutral_fund_neutral';
+  }
+
+  // RSI 極值（技術層優先覆蓋）
+  if (rsiVal > 78 && lamps >= 1.5) return 'perspective_overheat';
+  if (rsiVal < 32) return 'perspective_oversold';
+
+  // 外資大量流向
+  if ((chips?.foreignNet ?? 0) > 3000 && lamps >= 1) return 'perspective_foreign_buy';
+  if ((chips?.foreignNet ?? 0) < -3000 && lamps <= 0) return 'perspective_foreign_sell';
+
+  // 估值判斷
+  const pe = ctx.pe ?? 0;
+  if (pe > 0 && pe < 15 && fundQuality === 'good') return 'perspective_value_cheap';
+  if (pe > 40 && fundQuality !== 'good') return 'perspective_value_expensive';
+
+  // 三率判斷
+  if (ctx.marginImproving) return 'perspective_margin_improving';
+  if (ctx.marginDeclining) return 'perspective_margin_declining';
+
+  // 主場景：燈號 × 基本面品質
+  if (lamps >= 3) {
+    if (fundQuality === 'good')    return 'perspective_bull_strong_fund_good';
+    if (fundQuality === 'neutral') return 'perspective_bull_strong_fund_neutral';
+    return 'perspective_bull_strong_fund_poor';
+  }
+  if (lamps >= 1.5) {
+    if (fundQuality === 'good')    return 'perspective_bull_mid_fund_good';
+    if (fundQuality === 'neutral') return 'perspective_bull_mid_fund_neutral';
+    return 'perspective_bull_mid_fund_poor';
+  }
+  if (lamps <= -3) return 'perspective_bear_strong';
+  if (lamps <= -1.5) {
+    if (fundQuality === 'good')    return 'perspective_bear_mid_fund_good';
+    if (fundQuality === 'neutral') return 'perspective_bear_mid_fund_neutral';
+    return 'perspective_bear_mid_fund_poor';
+  }
+  // 中性
+  if (fundQuality === 'good')    return 'perspective_neutral_fund_good';
+  if (fundQuality === 'poor')    return 'perspective_neutral_fund_poor';
+  return 'perspective_neutral_fund_neutral';
+}
+
+function _dengPickText(scene, ctx) {
+  const pool = _getDengMessages()[scene];
+  if (!pool || !pool.length) return { text: '燈燈在想，等等喵 ~', tone: 'cute' };
+  const entry = pool[Math.floor(Math.random() * pool.length)];
+  const text = entry.text
+    .replace(/\{code\}/g,          ctx.code       ?? '')
+    .replace(/\{lamps\}/g,         ctx.lampsDisp  ?? '')
+    .replace(/\{rsi\}/g,           ctx.rsiVal     != null ? Math.round(ctx.rsiVal) : '—')
+    .replace(/\{bias\}/g,          ctx.biasDisp   ?? '—')
+    .replace(/\{phase\}/g,         ctx.phase?.name ?? '—')
+    .replace(/\{eps\}/g,           ctx.eps        != null ? ctx.eps.toFixed(2) : '—')
+    .replace(/\{epsGrowth\}/g,     ctx.epsGrowth  != null ? (ctx.epsGrowth * 100).toFixed(0) : '—')
+    .replace(/\{revenueGrowth\}/g, ctx.revenueGrowth != null ? (ctx.revenueGrowth * 100).toFixed(0) : '—')
+    .replace(/\{grossMargin\}/g,   ctx.grossMargin != null ? ctx.grossMargin.toFixed(1) : '—')
+    .replace(/\{pe\}/g,            ctx.pe         != null ? ctx.pe.toFixed(1) : '—')
+    .replace(/\{foreignNet\}/g,    ctx.chips?.foreignNet != null ? Math.abs(ctx.chips.foreignNet).toLocaleString() : '—')
+    .replace(/\{topSignal\}/g,     ctx.topSignal  ?? '—')
+    .replace(/\{topWarn\}/g,       ctx.topWarn    ?? '—');
+  return { text, tone: entry.tone };
+}
+
+// 判斷基本面品質（good / neutral / poor）
+function _dengFundQuality(fund) {
+  if (!fund) return null;
+  let score = 0;
+  // 獲利成長
+  if (fund.earningsGrowth != null) {
+    if (fund.earningsGrowth > 0.2)  score += 2;
+    else if (fund.earningsGrowth > 0) score += 1;
+    else score -= 1;
+  }
+  // 營收成長
+  if (fund.revenueGrowth != null) {
+    if (fund.revenueGrowth > 0.15)  score += 1;
+    else if (fund.revenueGrowth > 0) score += 0.5;
+    else score -= 0.5;
+  }
+  // 毛利率
+  if (fund.grossMargin != null) {
+    if (fund.grossMargin > 35) score += 1;
+    else if (fund.grossMargin > 20) score += 0.5;
+    else score -= 0.5;
+  }
+  // 淨利率
+  if (fund.profitMargin != null) {
+    if (fund.profitMargin > 0.1) score += 1;
+    else if (fund.profitMargin > 0) score += 0.5;
+    else score -= 1;
+  }
+  if (score >= 3) return 'good';
+  if (score >= 1) return 'neutral';
+  return 'poor';
+}
+
+async function _tabPerspective(body, r, candles) {
+  const code    = _ctxRefs.getCode?.() ?? '';
+  const signals = (window.__AppState?.signals?.[code] || []).filter(s => s && s.id);
+
+  // 讀取補充資訊資料（stockInfo + autoData 並行）
+  let _stockInfo = null;
+  let _autoData  = { revenue: null, eps: null, dividend: null };
+  try {
+    [_stockInfo, ...[]] = await Promise.all([
+      loadStockInfo(code),
+      (async () => {
+        try {
+          const [rev, eps, div] = await Promise.allSettled([
+            fsGetShared(`stocks/${code}/revenue`),
+            fsGetShared(`stocks/${code}/eps`),
+            fsGetShared(`stocks/${code}/dividend`),
+          ]);
+          _autoData = {
+            revenue:  rev.status  === 'fulfilled' ? rev.value  : null,
+            eps:      eps.status  === 'fulfilled' ? eps.value  : null,
+            dividend: div.status  === 'fulfilled' ? div.value  : null,
+          };
+        } catch(_) {}
+      })(),
+    ]);
+  } catch(_) {}
+  const _forward  = _stockInfo?.forward ?? null;
+  const hasForward = !!(_forward && (_forward.story || _forward.consensus || _forward.drivers?.length));
+
+
+  // ── 五燈計算 ──
+  const closes = candles.map(c => c.close ?? c.c ?? 0);
+  let difPos = true;
+  try {
+    const { dif } = calcMACD(closes, 12, 26, 9);
+    const n = dif?.length ?? 0;
+    if (n > 0 && Number.isFinite(dif[n - 1])) difPos = dif[n - 1] > 0;
+  } catch(_) {}
+
+  const lamps = window.calcSignalLamps
+    ? window.calcSignalLamps(signals, difPos)
+    : 0;
+
+  const lampCount = Math.abs(lamps);
+  const lampDir   = lamps > 0 ? 'bull' : lamps < 0 ? 'bear' : 'neu';
+  const lampColor = lamps > 0 ? C_UP : lamps < 0 ? C_DOWN : C_MUTED;
+
+  // ── 分流多空訊號 ──
+  const WARNING_IDS = new Set([
+    'W1','W2','W3','W4','W5','W6','W7','W8','W9','W10',
+    'W11','W12','W13','W14','W15','W16','W17','W18','W19','W20',
+  ]);
+  const STRATEGIES = window.__STRATEGIES || [];
+  const bullSignals = signals.filter(s => !WARNING_IDS.has(s.id)).slice(0, 4);
+  const warnSignals = signals.filter(s =>  WARNING_IDS.has(s.id)).slice(0, 3);
+
+  // ── 波段位置 ──
+  const n    = candles.length;
+  const last = candles[n - 1];
+  let rsiVal = 50;
+  try { const ra = calcRSI(closes, 14); rsiVal = ra[ra.length - 1] ?? 50; } catch(_) {}
+  const ma20arr = closes.slice(-20);
+  const ma20    = ma20arr.reduce((a, b) => a + b, 0) / ma20arr.length;
+  const bias    = ((last.close - ma20) / ma20) * 100;
+  const vol5    = candles.slice(-5).reduce((a, c) => a + (c.volume ?? 0), 0) / 5;
+  const vol20v  = candles.slice(-20).reduce((a, c) => a + (c.volume ?? 0), 0) / 20;
+  const volRatio = vol20v > 0 ? vol5 / vol20v : 1;
+  const sigIds   = new Set(signals.map(s => s.id));
+
+  let phase = { key: 'correction', name: '修正', color: C_MUTED };
+  if      (volRatio < 0.7 && Math.abs(bias) < 5 && Math.abs(lamps) <= 1)           phase = { key: 'accumulate', name: '蓄積',  color: C_AMBER };
+  else if (rsiVal > 78 && bias > 10)                                                 phase = { key: 'overheat',   name: '過熱',  color: C_DOWN  };
+  else if (lamps < -1.5)                                                             phase = { key: 'correction', name: '修正',  color: C_DOWN  };
+  else if (lamps >= 2.5 && bias > 3)                                                 phase = { key: 'markup',     name: '主升',  color: C_UP    };
+  else if ((sigIds.has('S20')||sigIds.has('S10')||sigIds.has('S32')||sigIds.has('S36')) && lamps >= 1)
+                                                                                     phase = { key: 'breakout',   name: '啟動',  color: C_UP    };
+  else if (lamps >= 1)                                                               phase = { key: 'breakout',   name: '啟動',  color: C_UP    };
+
+  const PHASES = ['蓄積','啟動','主升','過熱','修正'];
+
+  // ── 關鍵槓桿點 ──
+  let leverage = '目前無明確訊號，建議觀望';
+  if      (sigIds.has('S_ICHI_3GOOD')) leverage = '三役好轉確認，是本波最強多頭結構訊號';
+  else if (sigIds.has('S17'))          leverage = '外資連買持續流入，是本波上漲最重要的資金支撐';
+  else if (sigIds.has('X2'))           leverage = '天黑請閉眼啟動，飆股加速段介入，需嚴格停損';
+  else if (sigIds.has('X5'))           leverage = '爆量建倉早期訊號，比主升段早5–10日的介入機會';
+  else if (sigIds.has('S11'))          leverage = 'KD + MACD 雙黃金交叉站上月線，三重確認強力買點';
+  else if (sigIds.has('W10'))          leverage = 'KD + MACD 雙死叉跌破月線，趨勢全面轉弱，高度警示';
+  else if (sigIds.has('W11'))          leverage = '跌破一目雲層，中長線最強空頭確認訊號';
+  else if (signals.length) {
+    const top = signals[0];
+    const st  = STRATEGIES.find(s => s.id === top?.id);
+    if (st) leverage = `${st.name}觸發——${st.desc}`;
+  }
+
+  // ── 健康度 ──
+  const techScore = Math.min(100, Math.max(0, 50 + lamps * 10));
+  const techLabel = lamps >= 2 ? '強勢' : lamps >= 0.5 ? '偏強' : lamps <= -2 ? '弱勢' : lamps <= -0.5 ? '偏弱' : '中性';
+  const techColor = lamps >= 1 ? C_UP : lamps <= -1 ? C_DOWN : C_AMBER;
+  let chipScore = 50, chipLabel = '中性', chipColor = C_AMBER;
+  if      (sigIds.has('S17'))  { chipScore = 80; chipLabel = '法人進場'; chipColor = C_UP;   }
+  else if (sigIds.has('W13'))  { chipScore = 25; chipLabel = '量增價跌'; chipColor = C_DOWN; }
+  else if (lamps >= 2)         { chipScore = 65; chipLabel = '偏多';     chipColor = C_UP;   }
+  else if (lamps <= -2)        { chipScore = 30; chipLabel = '偏空';     chipColor = C_DOWN; }
+  const biasScore = Math.max(0, Math.min(100, 70 - bias * 2));
+  const valLabel  = bias > 10 ? '偏高' : bias > 5 ? '略高' : bias < -10 ? '超跌' : bias < -5 ? '偏低' : '合理';
+  const valColor  = bias > 8 ? C_AMBER : C_UP;
+  const riskScore = Math.max(0, Math.min(100, rsiVal));
+  const riskLabel = rsiVal > 80 ? 'RSI過熱' : rsiVal > 70 ? 'RSI偏高' : rsiVal < 30 ? 'RSI超賣' : '風險適中';
+  const riskColor = rsiVal > 75 ? C_DOWN : rsiVal < 35 ? C_UP : C_AMBER;
+
+  const health = [
+    { label: '技術結構', val: techLabel,  score: techScore,  color: techColor  },
+    { label: '籌碼動能', val: chipLabel,  score: chipScore,  color: chipColor  },
+    { label: '估值空間', val: valLabel,   score: biasScore,  color: valColor   },
+    { label: '短線風險', val: riskLabel,  score: riskScore,  color: riskColor  },
+  ];
+
+  // ── 支撐壓力（優先用 r，fallback window.__srData）──
+  const _sr    = (r?.resistance?.items?.length || r?.support?.items?.length) ? r : (window.__srData ?? {});
+  const res    = _sr?.resistance?.items?.[0]?.price ?? null;
+  const sup    = _sr?.support?.items?.[0]?.price    ?? null;
+  const resNote = _sr?.resistance?.items?.[0]?.label ?? '壓力位';
+  const supNote = _sr?.support?.items?.[0]?.label    ?? '支撐位';
+  const cur     = last.close ?? 0;
+  const resDist = res && cur ? (((res - cur) / cur) * 100).toFixed(1) : null;
+  const supDist = sup && cur ? (((cur - sup) / cur) * 100).toFixed(1) : null;
+
+  // ── USP 句 ──
+  let usp = '目前無明確訊號，維持觀望';
+  if      (sigIds.has('S_ICHI_3GOOD') && sigIds.has('S17')) usp = '外資進場 + 三役好轉，多頭結構最強確認';
+  else if (sigIds.has('X2'))           usp = '飆股加速段，天黑請閉眼介入——賭高 beta 報酬';
+  else if (sigIds.has('S11'))          usp = 'KD + MACD 雙黃金交叉，三重確認強力買點';
+  else if (sigIds.has('W10'))          usp = '三重弱勢確認，全面轉空，不適合做多';
+  else if (sigIds.has('W11'))          usp = '跌破一目雲層，中長線空頭確立，避險優先';
+  else if (lamps >= 3)                 usp = '多頭訊號高度共振，趨勢強勢延伸中';
+  else if (lamps >= 1.5)               usp = phase.name + '段確認，訊號持續累積中';
+  else if (lamps <= -3)                usp = '空頭訊號全面壓制，建議減碼或避險';
+  else if (lamps <= -1.5)              usp = '弱勢結構形成，持股風險提升';
+
+  // ── 燈燈敘事（台詞庫版）──
+  const verdict = lamps >= 1.5 ? 'buy' : lamps <= -1.5 ? 'hedge' : 'watch';
+  let verdictLabel = '觀望', verdictColor = C_AMBER;
+  let slText = '等方向確認再進場';
+
+  if (verdict === 'buy') {
+    verdictLabel = '可試單'; verdictColor = C_UP;
+    if (sup) slText = `停損 ${(sup * 0.99).toFixed(0)}${res ? '　目標 ' + res.toFixed(0) : ''}`;
+  } else if (verdict === 'hedge') {
+    verdictLabel = '避險優先'; verdictColor = C_DOWN;
+    slText = '建議減碼，等訊號翻多';
+  }
+
+  // ── 讀取基本面 / 籌碼資料 ──
+  const _fund  = window.__lastFundamentals ?? null;
+  const _chips = window.__lastChips ?? null;
+  const hasFund = !!(_fund && (_fund.eps != null || _fund.earningsGrowth != null));
+
+  // 三率趨勢判斷
+  const _gm0 = _fund?._marginSeries?.[0]?.grossMargin ?? null;
+  const _gm1 = _fund?._marginSeries?.[1]?.grossMargin ?? null;
+  const marginImproving = _gm0 != null && _gm1 != null && _gm0 > _gm1 && (_fund?.revenueGrowth ?? 0) > 0;
+  const marginDeclining = _gm0 != null && _gm1 != null && _gm0 < _gm1 - 3;
+
+  // 基本面品質
+  const fundQuality = _dengFundQuality(_fund);
+
+  // 選句情境 context
+  const _dengCtx = {
+    code,
+    lamps,
+    lampsDisp: (lamps > 0 ? '+' : '') + lamps,
+    rsiVal,
+    biasDisp:  (bias >= 0 ? '+' : '') + bias.toFixed(1) + '%',
+    phase,
+    sigIds,
+    hasFund,
+    fundQuality: fundQuality ?? 'neutral',
+    chips:       _chips,
+    pe:          _fund?.pe ?? null,
+    eps:         _fund?.eps ?? null,
+    epsGrowth:   _fund?.earningsGrowth ?? null,
+    revenueGrowth: _fund?.revenueGrowth ?? null,
+    grossMargin: _fund?._marginSeries?.[0]?.grossMargin ?? (_fund?.profitMargin != null ? null : null),
+    profitMargin: _fund?.profitMargin ?? null,
+    marginImproving,
+    marginDeclining,
+    topSignal:   bullSignals[0] ? (STRATEGIES.find(s => s.id === bullSignals[0].id)?.name ?? '') : '',
+    topWarn:     warnSignals[0] ? (STRATEGIES.find(s => s.id === warnSignals[0].id)?.name ?? '') : '',
+  };
+
+  // grossMargin 補值：優先取 _marginSeries，fallback 從 profitMargin 推算
+  if (_dengCtx.grossMargin == null && _fund?._marginSeries?.[0]?.grossMargin != null) {
+    _dengCtx.grossMargin = _fund._marginSeries[0].grossMargin;
+  }
+
+  const _scene = _dengPickScene(_dengCtx);
+  const _picked = _dengPickText(_scene, _dengCtx);
+
+  // ── 矛盾偵測 + forward 整合敘事 ──────────────────────────────────────────
+  // 財報退化但技術面強多 = 可能是轉型期/未來面，燈燈不該說「減碼」
+  const _fundDeclining = _dengCtx.fundQuality === 'poor' &&
+    (_dengCtx.epsGrowth != null && _dengCtx.epsGrowth < -0.05);
+  const _techStrong = lamps >= 2;
+  const _isMismatch = _fundDeclining && _techStrong;
+
+  let narText;
+
+  if (hasForward && _forward.consensus) {
+    // 有前瞻資料：燈燈說前瞻面版本
+    const epsLine = (_forward.epsEstNext || _forward.epsEstYear2)
+      ? `法人預估明年 EPS ${_forward.epsEstNext ?? '?'} 元${_forward.epsEstYear2 ? `、後年 ${_forward.epsEstYear2} 元` : ''}。`
+      : '';
+    narText = `${_forward.consensus}${epsLine ? ' ' + epsLine : ''}`;
+  } else if (_isMismatch) {
+    // 矛盾組合：歷史財報差但技術強，燈燈說不確定
+    narText = `財報數字看起來在退步，但技術面 ${lamps > 0 ? '+' : ''}${lamps} 燈——這種背離通常代表市場在賭未來，不是反映現在。燈燈只看得到歷史財報，看不到法說會的前瞻指引。把這檔的資訊丟給 AI 分析後匯入補充資訊，燈燈才能給你更完整的判斷。`;
+  } else {
+    narText = _picked.text;
+  }
+
+  // ── Pipeline ──
+  let pipeline;
+  if (lamps >= 1) {
+    pipeline = [
+      { n:1, title:'試單佈局',   desc:`現價 ${cur.toFixed(0)} 附近，2成倉建立觀察位`,            state:'act'  },
+      { n:2, title:'回踩確認',   desc:`拉回支撐 ${sup ? sup.toFixed(0) : '—'} 量縮止跌後加至5成`, state:'wait' },
+      { n:3, title:'突破加碼',   desc:`突破壓力 ${res ? res.toFixed(0) : '—'} 放量確認加至8成`,   state:'wait' },
+    ];
+  } else if (lamps <= -1.5) {
+    pipeline = [
+      { n:1, title:'降低倉位',   desc:'反彈至壓力帶時分批減碼',                                    state:'act'  },
+      { n:2, title:'設停損點',   desc:`跌破 ${sup ? sup.toFixed(0) : '—'} 立即出場，不等待`,        state:'act'  },
+      { n:3, title:'等待翻多',   desc:'訊號轉正後再重新評估進場',                                    state:'wait' },
+    ];
+  } else {
+    pipeline = [
+      { n:1, title:'持續觀察',   desc:'等待方向確認，不急於進場',                                    state:'act'  },
+      { n:2, title:'設定條件',   desc:`突破 ${res ? res.toFixed(0) : '—'} 或跌破 ${sup ? sup.toFixed(0) : '—'} 再行動`, state:'wait' },
+      { n:3, title:'依訊號行動', desc:'多頭訊號 → 試單，空頭訊號 → 觀望',                            state:'wait' },
+    ];
+  }
+
+  // ── 五燈泡 HTML ──
+  const full = Math.floor(lampCount);
+  const half = lampCount - full >= 0.4 ? 1 : 0;
+  const empty = 5 - full - half;
+  const bulbOn   = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${lampColor};margin:0 2px"></span>`;
+  const bulbHalf = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:linear-gradient(90deg,${lampColor} 50%,rgba(255,255,255,0.1) 50%);margin:0 2px"></span>`;
+  const bulbOff  = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.1);margin:0 2px"></span>`;
+  const lampsHtml = bulbOn.repeat(full) + (half ? bulbHalf : '') + bulbOff.repeat(empty)
+    + `<span style="font-size:13px;color:${C_MUTED};margin-left:4px">${lamps > 0 ? '+' : ''}${lamps}燈</span>`;
+
+  // ── 標籤 ──
+  const tagSet = new Set();
+  for (const s of signals) {
+    const st = STRATEGIES.find(st => st.id === s.id);
+    if (st?.category && st.category !== '避險警示' && tagSet.size < 3) tagSet.add(st.category);
+  }
+  const tagsHtml = [...tagSet].map(t =>
+    `<span style="font-size:13px;padding:2px 8px;border-radius:4px;font-weight:500;background:rgba(239,83,80,.1);color:${C_UP};border:0.5px solid rgba(239,83,80,.25)">${t}</span>`
+  ).join('') + (warnSignals.length
+    ? `<span style="font-size:13px;padding:2px 8px;border-radius:4px;font-weight:500;background:rgba(38,166,154,.1);color:${C_DOWN};border:0.5px solid rgba(38,166,154,.25)">避險警示 ${warnSignals.length} 個</span>`
+    : '');
+
+  // ── 波段位置 HTML ──
+  const phaseHtml = PHASES.map(p => {
+    const active = p === phase.name;
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;border-radius:6px;
+      border:0.5px solid ${active ? 'rgba(239,83,80,.4)' : 'rgba(255,255,255,0.07)'};
+      background:${active ? 'rgba(239,83,80,.08)' : 'rgba(255,255,255,0.02)'}">
+      <div style="width:6px;height:6px;border-radius:50%;background:${active ? C_UP : 'rgba(255,255,255,0.15)'}"></div>
+      <div style="font-size:13px;font-weight:500;color:${active ? C_UP : C_MUTED}">${p}</div>
+    </div>`;
+  }).join('');
+
+  // ── 健康度 HTML ──
+  const healthHtml = health.map(h =>
+    `<div style="flex:1;background:rgba(255,255,255,.03);border-radius:6px;padding:7px 8px;border:0.5px solid rgba(255,255,255,.06)">
+      <div style="font-size:12px;color:${C_MUTED};margin-bottom:3px">${h.label}</div>
+      <div style="font-size:14px;font-weight:500;color:${h.color};margin-bottom:4px">${h.val}</div>
+      <div style="height:3px;border-radius:2px;background:rgba(255,255,255,.08);overflow:hidden">
+        <div style="height:100%;border-radius:2px;background:${h.color};width:${h.score}%"></div>
+      </div>
+    </div>`
+  ).join('');
+
+  // ── 多空對立 HTML ──
+  const bHtml = bullSignals.map(s => {
+    const st = STRATEGIES.find(st => st.id === s.id);
+    return `<div style="display:flex;align-items:flex-start;gap:6px;font-size:13px;color:${C_MUTED};line-height:1.4;margin-bottom:5px">
+      <div style="width:5px;height:5px;border-radius:50%;background:${C_UP};flex-shrink:0;margin-top:4px"></div>
+      <div><span style="font-weight:500;color:#e8eaed">${st?.name ?? s.id}</span><br>${st?.desc ?? ''}</div>
+    </div>`;
+  }).join('') || `<div style="font-size:13px;color:rgba(255,255,255,.2)">無明確買進訊號</div>`;
+
+  const wHtml = warnSignals.map(s => {
+    const st = STRATEGIES.find(st => st.id === s.id);
+    return `<div style="display:flex;align-items:flex-start;gap:6px;font-size:13px;color:${C_MUTED};line-height:1.4;margin-bottom:5px">
+      <div style="width:5px;height:5px;border-radius:50%;background:${C_DOWN};flex-shrink:0;margin-top:4px"></div>
+      <div><span style="font-weight:500;color:#e8eaed">${st?.name ?? s.id}</span><br>${st?.desc ?? ''}</div>
+    </div>`;
+  }).join('') || `<div style="font-size:13px;color:rgba(255,255,255,.2)">無明確避險訊號</div>`;
+
+  // ── Pipeline HTML ──
+  const pipeHtml = pipeline.map(p =>
+    `<div style="display:flex;align-items:center;gap:10px;margin-bottom:7px">
+      <div style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+        font-size:13px;font-weight:500;flex-shrink:0;
+        ${p.state === 'act'
+          ? `background:rgba(239,83,80,.15);color:${C_UP};border:1px solid rgba(239,83,80,.35)`
+          : `background:rgba(255,255,255,.05);color:${C_MUTED};border:0.5px solid rgba(255,255,255,.1)`}">${p.n}</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:500;color:#e8eaed">${p.title}</div>
+        <div style="font-size:13px;color:${C_MUTED};margin-top:1px">${p.desc}</div>
+      </div>
+      <div style="font-size:12px;padding:2px 8px;border-radius:4px;
+        ${p.state === 'act'
+          ? `background:rgba(239,83,80,.12);color:${C_UP}`
+          : `background:rgba(255,255,255,.05);color:${C_MUTED}`}">${p.state === 'act' ? '執行' : '等待'}</div>
+    </div>`
+  ).join('');
+
+  const card = s => `<div class="cao-card">${s}</div>`;
+
+  body.innerHTML = `<div class="cao-wrap">
+
+    ${card(`
+      <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
+        <div style="flex-shrink:0">
+          <div style="font-size:20px;font-weight:500;color:#e8eaed">${code}</div>
+          <div style="font-size:13px;color:${C_MUTED};margin-top:2px">Strategy — 為什麼看這檔</div>
+          <div style="display:flex;gap:3px;align-items:center;margin-top:6px">${lampsHtml}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">${tagsHtml}</div>
+        </div>
+        <div style="flex:1;min-width:0;padding-left:4px">
+          <div style="background:rgba(255,255,255,.04);border:0.5px solid rgba(255,255,255,.08);border-radius:10px 10px 10px 0;padding:10px 12px">
+            <div style="font-size:14px;font-weight:500;color:#e8eaed;line-height:1.6;border-left:3px solid ${lampColor};padding-left:10px">${usp}</div>
+            <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:12px;font-weight:500;padding:3px 10px;border-radius:20px;
+                background:${verdict === 'buy' ? 'rgba(239,83,80,.12)' : verdict === 'hedge' ? 'rgba(38,166,154,.12)' : 'rgba(245,158,11,.12)'};
+                color:${verdictColor};border:0.5px solid ${verdictColor}44">${verdictLabel}</span>
+              <span style="font-size:12px;color:${C_MUTED}">${slText}</span>
+              ${hasForward ? `<span style="font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(99,102,241,.12);color:#818cf8;border:0.5px solid rgba(99,102,241,.3)">🔭 含前瞻資料</span>` : ''}
+              ${_isMismatch && !hasForward ? `<button class="pv-goto-stockinfo" style="font-size:11px;padding:2px 10px;border-radius:4px;background:rgba(245,158,11,.12);color:${C_AMBER};border:0.5px solid rgba(245,158,11,.3);cursor:pointer">📋 補充前瞻資訊 →</button>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    `)}
+
+    ${card(`
+      <div style="font-size:12px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:8px">波段位置</div>
+      <div style="display:flex;gap:5px;margin-bottom:10px">${phaseHtml}</div>
+      <div style="background:rgba(245,158,11,.06);border:0.5px solid rgba(245,158,11,.25);border-radius:6px;padding:10px 12px;display:flex;gap:8px;align-items:flex-start">
+        <div style="font-size:15px;flex-shrink:0;margin-top:1px">⚡</div>
+        <div>
+          <div style="font-size:12px;color:${C_AMBER};font-weight:500;margin-bottom:3px">關鍵槓桿點</div>
+          <div style="font-size:14px;color:#e8eaed;line-height:1.5;font-weight:500">${leverage}</div>
+        </div>
+      </div>
+    `)}
+
+    ${card(`
+      <div style="font-size:12px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:8px">Diagnosis — 個股損益表</div>
+      <div style="display:flex;gap:7px;margin-bottom:10px">${healthHtml}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:13px;font-weight:500;color:${C_UP};margin-bottom:5px">買進理由</div>
+          ${bHtml}
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:500;color:${C_DOWN};margin-bottom:5px">避險理由</div>
+          ${wHtml}
+        </div>
+      </div>
+    `)}
+
+    ${res || sup ? card(`
+      <div style="font-size:12px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:8px">市場訂價 — 願付空間</div>
+      <div style="display:flex;gap:7px">
+        ${res ? `<div style="flex:1;border-radius:6px;padding:8px 10px;border:0.5px solid rgba(239,83,80,.2);background:rgba(239,83,80,.05)">
+          <div style="font-size:12px;color:${C_MUTED};margin-bottom:3px">壓力</div>
+          <div style="font-size:17px;font-weight:500;color:${C_UP}">${res.toFixed(0)}</div>
+          <div style="font-size:12px;color:${C_MUTED};margin-top:2px">${resNote}${resDist ? '　+' + resDist + '%' : ''}</div>
+        </div>` : ''}
+        <div style="flex:1;border-radius:6px;padding:8px 10px;border:0.5px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03)">
+          <div style="font-size:12px;color:${C_MUTED};margin-bottom:3px">現價</div>
+          <div style="font-size:17px;font-weight:500;color:#e8eaed">${cur.toFixed(0)}</div>
+          <div style="font-size:12px;color:${C_MUTED};margin-top:2px">今日收盤</div>
+        </div>
+        ${sup ? `<div style="flex:1;border-radius:6px;padding:8px 10px;border:0.5px solid rgba(38,166,154,.2);background:rgba(38,166,154,.05)">
+          <div style="font-size:12px;color:${C_MUTED};margin-bottom:3px">支撐</div>
+          <div style="font-size:17px;font-weight:500;color:${C_DOWN}">${sup.toFixed(0)}</div>
+          <div style="font-size:12px;color:${C_MUTED};margin-top:2px">${supNote}${supDist ? '　-' + supDist + '%' : ''}</div>
+        </div>` : ''}
+      </div>
+    `) : ''}
+
+    ${card(`
+      <div style="font-size:12px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:8px">Decision — 行動計畫</div>
+      ${pipeHtml}
+    `)}
+
+    ${_buildFundSummaryCard(window.__lastFundamentals, window.__lastChips, C_UP, C_DOWN, C_AMBER, C_MUTED)}
+
+    ${_buildStockInfoSection(_stockInfo, _autoData, code, C_UP, C_DOWN, C_AMBER, C_MUTED)}
+
+  </div>`;
 }
 
 // ============================================================================
