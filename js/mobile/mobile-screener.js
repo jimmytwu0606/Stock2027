@@ -170,12 +170,34 @@ function _mkSubDeps() {
     getChineseName:  _deps.getChineseName,
     AppState:        _deps.AppState,
     onClose:         _closeSetup,
-    onDone:          (mode) => { _currentMode = mode; _renderCurrentMode(); },
+    onDone:          (mode) => {
+      // 切換到結果頁前先清空舊次結果，避免殘留
+      const as = _deps.AppState;
+      if (as) {
+        if (mode === 'strat' || mode === 'pattern') {
+          // 結果已在 onResult 裡累積，不清空
+        } else if (mode === 'seed') {
+          // 同上
+        }
+      }
+      _currentMode = mode;
+      _renderCurrentMode();
+    },
     onOpenSheet:     _openSheet,
     showScanOverlay: _showScanOverlay,
     hideScanOverlay: _hideScanOverlay,
     updateProgress:  _updateScanProgress,
-    onResult:        () => {},
+    onResult:        (item) => {
+      const as = _deps.AppState;
+      if (!as) return;
+      if (_currentMode === 'strat' || _currentMode === 'pattern') {
+        if (!as.screener) as.screener = { results: [] };
+        as.screener.results.push(item);
+      } else if (_currentMode === 'seed') {
+        if (!as.seed) as.seed = { scanResults: [] };
+        as.seed.scanResults.push(item);
+      }
+    },
   };
 }
 
@@ -273,6 +295,23 @@ export function renderIntoEl(el, deps) {
       </div>
       <div class="m-result-body" id="mScrInlineBody" style="flex:1;overflow-y:auto;"></div>
     </div>
+
+    <!-- inline scan overlay（不依賴 tabScreener 的 mScanOverlay）-->
+    <style>
+      @keyframes mSpin { to { transform: rotate(360deg); } }
+    </style>
+    <div id="mScrInlineScanOv" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#0d1117;z-index:10001;
+      flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+      <div style="width:52px;height:52px;border:3px solid #21262d;border-top-color:#58a6ff;
+        border-radius:50%;animation:mSpin 0.85s linear infinite"></div>
+      <div id="mScrInlineScanTitle" style="font-size:18px;font-weight:700;color:#e6edf3">掃描中…</div>
+      <div id="mScrInlineScanSub"   style="font-size:13px;color:#8b949e"></div>
+      <div style="width:260px;height:3px;background:#21262d;border-radius:2px;overflow:hidden">
+        <div id="mScrInlineScanProg" style="height:100%;background:#58a6ff;border-radius:2px;width:0%;transition:width 0.3s ease"></div>
+      </div>
+      <div id="mScrInlineScanCnt" style="font-size:12px;color:#3d444d"></div>
+    </div>
+
     <div id="mScrInlineSetup" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#0d1117;z-index:9999;flex-direction:column;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:0.5px solid #21262d;flex-shrink:0;">
         <div style="font-size:16px;font-weight:600;color:#e6edf3;">設定掃描</div>
@@ -289,19 +328,69 @@ export function renderIntoEl(el, deps) {
     </div>
   `;
 
+  // ── inline scan overlay 控制函式 ────────────────────────────
+  const _showInlineScan = (label) => {
+    const ov = document.getElementById('mScrInlineScanOv');
+    if (!ov) { console.warn('[mobile-screener] mScrInlineScanOv not found'); return; }
+    ov.style.display = 'flex';
+    const t = document.getElementById('mScrInlineScanTitle');
+    if (t) t.textContent = label || '掃描中…';
+    const prog = document.getElementById('mScrInlineScanProg');
+    if (prog) prog.style.width = '0%';
+    const cnt = document.getElementById('mScrInlineScanCnt');
+    if (cnt) cnt.textContent = '';
+  };
+  const _hideInlineScan = () => {
+    const ov = document.getElementById('mScrInlineScanOv');
+    if (ov) ov.style.display = 'none';
+  };
+  const _updateInlineScan = (done, total, msg) => {
+    const t    = document.getElementById('mScrInlineScanTitle');
+    const sub  = document.getElementById('mScrInlineScanSub');
+    const prog = document.getElementById('mScrInlineScanProg');
+    const cnt  = document.getElementById('mScrInlineScanCnt');
+    if (t)    t.textContent    = msg || '掃描中…';
+    if (sub)  sub.textContent  = '';
+    if (prog && total > 0) prog.style.width = Math.round(done / total * 100) + '%';
+    if (cnt)  cnt.textContent  = total > 0 ? `${done} / ${total}` : '';
+  };
+
+  let _sheetBound = false;
+
+  const closeInlineSetup = () => {
+    const sheet = document.getElementById('mScrInlineSetup');
+    if (sheet) sheet.style.display = 'none';
+  };
+
   const openInlineSetup = () => {
-    // 把 sheet 移到 body 層級，避免父層高度/transform 問題
     let sheet = document.getElementById('mScrInlineSetup');
     if (!sheet) {
       sheet = el.querySelector('#mScrInlineSetup');
       if (sheet) document.body.appendChild(sheet);
     }
+    // 同步移動 scan overlay 到 body，確保 z-index 生效
+    let scanOv = document.getElementById('mScrInlineScanOv');
+    if (!scanOv) {
+      scanOv = el.querySelector('#mScrInlineScanOv');
+      if (scanOv) document.body.appendChild(scanOv);
+    }
     if (sheet) { sheet.style.display='flex'; sheet.style.flexDirection='column'; }
-    _renderInlineSetupTab('strat', el);
-  };
-  const closeInlineSetup = () => {
-    const sheet = document.getElementById('mScrInlineSetup');
-    if (sheet) sheet.style.display = 'none';
+
+    if (!_sheetBound) {
+      _sheetBound = true;
+      document.getElementById('mScrInlineSetupClose')?.addEventListener('click', closeInlineSetup);
+      document.getElementById('mScrInlineSetupTabs')?.querySelectorAll('.m-stab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.getElementById('mScrInlineSetupTabs')?.querySelectorAll('.m-stab').forEach(b => {
+            b.style.color='#3d444d'; b.style.borderBottomColor='transparent';
+          });
+          btn.style.color='#58a6ff'; btn.style.borderBottomColor='#58a6ff';
+          _renderInlineSetupTab(btn.dataset.stab, el, _showInlineScan, _hideInlineScan, _updateInlineScan);
+        });
+      });
+    }
+
+    _renderInlineSetupTab('strat', el, _showInlineScan, _hideInlineScan, _updateInlineScan);
   };
 
   el.querySelector('#mScrInlineSelect')?.addEventListener('change', e => {
@@ -309,16 +398,6 @@ export function renderIntoEl(el, deps) {
     if (val === 'setup') { e.target.value = _currentMode; openInlineSetup(); return; }
     _currentMode = val;
     _renderInlineCurrentMode(el);
-  });
-  el.querySelector('#mScrInlineSetupClose')?.addEventListener('click', closeInlineSetup);
-  el.querySelectorAll('#mScrInlineSetupTabs .m-stab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      el.querySelectorAll('#mScrInlineSetupTabs .m-stab').forEach(b => {
-        b.style.color='#3d444d'; b.style.borderBottomColor='transparent';
-      });
-      btn.style.color='#58a6ff'; btn.style.borderBottomColor='#58a6ff';
-      _renderInlineSetupTab(btn.dataset.stab, el);
-    });
   });
 
   // 預設開設定掃描
@@ -328,7 +407,26 @@ export function renderIntoEl(el, deps) {
 async function _renderInlineCurrentMode(el) {
   const body = el.querySelector('#mScrInlineBody');
   if (!body) return;
-  const subdeps = { ..._deps, onOpenSheet: _openSheet, showScanOverlay: _showScanOverlay, hideScanOverlay: _hideScanOverlay, updateProgress: _updateScanProgress, onResult:()=>{}, onDone:(mode)=>{_currentMode=mode; _renderInlineCurrentMode(el);}, onClose:()=>{ document.getElementById('mScrInlineSetup').style.display='none'; } };
+  const subdeps = {
+    ..._deps,
+    onOpenSheet: _openSheet,
+    showScanOverlay: _showScanOverlay,
+    hideScanOverlay: _hideScanOverlay,
+    updateProgress: _updateScanProgress,
+    onResult: (item) => {
+      const as = _deps.AppState;
+      if (!as) return;
+      if (_currentMode === 'strat' || _currentMode === 'pattern') {
+        if (!as.screener) as.screener = { results: [] };
+        as.screener.results.push(item);
+      } else if (_currentMode === 'seed') {
+        if (!as.seed) as.seed = { scanResults: [] };
+        as.seed.scanResults.push(item);
+      }
+    },
+    onDone: (mode) => { _currentMode = mode; _renderInlineCurrentMode(el); },
+    onClose: () => { document.getElementById('mScrInlineSetup').style.display='none'; },
+  };
   try {
     switch (_currentMode) {
       case 'theme': { const m=await import('./mobile-screener-theme.js');   await m.renderResult(body,subdeps); break; }
@@ -340,10 +438,42 @@ async function _renderInlineCurrentMode(el) {
   } catch(e) { body.innerHTML=`<div style="padding:20px;color:#3d444d">${e.message}</div>`; }
 }
 
-async function _renderInlineSetupTab(tab, el) {
-  const body = el.querySelector('#mScrInlineSetupBody');
+async function _renderInlineSetupTab(tab, el, showScan, hideScan, updateScan) {
+  // ⚠️ mScrInlineSetup 已被 document.body.appendChild 移出 el
+  const body = document.getElementById('mScrInlineSetupBody');
   if (!body) return;
-  const subdeps = { ..._deps, onOpenSheet:_openSheet, showScanOverlay:_showScanOverlay, hideScanOverlay:_hideScanOverlay, updateProgress:_updateScanProgress, onResult:()=>{}, onDone:(mode)=>{_currentMode=mode; document.getElementById('mScrInlineSetup').style.display='none'; _renderInlineCurrentMode(el);}, onClose:()=>{ document.getElementById('mScrInlineSetup').style.display='none'; } };
+
+  // 若沒傳 inline scan 函式，fallback 到全域 overlay
+  const _showOv   = showScan   || _showScanOverlay;
+  const _hideOv   = hideScan   || _hideScanOverlay;
+  const _updateOv = updateScan || _updateScanProgress;
+
+  const subdeps = {
+    ..._deps,
+    onOpenSheet:     _openSheet,
+    showScanOverlay: _showOv,
+    hideScanOverlay: _hideOv,
+    updateProgress:  _updateOv,
+    onResult: (item) => {
+      const as = _deps.AppState;
+      if (!as) return;
+      if (tab === 'strat' || tab === 'pattern') {
+        if (!as.screener) as.screener = { results: [] };
+        as.screener.results.push(item);
+      } else if (tab === 'seed') {
+        if (!as.seed) as.seed = { scanResults: [] };
+        as.seed.scanResults.push(item);
+      }
+    },
+    onDone: (mode) => {
+      _currentMode = mode;
+      document.getElementById('mScrInlineSetup').style.display = 'none';
+      const sel = document.getElementById('mScrInlineSelect');
+      if (sel) sel.value = mode;
+      _renderInlineCurrentMode(el);
+    },
+    onClose: () => { document.getElementById('mScrInlineSetup').style.display = 'none'; },
+  };
   try {
     switch (tab) {
       case 'strat':   { const m=await import('./mobile-screener-strat.js');   m.renderSetup(body,subdeps);       break; }

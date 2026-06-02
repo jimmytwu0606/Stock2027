@@ -138,7 +138,7 @@ export async function runScan(opts, deps) {
     const gen = runSeedScan(template, { weights: opts.weights, threshold: opts.threshold });
     for await (const evt of gen) {
       if (evt.type==='progress') updateProgress?.(evt.done, evt.total, evt.message);
-      if (evt.type==='result')   { if(AppState?.seed) AppState.seed.scanResults.push(evt.item); onResult?.(evt.item); }
+      if (evt.type==='result')   { onResult?.(evt.item); }
       if (evt.type==='done')     break;
     }
     onDone?.('seed');

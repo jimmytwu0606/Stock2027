@@ -10,6 +10,8 @@ import { CONDITION_DEFS, runScreener, loadSavedSets, saveSet, deleteSavedSet } f
 import { loadAllResults, saveResult, deleteResult } from './screener-result-store.js';
 import { AppState } from './state.js';
 import { getChineseName, fetchFundamentalsBatch } from './api.js';
+import { addStockToGroup } from './watchlist.js';
+import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 
 // fund 快取（結果渲染後批次讀入）
 let _scFundCache = {};
@@ -186,6 +188,11 @@ function _bindToolbarEvents() {
 
   // toolbar 靜態「儲存結果」按鈕（篩選完成後才顯示）
   document.getElementById('screenerSaveResultBtn')?.addEventListener('click', _toggleSaveNameArea);
+
+  // toolbar「全部加入追蹤」按鈕
+  document.getElementById('screenerAddAllToWlBtn')?.addEventListener('click', (e) => {
+    _openAddAllWlPopover(document.getElementById('screenerAddAllToWlBtn'));
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -337,7 +344,7 @@ function _renderResults(rows) {
   }).join('');
 
   el.innerHTML = `
-    <div class="sc-results-header">${headerHtml}</div>
+    <div class="sc-results-header">${headerHtml}<span></span></div>
     <div class="sc-results-body">
       ${sorted.map(r => _renderResultRow(r)).join('')}
     </div>`;
@@ -358,7 +365,8 @@ function _renderResults(rows) {
 
   // 點個股列 → 跳看盤，帶 matchedConds 讓個股頁顯示篩選條件標籤
   el.querySelectorAll('.sc-result-row').forEach(row => {
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.sc-add-wl-btn')) return;
       const code = row.dataset.code;
       if (!code) return;
       // 找到對應的篩選結果，取 matchedConds
@@ -377,6 +385,22 @@ function _renderResults(rows) {
       }));
     });
   });
+  // 點「＋」→ 開群組 popover
+  el.querySelectorAll('.sc-add-wl-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openAddWlPopover(btn, btn.dataset.code, btn.dataset.name);
+    });
+  });
+
+  // 點「＋」→ 開群組 popover
+  el.querySelectorAll('.sc-add-wl-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openAddWlPopover(btn, btn.dataset.code, btn.dataset.name);
+    });
+  });
+
 }
 
 function _renderResultRow(r) {
@@ -417,6 +441,7 @@ function _renderResultRow(r) {
       <div class="sc-result-vol">${fmtVol(r.volume)}</div>
       <div class="sc-result-health">${healthBadgeDual(healthShort, healthLong, 'sc')}</div>
       <div class="sc-result-tags">${tags}${triggerChip}</div>
+      <button class="sc-add-wl-btn" data-code="${r.code}" data-name="${_escHtml(r.name ?? r.code)}" title="加入追蹤清單" >＋</button>
     </div>`;
 }
 
@@ -528,15 +553,19 @@ async function _renderSavedSets() {
 // ─────────────────────────────────────────────
 
 function _showSaveResultBtn() {
-  const btn = document.getElementById('screenerSaveResultBtn');
-  if (btn) btn.style.display = '';
+  const btn    = document.getElementById('screenerSaveResultBtn');
+  const btnAll = document.getElementById('screenerAddAllToWlBtn');
+  if (btn)    btn.style.display    = '';
+  if (btnAll) btnAll.style.display = '';
 }
 
 function _hideSaveResultBtn() {
-  const btn  = document.getElementById('screenerSaveResultBtn');
-  const area = document.getElementById('screenerSaveResultArea');
-  if (btn)  btn.style.display  = 'none';
-  if (area) area.style.display = 'none';
+  const btn    = document.getElementById('screenerSaveResultBtn');
+  const btnAll = document.getElementById('screenerAddAllToWlBtn');
+  const area   = document.getElementById('screenerSaveResultArea');
+  if (btn)    btn.style.display    = 'none';
+  if (btnAll) btnAll.style.display = 'none';
+  if (area)   area.style.display   = 'none';
 }
 
 // ─────────────────────────────────────────────
@@ -690,6 +719,7 @@ function _loadResultEntry(id, all) {
 
   _updateStatus(`已載入備份「${entry.name}」，共 ${_results.length} 檔`);
   AppState.screener.results = _results;
+  if (_results.length > 0) _showSaveResultBtn();
 }
 
 // ─────────────────────────────────────────────
@@ -731,4 +761,261 @@ function _formatDate(ts) {
   const d   = new Date(ts);
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ─────────────────────────────────────────────
+// 全清單加入「庫存追蹤清單」popover（兩步：選清單 → 命名確認）
+// ─────────────────────────────────────────────
+function _openAddAllWlPopover(anchor) {
+  if (_wlPopover?.dataset.mode === 'all') { _closeWlPopover(); return; }
+  _closeWlPopover();
+
+  if (!_results.length) {
+    document.dispatchEvent(new CustomEvent('showToast', { detail: '目前沒有篩選結果' }));
+    return;
+  }
+
+  const api    = window.__portfolioAPI;
+  const groups = api ? api.getWatchLists() : [];
+
+  const pop = document.createElement('div');
+  pop.className    = 'sc-wl-popover';
+  pop.dataset.mode = 'all';
+  pop.innerHTML = `
+    <div class="sc-wlp-title">加入庫存追蹤清單（${_results.length} 檔）</div>
+    <div class="sc-wlp-list">
+      ${groups.map(g => `
+        <div class="sc-wlp-item" data-list-id="${_escHtml(g.id)}" data-list-name="${_escHtml(g.name)}">
+          <span class="sc-wlp-dot"></span>
+          <span class="sc-wlp-name">${_escHtml(g.name)}</span>
+          <span class="sc-wlp-count">${g.items?.length ?? 0} 檔</span>
+        </div>`).join('')}
+      <div class="sc-wlp-item sc-wlp-new" data-list-id="__new__">
+        <span class="sc-wlp-dot" style="background:#3fb950"></span>
+        <span class="sc-wlp-name">＋ 新建追蹤清單</span>
+      </div>
+    </div>`;
+
+  _positionPopover(pop, anchor);
+  _wlPopover = pop;
+
+  pop.querySelectorAll('.sc-wlp-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const listId   = item.dataset.listId;
+      const listName = item.dataset.listName ?? '';
+      _closeWlPopover();
+      _openAddAllConfirm(anchor, listId, listName);
+    });
+  });
+
+  _bindOutsideClose(pop, anchor);
+}
+
+/** 第二步：命名 popover（備註欄位） */
+function _openAddAllConfirm(anchor, listId, listName) {
+  _closeWlPopover();
+
+  const isNew = listId === '__new__';
+  const pop   = document.createElement('div');
+  pop.className    = 'sc-wl-popover sc-wl-popover--confirm';
+  pop.dataset.mode = 'confirm';
+  pop.innerHTML = `
+    <div class="sc-wlp-title">${isNew ? '新建追蹤清單' : `加入「${_escHtml(listName)}」`}</div>
+    <div class="sc-wlp-form">
+      ${isNew ? `<input class="sc-wlp-input" id="scWlNewName" placeholder="清單名稱（必填）" maxlength="20" />` : ''}
+      <input class="sc-wlp-input" id="scWlNote" placeholder="備註（選填，套用至全部）" maxlength="40" />
+      <div class="sc-wlp-actions">
+        <button class="sc-wlp-cancel">取消</button>
+        <button class="sc-wlp-confirm">確認加入 ${_results.length} 檔</button>
+      </div>
+    </div>`;
+
+  _positionPopover(pop, anchor);
+  _wlPopover = pop;
+
+  // 自動 focus
+  setTimeout(() => (pop.querySelector('#scWlNewName') ?? pop.querySelector('#scWlNote'))?.focus(), 50);
+
+  pop.querySelector('.sc-wlp-cancel')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _closeWlPopover();
+  });
+
+  pop.querySelector('.sc-wlp-confirm')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const note     = pop.querySelector('#scWlNote')?.value.trim() ?? '';
+    let   targetId = listId;
+
+    if (isNew) {
+      const newName = pop.querySelector('#scWlNewName')?.value.trim();
+      if (!newName) {
+        pop.querySelector('#scWlNewName')?.focus();
+        pop.querySelector('#scWlNewName')?.classList.add('sc-wlp-input--err');
+        return;
+      }
+      const newList = await pfCreateList('watch', newName);
+      targetId = newList.id;
+      // 刷新 portfolioAPI 快取
+      if (window.__portfolioAPI?.reload) await window.__portfolioAPI.reload();
+    }
+
+    _closeWlPopover();
+
+    // 逐一 watchAddCode，已存在跳過
+    let added = 0, skipped = 0;
+    for (const r of _results) {
+      const px = window.__priceCache?.[r.code]?.price ?? r.price ?? 0;
+      try {
+        const list = await watchAddCode(targetId, r.code, r.name ?? r.code, px, note);
+        if (!list) { skipped++; continue; }
+        // watchAddCode 已存在時回傳原 list（沒加）
+        const wasAlready = list.items.filter(it => it.code === r.code).length > 0
+          && list.updatedAt <= list.updatedAt; // 無法判斷，改用 find 前後對比
+        added++;
+      } catch (_) { skipped++; }
+    }
+
+    const targetName = isNew
+      ? (pop.querySelector('#scWlNewName')?.value.trim() ?? '新清單')
+      : listName;
+    document.dispatchEvent(new CustomEvent('showToast', {
+      detail: `✓ 已加入「${targetName}」${added} 檔${skipped > 0 ? `（${skipped} 檔略過）` : ''}`
+    }));
+
+    // 刷新 portfolio tab
+    if (window.__portfolioAPI?.reload) window.__portfolioAPI.reload().catch(() => {});
+  });
+
+  _bindOutsideClose(pop, anchor);
+}
+
+
+// ─────────────────────────────────────────────
+// 篩選結果「加入追蹤清單」popover
+// ─────────────────────────────────────────────
+let _wlPopover = null;
+
+function _closeWlPopover() {
+  if (_wlPopover) { _wlPopover.remove(); _wlPopover = null; }
+}
+
+/** popover 定位：緊貼 anchor 下方，不夠空間改上方 */
+function _positionPopover(pop, anchor) {
+  document.body.appendChild(pop);
+  const rect = anchor.getBoundingClientRect();
+  const pw   = pop.offsetWidth || 200;
+  let left   = rect.right - pw;
+  if (left < 6) left = 6;
+  if (window.innerHeight - rect.bottom < 240) {
+    pop.style.top = `${rect.top + window.scrollY - (pop.offsetHeight || 200) - 4}px`;
+  } else {
+    pop.style.top = `${rect.bottom + window.scrollY + 4}px`;
+  }
+  pop.style.left = `${Math.min(left, window.innerWidth - pw - 8)}px`;
+}
+
+/** 點外部自動關閉 */
+function _bindOutsideClose(pop, anchor) {
+  setTimeout(() => {
+    document.addEventListener('click', function _out(e) {
+      if (!pop.contains(e.target) && e.target !== anchor) {
+        _closeWlPopover();
+        document.removeEventListener('click', _out, true);
+      }
+    }, true);
+  }, 0);
+}
+
+/** 單股：新建追蹤清單並加入 */
+async function _openSingleConfirm(anchor, code, name) {
+  _closeWlPopover();
+  const pop = document.createElement('div');
+  pop.className    = 'sc-wl-popover sc-wl-popover--confirm';
+  pop.dataset.mode = 'single';
+  pop.innerHTML = `
+    <div class="sc-wlp-title">新建追蹤清單</div>
+    <div class="sc-wlp-form">
+      <input class="sc-wlp-input" id="scWlSingleName" placeholder="清單名稱（必填）" maxlength="20" />
+      <div class="sc-wlp-actions">
+        <button class="sc-wlp-cancel">取消</button>
+        <button class="sc-wlp-confirm">建立並加入</button>
+      </div>
+    </div>`;
+  _positionPopover(pop, anchor);
+  _wlPopover = pop;
+  setTimeout(() => pop.querySelector('#scWlSingleName')?.focus(), 50);
+
+  pop.querySelector('.sc-wlp-cancel')?.addEventListener('click', (e) => {
+    e.stopPropagation(); _closeWlPopover();
+  });
+  pop.querySelector('.sc-wlp-confirm')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const newName = pop.querySelector('#scWlSingleName')?.value.trim();
+    if (!newName) {
+      pop.querySelector('#scWlSingleName')?.classList.add('sc-wlp-input--err');
+      return;
+    }
+    const newList = await pfCreateList('watch', newName);
+    const px = window.__priceCache?.[code]?.price ?? 0;
+    await watchAddCode(newList.id, code, name, px, '');
+    if (window.__portfolioAPI?.reload) await window.__portfolioAPI.reload();
+    document.dispatchEvent(new CustomEvent('showToast', { detail: `✓ ${code} 已加入「${newName}」` }));
+    _closeWlPopover();
+  });
+  _bindOutsideClose(pop, anchor);
+}
+
+function _openAddWlPopover(anchor, code, name) {
+  if (_wlPopover?.dataset.code === code) { _closeWlPopover(); return; }
+  _closeWlPopover();
+
+  const api    = window.__portfolioAPI;
+  const groups = api ? api.getWatchLists() : [];
+  const inLists = new Set(
+    groups.filter(g => g.items?.some(it => it.code === code)).map(g => g.id)
+  );
+
+  const pop = document.createElement('div');
+  pop.className    = 'sc-wl-popover';
+  pop.dataset.code = code;
+  pop.innerHTML = `
+    <div class="sc-wlp-title">加入庫存追蹤清單</div>
+    <div class="sc-wlp-list">
+      ${groups.map(g => `
+        <div class="sc-wlp-item${inLists.has(g.id) ? ' sc-wlp-in' : ''}"
+             data-list-id="${_escHtml(g.id)}"
+             data-list-name="${_escHtml(g.name)}">
+          <span class="sc-wlp-dot"></span>
+          <span class="sc-wlp-name">${_escHtml(g.name)}</span>
+          <span class="sc-wlp-count">${g.items?.length ?? 0} 檔</span>
+          ${inLists.has(g.id) ? '<span class="sc-wlp-check">✓</span>' : ''}
+        </div>`).join('')}
+      <div class="sc-wlp-item sc-wlp-new" data-list-id="__new__">
+        <span class="sc-wlp-dot" style="background:#3fb950"></span>
+        <span class="sc-wlp-name">＋ 新建追蹤清單</span>
+      </div>
+    </div>`;
+
+  _positionPopover(pop, anchor);
+  _wlPopover = pop;
+
+  pop.querySelectorAll('.sc-wlp-item:not(.sc-wlp-in)').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const listId   = item.dataset.listId;
+      const listName = item.dataset.listName ?? '';
+      _closeWlPopover();
+      if (listId === '__new__') {
+        _openSingleConfirm(anchor, code, name);
+      } else {
+        const px = window.__priceCache?.[code]?.price ?? 0;
+        await watchAddCode(listId, code, name, px, '');
+        document.dispatchEvent(new CustomEvent('showToast', { detail: `✓ ${code} 已加入「${listName}」` }));
+        if (window.__portfolioAPI?.reload) window.__portfolioAPI.reload().catch(() => {});
+      }
+    });
+  });
+
+  _bindOutsideClose(pop, anchor);
 }

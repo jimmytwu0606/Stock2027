@@ -319,7 +319,7 @@
 /* 結果表頭 */
 .sc-results-header {
   display: grid;
-  grid-template-columns: 1fr 80px 80px 80px 70px 1fr;
+  grid-template-columns: 1fr 80px 80px 80px 70px 1fr 28px;
   gap: 8px;
   padding: 8px 16px;
   font-size: 11px;
@@ -337,7 +337,7 @@
 /* 結果列 */
 .sc-result-row {
   display: grid;
-  grid-template-columns: 1fr 80px 80px 80px 70px 1fr;
+  grid-template-columns: 1fr 80px 80px 80px 70px 1fr 28px;
   gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
@@ -466,7 +466,7 @@
 
   .sc-results-header,
   .sc-result-row {
-    grid-template-columns: 1fr 70px 70px 60px;
+    grid-template-columns: 1fr 70px 70px 60px 28px;
   }
 
   /* 手機隱藏量能和指標標籤 */
@@ -707,3 +707,132 @@
 /* 0-19   弱勢 — 綠 */
 .sc-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
 .sc-health-empty { color: var(--hint); font-size: 11px; }
+
+/* ── 篩選結果：加入追蹤清單按鈕 ── */
+.sc-add-wl-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  justify-self: center;
+  transition: background .15s, color .15s, border-color .15s;
+  flex-shrink: 0;
+}
+.sc-add-wl-btn:hover {
+  background: var(--up);
+  border-color: var(--up);
+  color: #fff;
+}
+
+/* 群組選擇 popover */
+.sc-wl-popover {
+  position: fixed;
+  z-index: 9999;
+  background: #1c2128;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  min-width: 160px;
+  max-width: 220px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.55);
+  overflow: hidden;
+}
+.sc-wlp-title {
+  font-size: 11px;
+  color: var(--hint);
+  padding: 8px 12px 4px;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--border);
+}
+.sc-wlp-list { padding: 4px 0; }
+.sc-wlp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.sc-wlp-item:hover:not(.sc-wlp-in) { background: var(--bg3); }
+.sc-wlp-item.sc-wlp-in { opacity: .5; cursor: default; }
+.sc-wlp-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--up);
+  flex-shrink: 0;
+}
+.sc-wlp-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sc-wlp-check {
+  font-size: 12px;
+  color: #3fb950;
+  flex-shrink: 0;
+}
+.sc-wlp-count {
+  font-size: 11px;
+  color: var(--hint);
+  flex-shrink: 0;
+}
+.sc-wlp-new .sc-wlp-name { color: #3fb950; }
+
+/* popover 表單（命名確認步驟） */
+.sc-wl-popover--confirm { min-width: 220px; }
+.sc-wlp-form { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 8px; }
+.sc-wlp-input {
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 7px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+  font-family: inherit;
+  transition: border-color .15s;
+}
+.sc-wlp-input:focus { border-color: var(--accent); }
+.sc-wlp-input--err  { border-color: var(--up) !important; }
+.sc-wlp-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.sc-wlp-cancel {
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sc-wlp-cancel:hover { color: var(--text); }
+.sc-wlp-confirm {
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: none;
+  background: var(--up);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.sc-wlp-confirm:hover { opacity: .85; }

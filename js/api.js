@@ -548,8 +548,18 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
             // ⚠️ ^ 開頭指數（^DJI, ^GSPC 等）跳過台灣交易日檢查：
             //   _lastTradingDayTs() 只懂台灣交易日，美股時區不同會永遠誤判「缺最近交易日」→ 無限重抓
             const isIndexSymbol = symbol.startsWith('^');
+            // ⚠️ 踩雷備忘（2026-06-02）：
+            //   盤後 GAS 寫入 R2 後，前端從 R2 拿到今天的資料存進 IndexedDB，validUntil 設到今天 23:59。
+            //   但 _lastTradingDayTs() 回今天開盤時間，lastCandleTime 是今天收盤 → 仍觸發「缺最近交易日」重抓。
+            //   修法：validUntil 是今天設的（同一天），代表今天已經更新過，直接回傳不再重抓。
+            const validUntilDate = new Date(cached.validUntil).toDateString();
+            const todayDate = new Date().toDateString();
+            const isFreshToday = validUntilDate === todayDate;
+            if (isIndexSymbol || isFreshToday) {
+              return cached.candles; // 今天設的快取，不做交易日檢查
+            }
             const lastCandleTime = cached.candles[cached.candles.length - 1].time * 1000;
-            const lastTradingDay = isIndexSymbol ? 0 : _lastTradingDayTs();
+            const lastTradingDay = _lastTradingDayTs();
             if (lastTradingDay > 0 && lastCandleTime < lastTradingDay) {
               console.log(`[api] kline_cache 資料缺最近交易日 → 重抓 ${symbol}_${period}`,
                 new Date(lastCandleTime).toLocaleDateString('zh-TW'),
@@ -2293,40 +2303,91 @@ export async function fetchScreenerData(codes, {
   if (skipped > 0) {
     console.log(`[screener] 跳過 ${skipped} 個非一般股（ETF/權證等），剩 ${normalCodes.length} 檔`);
   }
+
+  // ── 方案 B：IDB 預檢分兩組 ──────────────────────────────────────────────
+  // ⚠️ 踩雷備忘（2026-06-02）：
+  //   1713 檔全部並發打 Worker → Cloudflare Edge 限流（Too Many Requests）。
+  //   修法：先對所有 code 做 IDB 快取預檢（純本地，極快），
+  //   有快取的一組高速跑（concurrency=8，無延遲），
+  //   沒快取的一組低速跑（concurrency=2，delay=600ms），
+  //   避免 R2 miss 的股票 burst 炸 Worker。
+  const _minReq = Math.floor((_PERIOD_DAYS['1y'] ?? 0) * 0.6);
+  const cachedCodes   = [];
+  const uncachedCodes = [];
+
+  // 並發預檢（純 IDB，不打 network）
+  // ⚠️ 上櫃股在 IDB 可能存成 .TWO，toYahooSymbol 給 .TW → miss → 被誤判為無快取
+  // 同時試兩個 suffix，任一命中即算有快取
+  await Promise.allSettled(normalCodes.map(async code => {
+    try {
+      const sym1 = toYahooSymbol(code);
+      const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
+      const [hit1, hit2] = await Promise.all([
+        getKlineCache(sym1, '1y').catch(() => null),
+        getKlineCache(sym2, '1y').catch(() => null),
+      ]);
+      const hit = hit1 || hit2;
+      if (hit && Array.isArray(hit.candles) && hit.candles.length >= Math.max(2, _minReq)) {
+        cachedCodes.push(code);
+      } else {
+        uncachedCodes.push(code);
+      }
+    } catch {
+      uncachedCodes.push(code);
+    }
+  }));
+
+  console.log(`[screener] IDB預檢完成：有快取 ${cachedCodes.length} 檔（高速），無快取 ${uncachedCodes.length} 檔（低速）`);
+
   const result = new Map();
   let done = 0;
   const total = normalCodes.length;
-  for (let i = 0; i < total; i += concurrency) {
-    const batch = normalCodes.slice(i, i + concurrency);
-    await Promise.allSettled(
-      batch.map(async code => {
-        try {
-          // ⚠️ 固定用 1y + allowStale，走 R2 快取不打 Yahoo
-          //   上櫃股用 toYahooSymbol 可能猜錯 suffix → Not Found
-          //   改用雙 suffix fallback：先試 .TW，404 再試 .TWO
-          let candles = [];
-          const sym1 = toYahooSymbol(code);
-          try {
-            candles = await fetchHistoryCached(sym1, '1y', { allowStale: true });
-          } catch (e1) {
-            if (/Not Found/i.test(e1.message)) {
-              const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
-              candles = await fetchHistoryCached(sym2, '1y', { allowStale: true });
-            } else {
-              throw e1;
-            }
-          }
-          if (candles.length) result.set(code, candles);
-        } catch (e) {
-          console.warn(`[screener] failed for ${code}:`, e.message);
-        } finally {
-          done++;
-          onProgress?.(done, total);
+
+  // ── 單一 code 的抓取邏輯 ──
+  // ⚠️ 踩雷備忘（2026-06-02）：
+  //   GAS kline_to_r2.gs 依 market 決定 suffix（tpex → .TWO，twse → .TW）。
+  //   前端 toYahooSymbol 預設 .TW（_otcSet 冷啟動為空）→ 上櫃股 R2 key 對不上。
+  //   R2 MISS → Worker 打 Yahoo → Yahoo 404（.TW 不存在）→ Worker 502。
+  //   修法：Worker 502 或 Not Found 都觸發 suffix 切換重試。
+  async function _fetchOne(code) {
+    try {
+      let candles = [];
+      const sym1 = toYahooSymbol(code);
+      try {
+        candles = await fetchHistoryCached(sym1, '1y', { allowStale: true });
+      } catch (e1) {
+        // 502（R2 miss + Yahoo 封）或 Not Found（suffix 錯誤）→ 試另一個 suffix
+        const shouldRetry = /Not Found/i.test(e1.message) || /HTTP 502/.test(e1.message) || /所有 proxy/.test(e1.message);
+        if (shouldRetry) {
+          const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
+          candles = await fetchHistoryCached(sym2, '1y', { allowStale: true });
+        } else {
+          throw e1;
         }
-      })
-    );
-    if (i + concurrency < total) await new Promise(r => setTimeout(r, 300));
+      }
+      if (candles.length) result.set(code, candles);
+    } catch (e) {
+      console.warn(`[screener] failed for ${code}:`, e.message);
+    } finally {
+      done++;
+      onProgress?.(done, total);
+    }
   }
+
+  // ── 有快取：高速（concurrency=8，無延遲，IDB命中不打network）──
+  const fastConc = 8;
+  for (let i = 0; i < cachedCodes.length; i += fastConc) {
+    await Promise.allSettled(cachedCodes.slice(i, i + fastConc).map(_fetchOne));
+  }
+
+  // ── 無快取：低速（concurrency=2，delay=600ms，避免Worker限流）──
+  const slowConc  = 2;
+  const slowDelay = 600;
+  for (let i = 0; i < uncachedCodes.length; i += slowConc) {
+    await Promise.allSettled(uncachedCodes.slice(i, i + slowConc).map(_fetchOne));
+    if (i + slowConc < uncachedCodes.length) await new Promise(r => setTimeout(r, slowDelay));
+  }
+
   return result;
 }
 

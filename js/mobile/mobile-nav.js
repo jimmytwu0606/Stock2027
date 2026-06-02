@@ -32,6 +32,12 @@ export function initMobileNav() {
   _buildSideNav();
   _buildStockOverlay();
   _showPage('chart');
+
+  // 供 main.js loadStock 呼叫：開啟個股全頁並切回 K 線
+  window.__mobileOpenStock = () => {
+    openMobileStockPage();
+    _showStockPageContent('chart');
+  };
 }
 
 // ── 左側導航列 ─────────────────────────────────────────────────────────────
@@ -378,6 +384,11 @@ function buildMobileKlineBar() {
       ${_SUB_OPTS.map(o =>
         `<option value="${o.ind}"${o.ind===_curSubInd?' selected':''}>${o.label}</option>`).join('')}
     </select>
+    <button id="mKlineRefresh" class="mkl-refresh-btn" title="重新整理" style="
+      padding:0 10px;height:32px;border-radius:8px;border:0.5px solid #30363d;
+      background:rgba(88,166,255,0.1);color:#58a6ff;font-size:16px;cursor:pointer;
+      flex-shrink:0;line-height:1;
+    ">↺</button>
   `;
   const chartPanel = document.getElementById('chartPanel');
   if (chartPanel) chartPanel.insertBefore(bar, chartPanel.firstChild);
@@ -402,5 +413,10 @@ function buildMobileKlineBar() {
     if (old?.classList.contains('on')) old.click();
     const btn = document.querySelector(`.ind-toggle[data-ind="${_curSubInd}"]`);
     if (btn && !btn.classList.contains('on')) btn.click();
+  });
+
+  document.getElementById('mKlineRefresh')?.addEventListener('click', () => {
+    const code = window.__stockDashCode;
+    if (code) window.__loadStock?.(code, { force: true });
   });
 }

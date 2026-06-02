@@ -1,0 +1,614 @@
+/**
+ * css/mobile/mobile-screener.css — Phase 10.1
+ * 手機版篩選頁所有樣式
+ * 覆蓋範圍：tabScreener / 設定掃描畫面 / 掃描進度覆蓋 / Bottom Sheet /
+ *           結果卡片 / 題材 grid / 策略設定收折群組 / 子模組共用元件
+ */
+
+@media (max-width: 767px) {
+
+/* ══════════════════════════════════════════
+   Tab 2：選股（tabScreener）
+══════════════════════════════════════════ */
+#tabScreener {
+  padding: 0;
+}
+
+/* 選股頁 header */
+.m-scr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 10px;
+  flex-shrink: 0;
+}
+.m-scr-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #e6edf3;
+  letter-spacing: -0.5px;
+}
+.m-setup-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  background: #161b22;
+  border: 0.5px solid #21262d;
+  font-size: 12px;
+  color: #8b949e;
+  cursor: pointer;
+}
+.m-setup-btn.active {
+  border-color: rgba(88,166,255,0.4);
+  color: #58a6ff;
+}
+
+/* ── 篩選模式 select ── */
+.m-seg-wrap { padding: 10px 12px; flex-shrink: 0; position: relative; }
+.m-seg-wrap::before,
+.m-seg-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 18px;
+  z-index: 2;
+  pointer-events: none;
+}
+.m-seg-wrap::before { left: 0; background: linear-gradient(to right, #0d1117, transparent); }
+.m-seg-wrap::after  { right: 0; background: linear-gradient(to left, #0d1117, transparent); }
+
+.m-mode-select {
+  width: 100%; padding: 10px 14px; background: #161b22;
+  border: 0.5px solid #30363d; border-radius: 8px; color: #e6edf3;
+  font-size: 14px; cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+}
+
+/* 舊 seg-scroll（保留相容） */
+.m-seg-scroll {
+  display: flex;
+  overflow-x: auto;
+  padding: 0 14px;
+  scroll-behavior: smooth;
+}
+.m-seg-scroll::-webkit-scrollbar { display: none; }
+.m-seg-tab {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #3d444d;
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+}
+.m-seg-tab.active { color: #e6edf3; border-bottom-color: #58a6ff; }
+.m-seg-tab .m-seg-cnt {
+  font-size: 10px; color: #3d444d; background: #30363d;
+  padding: 1px 5px; border-radius: 4px; margin-left: 1px; transition: all 0.18s;
+}
+.m-seg-tab.active .m-seg-cnt { background: rgba(88,166,255,0.15); color: #58a6ff; }
+.m-seg-line { height: 0.5px; background: #21262d; }
+
+/* ── 結果列表區 ── */
+.m-result-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.m-result-body::-webkit-scrollbar { display: none; }
+
+.m-last-scan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px 0;
+  font-size: 11px;
+  color: #3d444d;
+}
+.m-last-scan span { color: #8b949e; }
+
+.m-result-list {
+  padding: 10px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── 結果卡片 ── */
+.m-rc {
+  background: #161b22;
+  border: 0.5px solid #21262d;
+  border-radius: 14px;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.m-rc:active { border-color: rgba(88,166,255,0.4); }
+.m-rc-info { flex: 1; min-width: 0; }
+.m-rc-name { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.m-rc-code { font-size: 11px; color: #8b949e; margin-top: 1px; }   /* 原 #3d444d → 提亮 */
+.m-rc-badge { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+.m-rc-tag {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  background: #30363d; color: #8b949e;
+}
+.m-rc-tag.blue { background: rgba(88,166,255,0.1); color: #58a6ff; }
+.m-rc-tag.gold { background: rgba(245,158,11,0.1); color: #f59e0b; }
+.m-rc-tag.up   { background: rgba(239,83,80,0.1);  color: #ef5350; }
+.m-rc-spark { width: 46px; height: 26px; display: flex; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.m-rcb { flex: 1; border-radius: 1px; min-height: 2px; }
+.m-rc-r { text-align: right; flex-shrink: 0; }
+.m-rc-price { font-size: 15px; font-weight: 700; }
+.m-rc-pct { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 5px; }
+
+/* ── 題材 grid ── */
+.m-theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px 16px 16px;
+}
+.m-tc {
+  background: #161b22;
+  border: 0.5px solid #21262d;
+  border-radius: 16px;
+  padding: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.m-tc:active { border-color: rgba(88,166,255,0.4); }
+.m-tc-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 7px; }
+.m-tc-emoji { font-size: 22px; line-height: 1; }
+.m-tc-cnt { font-size: 10px; color: #8b949e; background: #30363d; padding: 2px 6px; border-radius: 5px; margin-top: 2px; }
+.m-tc-name { font-size: 13px; font-weight: 700; color: #e6edf3; margin-bottom: 3px; }
+.m-tc-desc { font-size: 10px; color: #8b949e; margin-bottom: 8px; line-height: 1.4; }  /* 原 #3d444d → 提亮 */
+.m-tc-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.m-tc-tag { font-size: 10px; padding: 2px 5px; border-radius: 4px; color: #58a6ff; background: rgba(88,166,255,0.1); }
+.m-tc-tag.r { color: #ef5350; background: rgba(239,83,80,0.1); }
+
+/* ── 策略/追蹤/型態/種子 舊版列表（保留相容）── */
+.m-strat-list { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+.m-strat-card {
+  background: #161b22; border: 0.5px solid #21262d; border-radius: 14px;
+  padding: 12px 14px; display: flex; align-items: center; gap: 11px;
+  cursor: pointer; transition: border-color 0.15s;
+}
+.m-strat-card:active { border-color: rgba(88,166,255,0.4); }
+.m-strat-icon { width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+.m-strat-info { flex: 1; min-width: 0; }
+.m-strat-name { font-size: 14px; font-weight: 700; color: #e6edf3; }
+.m-strat-desc { font-size: 11px; color: #8b949e; margin-top: 2px; }    /* 原 #3d444d → 提亮 */
+.m-strat-tags { display: flex; gap: 5px; margin-top: 5px; }
+.m-strat-tag { font-size: 10px; padding: 2px 6px; border-radius: 5px; background: #30363d; color: #8b949e; }
+.m-strat-r { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.m-strat-cnt { font-size: 13px; font-weight: 700; color: #58a6ff; }
+
+/* ── 空白佔位 ── */
+.m-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; gap: 12px; }
+.m-empty-icon  { font-size: 44px; opacity: 0.35; }
+.m-empty-title { font-size: 15px; font-weight: 600; color: #8b949e; }
+.m-empty-desc  { font-size: 13px; color: #8b949e; text-align: center; line-height: 1.6; }  /* 原 #3d444d → 提亮 */
+.m-empty-btn {
+  padding: 9px 22px; border-radius: 11px;
+  background: rgba(88,166,255,0.12); border: 0.5px solid rgba(88,166,255,0.3);
+  color: #58a6ff; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px;
+}
+
+/* ══════════════════════════════════════════
+   設定掃描畫面（全螢幕覆蓋）
+══════════════════════════════════════════ */
+/* inline 模式（renderIntoEl 用）override static */
+.m-setup-screen {
+  position: static !important;
+  transform: none !important;
+  transition: none !important;
+  display: none;
+  flex-direction: column;
+  flex: 1;
+}
+.m-setup-screen.open { display: flex; }
+#mScrMain.m-hidden { display: none; }
+
+.m-setup-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; height: 52px;
+  border-bottom: 0.5px solid #21262d; flex-shrink: 0;
+}
+.m-setup-back { display: flex; align-items: center; gap: 5px; font-size: 14px; color: #58a6ff; cursor: pointer; background: none; border: none; }
+.m-setup-nav-title { font-size: 16px; font-weight: 700; color: #e6edf3; }
+
+.m-setup-tabs { display: flex; border-bottom: 0.5px solid #21262d; flex-shrink: 0; overflow-x: auto; }
+.m-setup-tabs::-webkit-scrollbar { display: none; }
+.m-stab {
+  flex-shrink: 0; padding: 10px 16px; font-size: 13px; color: #3d444d;
+  cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
+  transition: all 0.18s; background: none;
+  border-top: none; border-left: none; border-right: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+}
+.m-stab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+.m-setup-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.m-setup-body::-webkit-scrollbar { display: none; }
+
+/* ── 設定區塊共用 ── */
+.m-s-section { padding: 14px 16px 0; }
+.m-s-label { font-size: 10px; color: #3d444d; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+
+/* Phase A 股價範圍 */
+.m-phase-a { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; padding: 12px 14px; margin-bottom: 14px; }
+.m-phase-a-hint { font-size: 11px; color: #8b949e; margin-bottom: 10px; }
+.m-phase-a-row { display: flex; gap: 8px; }
+.m-phase-a-col { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.m-phase-a-field-label { font-size: 10px; color: #8b949e; }   /* 原 #3d444d → 提亮 */
+.m-phase-a-field {
+  background: #0f1318; border: 0.5px solid #30363d; border-radius: 8px;
+  padding: 7px 10px; font-size: 14px; color: #e6edf3; width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+}
+
+/* 舊版策略卡片 grid */
+.m-strat-section-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.m-strat-section-name { font-size: 11px; color: #3d444d; letter-spacing: 1px; text-transform: uppercase; }
+.m-strat-section-cnt { font-size: 11px; font-weight: 700; color: #58a6ff; }
+.m-sg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.m-sg-card { background: #161b22; border: 0.5px solid #21262d; border-radius: 12px; padding: 11px; cursor: pointer; transition: all 0.15s; position: relative; }
+.m-sg-card.selected { background: rgba(88,166,255,0.07); border-color: rgba(88,166,255,0.45); }
+.m-sg-check {
+  position: absolute; top: 8px; right: 8px; width: 16px; height: 16px;
+  border-radius: 50%; background: #58a6ff; display: none;
+  align-items: center; justify-content: center; font-size: 10px; color: #0d1117;
+}
+.m-sg-card.selected .m-sg-check { display: flex; }
+.m-sg-emoji { font-size: 20px; margin-bottom: 6px; display: block; }
+.m-sg-name  { font-size: 12px; font-weight: 700; color: #e6edf3; margin-bottom: 3px; }
+.m-sg-desc  { font-size: 10px; color: #8b949e; line-height: 1.4; }    /* 原 #3d444d → 提亮 */
+
+/* AI 掃描區 */
+.m-ai-card { background: rgba(88,166,255,0.05); border: 0.5px solid rgba(88,166,255,0.18); border-radius: 13px; padding: 13px 14px; margin-bottom: 14px; }
+.m-ai-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 4px; }
+.m-ai-desc  { font-size: 11px; color: #8b949e; margin-bottom: 10px; line-height: 1.5; }
+.m-ai-btns  { display: flex; gap: 8px; }
+.m-ai-btn { flex: 1; padding: 9px; border-radius: 10px; font-size: 12px; font-weight: 600; text-align: center; cursor: pointer; border: none; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+.m-ai-btn-copy  { background: #161b22; border: 0.5px solid #21262d; color: #e6edf3; }
+.m-ai-btn-paste { background: rgba(88,166,255,0.12); border: 0.5px solid rgba(88,166,255,0.3); color: #58a6ff; }
+
+/* 手繪 canvas */
+.m-draw-wrap { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; overflow: hidden; margin-bottom: 14px; }
+.m-draw-mode-tabs { display: flex; border-bottom: 0.5px solid #21262d; }
+.m-dmt { flex: 1; text-align: center; padding: 9px; font-size: 12px; color: #3d444d; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.18s; background: none; border-top: none; border-left: none; border-right: none; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+.m-dmt.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.m-canvas-wrap { padding: 12px; position: relative; }
+#mobileDrawCanvas { width: 100%; height: 110px; background: #0d1117; border-radius: 8px; display: block; cursor: crosshair; touch-action: none; }
+.m-canvas-hint { font-size: 11px; color: #3d444d; text-align: center; margin-top: 6px; }
+.m-canvas-clear { position: absolute; top: 18px; right: 18px; font-size: 11px; color: #8b949e; background: #30363d; padding: 3px 8px; border-radius: 6px; cursor: pointer; border: none; }
+
+/* 參數 chips */
+.m-params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.m-param { background: #161b22; border: 0.5px solid #21262d; border-radius: 12px; padding: 10px 12px; }
+.m-param-label { font-size: 10px; color: #3d444d; letter-spacing: 0.5px; margin-bottom: 6px; }
+.m-pchips { display: flex; gap: 4px; flex-wrap: wrap; }
+.m-pchip { font-size: 11px; color: #3d444d; padding: 3px 8px; border-radius: 7px; background: #0f1318; border: 0.5px solid #21262d; cursor: pointer; transition: all 0.15s; }
+.m-pchip.on { color: #e6edf3; background: rgba(88,166,255,0.09); border-color: rgba(88,166,255,0.35); }
+
+/* Slider */
+.m-slider-wrap { margin-bottom: 14px; }
+.m-sl-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.m-sl-label { font-size: 11px; color: #3d444d; letter-spacing: 0.5px; }
+.m-sl-val { font-size: 12px; font-weight: 700; color: #58a6ff; }
+.m-slider { width: 100%; height: 3px; accent-color: #58a6ff; cursor: pointer; border-radius: 2px; }
+
+/* 種子輸入 */
+.m-seed-input-card { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; padding: 13px 14px; margin-bottom: 14px; }
+.m-seed-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 3px; }
+.m-seed-hint  { font-size: 11px; color: #8b949e; margin-bottom: 10px; }   /* 原 #3d444d → 提亮 */
+.m-seed-row   { display: flex; gap: 7px; margin-bottom: 8px; }
+.m-seed-field { flex: 1; background: #0f1318; border: 0.5px solid #30363d; border-radius: 9px; padding: 9px 12px; font-size: 14px; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+.m-seed-add { padding: 9px 14px; border-radius: 9px; background: rgba(88,166,255,0.12); border: 0.5px solid rgba(88,166,255,0.3); color: #58a6ff; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+.m-seed-from { display: flex; align-items: center; gap: 6px; padding: 9px 12px; border-radius: 9px; background: #0f1318; border: 0.5px solid #21262d; color: #8b949e; font-size: 12px; cursor: pointer; margin-bottom: 8px; }
+.m-seed-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.m-seed-chip { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #e6edf3; background: rgba(88,166,255,0.08); border: 0.5px solid rgba(88,166,255,0.2); padding: 4px 10px; border-radius: 8px; }
+.m-seed-chip-rm { font-size: 12px; color: #3d444d; cursor: pointer; }
+
+/* 權重卡片 */
+.m-weights-card { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; padding: 13px 14px; margin-bottom: 14px; }
+.m-weights-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 12px; }
+.m-weight-row { margin-bottom: 10px; }
+.m-weight-row:last-child { margin-bottom: 0; }
+.m-weight-top { display: flex; justify-content: space-between; margin-bottom: 5px; }
+.m-weight-label { font-size: 12px; color: #8b949e; }
+.m-weight-val { font-size: 12px; font-weight: 700; color: #58a6ff; }
+
+/* 掃描範圍 */
+.m-range-card { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; padding: 13px 14px; margin-bottom: 14px; }
+.m-range-title { font-size: 13px; font-weight: 600; color: #e6edf3; margin-bottom: 10px; }
+.m-range-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.m-range-label { font-size: 12px; color: #8b949e; width: 58px; flex-shrink: 0; }
+.m-range-inputs { display: flex; gap: 6px; flex: 1; align-items: center; }
+.m-range-field { flex: 1; background: #0f1318; border: 0.5px solid #30363d; border-radius: 8px; padding: 7px 10px; font-size: 13px; color: #e6edf3; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+.m-range-sep { color: #3d444d; font-size: 12px; }
+
+/* Toggle */
+.m-from-scr-row { display: flex; align-items: center; gap: 10px; padding: 8px 0 2px; }
+.m-toggle { width: 38px; height: 22px; border-radius: 11px; background: #30363d; position: relative; cursor: pointer; flex-shrink: 0; border: none; transition: background 0.2s; }
+.m-toggle.on { background: #58a6ff; }
+.m-toggle-knob { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: transform 0.2s; pointer-events: none; }
+.m-toggle.on .m-toggle-knob { transform: translateX(16px); }
+.m-from-scr-label { font-size: 12px; color: #8b949e; }
+.m-from-scr-cnt { font-size: 11px; color: #58a6ff; margin-left: auto; }
+
+/* 執行按鈕 */
+.m-run-wrap { padding: 14px 16px calc(16px + var(--m-safe-bottom)); }
+.m-run-btn {
+  width: 100%; padding: 14px; border-radius: 14px; background: #58a6ff;
+  color: #0d1117; font-size: 15px; font-weight: 700; text-align: center;
+  cursor: pointer; border: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+  box-shadow: 0 4px 18px rgba(88,166,255,0.28);
+}
+.m-run-btn:disabled,
+.m-run-btn.disabled { background: #30363d; color: #3d444d; box-shadow: none; cursor: not-allowed; }
+
+/* ══════════════════════════════════════════
+   掃描進度覆蓋層
+══════════════════════════════════════════ */
+.m-scan-overlay {
+  position: fixed; inset: 0; background: #0d1117; z-index: 160;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; transform: translateY(100%);
+  transition: transform 0.28s cubic-bezier(0.32,0.72,0,1);
+}
+.m-scan-overlay.open { transform: translateY(0); }
+.m-scan-spinner { width: 52px; height: 52px; border: 3px solid #21262d; border-top-color: #58a6ff; border-radius: 50%; animation: mSpin 0.85s linear infinite; }
+@keyframes mSpin { to { transform: rotate(360deg); } }
+.m-scan-title { font-size: 18px; font-weight: 700; color: #e6edf3; }
+.m-scan-sub   { font-size: 13px; color: #8b949e; }
+.m-scan-prog-wrap { width: 260px; height: 3px; background: #21262d; border-radius: 2px; overflow: hidden; }
+.m-scan-prog-fill { height: 100%; background: #58a6ff; border-radius: 2px; width: 0%; transition: width 0.3s ease; }
+.m-scan-count { font-size: 12px; color: #3d444d; }
+.m-scan-abort { padding: 8px 20px; border-radius: 10px; background: #161b22; border: 0.5px solid #21262d; color: #8b949e; font-size: 13px; cursor: pointer; font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif; }
+
+/* ══════════════════════════════════════════
+   Bottom Sheet（個股清單）
+══════════════════════════════════════════ */
+.m-sheet-ov { position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 180; pointer-events: none; transition: background 0.28s; }
+.m-sheet-ov.open { background: rgba(0,0,0,0.6); pointer-events: all; }
+.m-bsheet {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  background: #1a1f27; border-radius: 22px 22px 0 0;
+  border-top: 0.5px solid #30363d;
+  transform: translateY(100%);
+  transition: transform 0.32s cubic-bezier(0.32,0.72,0,1);
+  max-height: 82%; display: flex; flex-direction: column;
+  padding-bottom: var(--m-safe-bottom);
+}
+.m-sheet-ov.open .m-bsheet { transform: translateY(0); }
+.m-sh-handle { width: 36px; height: 4px; border-radius: 2px; background: #30363d; margin: 11px auto 0; flex-shrink: 0; }
+.m-sh-hd { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 10px; border-bottom: 0.5px solid #21262d; flex-shrink: 0; }
+.m-sh-title-row { display: flex; align-items: center; gap: 10px; }
+.m-sh-icon  { font-size: 22px; line-height: 1; }
+.m-sh-title { font-size: 16px; font-weight: 700; color: #e6edf3; }
+.m-sh-sub   { font-size: 11px; color: #8b949e; margin-top: 1px; }
+.m-sh-close { width: 28px; height: 28px; border-radius: 50%; background: #30363d; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; color: #8b949e; font-size: 14px; flex-shrink: 0; }
+.m-sh-filter-hd { display: flex; align-items: center; justify-content: space-between; padding: 9px 16px; cursor: pointer; border-bottom: 0.5px solid #21262d; flex-shrink: 0; }
+.m-sh-filter-left { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #8b949e; }
+.m-sh-active-tags { display: flex; gap: 4px; }
+.m-sh-atag { font-size: 10px; color: #58a6ff; background: rgba(88,166,255,0.1); padding: 2px 7px; border-radius: 5px; }
+.m-sh-filter-arr { font-size: 14px; color: #3d444d; transition: transform 0.22s; }
+.m-sh-filter-arr.open { transform: rotate(180deg); }
+.m-sh-filter-body { overflow: hidden; max-height: 0; transition: max-height 0.28s cubic-bezier(0.4,0,0.2,1); flex-shrink: 0; }
+.m-sh-filter-body.open { max-height: 220px; border-bottom: 0.5px solid #21262d; }
+.m-sh-filter-inner { padding: 11px 16px 8px; }
+.m-frow { margin-bottom: 10px; }
+.m-frow:last-child { margin-bottom: 0; }
+.m-frow-label { font-size: 10px; color: #3d444d; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+.m-fchips { display: flex; gap: 5px; flex-wrap: wrap; }
+.m-fchip { font-size: 12px; color: #3d444d; padding: 5px 10px; border-radius: 9px; background: #161b22; border: 0.5px solid #21262d; cursor: pointer; transition: all 0.15s; }
+.m-fchip.on { color: #e6edf3; background: rgba(88,166,255,0.09); border-color: rgba(88,166,255,0.35); }
+.m-sh-sort { display: flex; gap: 6px; padding: 9px 16px; overflow-x: auto; border-bottom: 0.5px solid #21262d; flex-shrink: 0; }
+.m-sh-sort::-webkit-scrollbar { display: none; }
+.m-sh-pill { flex-shrink: 0; font-size: 11px; color: #3d444d; padding: 5px 10px; border-radius: 7px; background: #161b22; border: 0.5px solid #21262d; cursor: pointer; transition: all 0.15s; }
+.m-sh-pill.on { color: #58a6ff; border-color: rgba(88,166,255,0.4); background: rgba(88,166,255,0.08); }
+.m-sh-body { overflow-y: auto; flex: 1; -webkit-overflow-scrolling: touch; }
+.m-sh-body::-webkit-scrollbar { display: none; }
+.m-sh-stocks { padding: 10px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+.m-ss-card { background: #161b22; border: 0.5px solid #21262d; border-radius: 13px; padding: 11px 14px; display: flex; align-items: center; gap: 10px; }
+.m-ss-info { flex: 1; min-width: 0; }
+.m-ss-name  { font-size: 14px; font-weight: 600; color: #e6edf3; }
+.m-ss-code  { font-size: 11px; color: #8b949e; margin-top: 1px; }    /* 原 #3d444d → 提亮 */
+.m-ss-score { font-size: 10px; color: #8b949e; margin-top: 3px; }
+.m-ss-spark { width: 46px; height: 26px; display: flex; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.m-ssb { flex: 1; border-radius: 1px; min-height: 2px; }
+.m-ss-r { text-align: right; flex-shrink: 0; }
+.m-ss-price { font-size: 15px; font-weight: 700; }
+.m-ss-pct   { display: inline-block; margin-top: 2px; font-size: 11px; padding: 1px 7px; border-radius: 5px; }
+
+} /* end @media (max-width: 767px) */
+
+
+/* ══════════════════════════════════════════
+   策略設定收折群組（mobile-screener-strat.js）
+   @media 外，因 inline setup sheet 掛在 body 層級
+══════════════════════════════════════════ */
+.mss-summary {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-bottom: 0.5px solid #21262d;
+  flex-shrink: 0; flex-wrap: wrap; min-height: 38px;
+}
+.mss-label { font-size: 11px; color: #8b949e; flex-shrink: 0; }   /* 原 #3d444d → 提亮 */
+.mss-pills { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+.mss-pill  { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(239,83,80,0.12); color: #ef5350; }
+.mss-none  { font-size: 11px; color: #8b949e; }                    /* 原 #3d444d → 提亮 */
+.mss-clear { margin-left: auto; font-size: 11px; color: #8b949e; background: none; border: none; cursor: pointer; flex-shrink: 0; }
+
+.mss-grp { border-bottom: 0.5px solid #21262d; }
+.mss-grp-hd { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; cursor: pointer; user-select: none; }
+.mss-grp-left { display: flex; align-items: center; gap: 7px; }
+.mss-grp-icon { font-size: 14px; line-height: 1; }
+.mss-grp-name { font-size: 13px; font-weight: 600; color: #e6edf3; }
+
+/* ★ 策略群組 badge：原 #3d444d 幾乎不可見，改用可辨識的顏色 */
+.mss-grp-cnt {
+  font-size: 10px;
+  color: #8b949e;
+  background: #21262d;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.mss-grp-cnt.has-sel {
+  background: rgba(239,83,80,0.18);
+  color: #ef5350;
+  font-weight: 600;
+}
+
+.mss-grp-arrow { font-size: 13px; color: #3d444d; transition: transform 0.2s; display: inline-block; }
+.mss-grp-body { padding: 2px 12px 8px; display: flex; flex-direction: column; gap: 2px; }
+.mss-grp-body.mss-collapsed { display: none; }
+
+.mss-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; transition: background 0.12s; }
+.mss-row:active  { background: rgba(255,255,255,0.04); }
+.mss-row.selected { background: rgba(239,83,80,0.07); }
+.mss-row.locked  { opacity: 0.45; cursor: default; }
+
+.mss-dot { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #30363d; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.mss-dot.checked { background: #ef5350; border-color: #ef5350; }
+.mss-dot.checked::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+
+.mss-info  { flex: 1; min-width: 0; }
+.mss-sname { font-size: 13px; font-weight: 500; color: #e6edf3; }
+
+/* ★ 策略說明文字：原 #3d444d 幾乎不可見，提亮為 #8b949e */
+.mss-sdesc { font-size: 11px; color: #8b949e; margin-top: 1px; }
+
+.mss-pro-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(245,158,11,0.1); color: #f59e0b; flex-shrink: 0; }
+
+/* ══ 型態比對 tab 切換（手繪/圖片）══ */
+.m-pd-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 0.5px solid #30363d;
+  background: #0d1117;
+  color: #8b949e;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+  transition: all 0.15s;
+}
+.m-pd-tab.active {
+  background: rgba(88,166,255,0.1);
+  border-color: rgba(88,166,255,0.4);
+  color: #58a6ff;
+}
+
+/* ══ 策略選股（mobile-screener-track）══ */
+/* 策略群組收折 */
+.mtr-grp { border-bottom: 0.5px solid #21262d; }
+.mtr-grp-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 12px 12px; cursor: pointer; user-select: none;
+  background: #0d1117;
+}
+.mtr-grp-hd:active { background: rgba(255,255,255,0.03); }
+.mtr-grp-left { display: flex; align-items: center; gap: 8px; }
+.mtr-grp-name { font-size: 13px; font-weight: 600; }
+.mtr-grp-cnt {
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 6px; border: 0.5px solid;
+}
+.mtr-grp-arrow {
+  font-size: 14px; color: #3d444d;
+  transition: transform 0.22s; display: inline-block;
+}
+.mtr-grp-arrow.open { transform: rotate(180deg); }
+.mtr-grp-body { display: none; padding: 4px 10px 10px; gap: 6px; flex-direction: column; }
+.mtr-grp-body.open { display: flex; }
+
+/* 策略按鈕 */
+.mtr-strat-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 12px; border-radius: 11px;
+  border: 0.5px solid; cursor: pointer;
+  text-align: left; width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+  transition: opacity 0.15s;
+}
+.mtr-strat-btn:active { opacity: 0.7; }
+.mtr-s-icon  { font-size: 18px; flex-shrink: 0; line-height: 1; }
+.mtr-s-info  { flex: 1; min-width: 0; }
+.mtr-s-name  { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.mtr-s-desc  { font-size: 11px; color: #8b949e; line-height: 1.4;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 條件數 badge */
+.mtr-cond-cnt {
+  flex-shrink: 0; font-size: 10px; color: #f59e0b;
+  background: rgba(245,158,11,0.12); border: 0.5px solid rgba(245,158,11,0.3);
+  padding: 2px 7px; border-radius: 6px; white-space: nowrap;
+}
+
+.mtr-selected-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 13px; border-radius: 11px; border: 0.5px solid;
+  margin-bottom: 4px;
+}
+.mtr-sel-name { font-size: 13px; font-weight: 600; }
+.mtr-sel-desc { font-size: 11px; color: #8b949e; margin-top: 1px; }
+.mtr-back-btn {
+  flex-shrink: 0; padding: 5px 10px; border-radius: 8px;
+  background: rgba(88,166,255,0.1); border: 0.5px solid rgba(88,166,255,0.3);
+  color: #58a6ff; font-size: 12px; cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+}
+.mtr-preset-btn {
+  padding: 5px 12px; border-radius: 8px; font-size: 12px;
+  background: #161b22; border: 0.5px solid #30363d; color: #8b949e;
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+  transition: all 0.15s;
+}
+.mtr-preset-btn.active {
+  background: rgba(88,166,255,0.1); border-color: rgba(88,166,255,0.4); color: #58a6ff;
+}
+
+/* 複製 Prompt 大按鈕（與驗算按鈕同寬，但用不同色調區分）*/
+.mtr-copy-big-btn {
+  background: #161b22 !important;
+  color: #58a6ff !important;
+  border: 1px solid rgba(88,166,255,0.5) !important;
+  box-shadow: 0 0 0 1px rgba(88,166,255,0.1) !important;
+}
+.mtr-copy-big-btn:active { opacity: 0.75; }
+
+/* ══ 妖股查詢類型選擇（mobile-screener-theme）══ */
+.mth-type-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.mth-type-btn {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 12px; border-radius: 13px;
+  background: #161b22; border: 1px solid #30363d;
+  cursor: pointer; text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
+  transition: all 0.15s;
+}
+.mth-type-btn.active {
+  border-color: #ef5350;
+  background: rgba(239,83,80,0.08);
+  box-shadow: 0 0 0 1px rgba(239,83,80,0.2);
+}
+.mth-type-icon  { font-size: 24px; flex-shrink: 0; line-height: 1; }
+.mth-type-label { font-size: 13px; font-weight: 700; color: #e6edf3; margin-bottom: 3px; }
+.mth-type-desc  { font-size: 11px; color: #8b949e; line-height: 1.4; }
