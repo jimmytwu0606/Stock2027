@@ -53,9 +53,13 @@ let _siInfoCache = {};  // code → stockInfo（有 forward 時顯示邊框）
 let _collapsed = new Set();
 let _sortState = {};                    // { [groupId]: { key: string|null, dir: 1|-1 } }
 // ★ 無 FinMind token → 強制鎖定 '40d'，完全不打 Yahoo 5m（引信：訂閱後填 token 自動開通）
-let _sparkMode = (FEATURE_INTRADAY_5M && localStorage.getItem('wl_spark_mode') === 'day')
-  ? 'day'
-  : '40d';
+// ★ 'bar' 模式：今日漲跌幅柱，不需要 K線資料，瞬間渲染
+const _savedMode = localStorage.getItem('wl_spark_mode');
+let _sparkMode = (_savedMode === 'bar')
+  ? 'bar'
+  : (FEATURE_INTRADAY_5M && _savedMode === 'day')
+    ? 'day'
+    : '40d';
 
 const _kline40Cache  = new Map();       // code → number[] (close prices, last 40)
 const _intradayCache = new Map();       // code → { points: number[], fetchedAt: number }
@@ -102,6 +106,7 @@ export async function initWatchlist() {
   AppState.watchlistGroups = _groups;
   renderWatchlist();
   _bindSidebarEvents();
+  window.__showSiListPanel = _showSiListPanel;
 
   if (!document.body.dataset.signalWlBound) {
     document.body.dataset.signalWlBound = '1';
@@ -138,6 +143,20 @@ export async function initWatchlist() {
         }
       }
       if (dirty) renderWatchlist();
+    });
+
+    // ★ stockInfo 更新（輸入 JSON 後即時刷新跑馬燈邊框）
+    document.addEventListener('stockInfoUpdated', async (e) => {
+      const code = e.detail?.code;
+      if (!code) return;
+      try {
+        const { loadStockInfo } = await import('./db.js');
+        const info = await loadStockInfo(code);
+        const had  = !!_siInfoCache[code];
+        if (info) _siInfoCache[code] = info;
+        else      delete _siInfoCache[code];
+        if (!!_siInfoCache[code] !== had) renderWatchlist();
+      } catch (_) {}
     });
   }
 }
@@ -198,6 +217,70 @@ function _pricesToSvgPts(prices) {
   }).join(' ');
 }
 
+/** 今日 K 棒 SVG（從 __priceCache 的 open/high/low/price/prev 畫真實 K 棒）
+ *  有影線（high/low）+ 實體（open/close）
+ *  62×56px，價格範圍自動縮放到畫布高度
+ */
+function _svgDayBar(chgPct, color, priceData) {
+  const W = _SPARK_W, H = _SPARK_H, PAD = 6;
+  const barW = 16;
+  const barX = (W - barW) / 2;
+  const wickX = W / 2;
+
+  // 從 priceData 取 OHLC，fallback 用 chgPct 估算柱體
+  const close = priceData?.price ?? 0;
+  const open  = priceData?.open  ?? close;
+  const high  = priceData?.high  ?? close;
+  const low   = priceData?.low   ?? close;
+  const prev  = priceData?.prev  ?? close;
+
+  // 價格範圍：只用 OHLC，不含昨收（昨收差距大會把 K 棒壓縮到看不見）
+  const allPrices = [open, high, low, close].filter(v => v > 0);
+  if (allPrices.length < 2 || close <= 0) {
+    // 無 OHLC 資料（停牌/未成交）→ 畫漲跌幅柱 fallback
+    const pct  = Math.max(-10, Math.min(10, chgPct ?? 0));
+    const midY = H / 2;
+    const maxH = H / 2 - PAD;
+    const bH   = Math.max(Math.abs(pct) / 10 * maxH, 1.5);
+    const bY   = pct >= 0 ? midY - bH : midY;
+    return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;">
+  <line x1="${barX}" y1="${midY.toFixed(1)}" x2="${barX + barW}" y2="${midY.toFixed(1)}"
+        stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+  <rect x="${barX}" y="${bY.toFixed(1)}" width="${barW}" height="${bH.toFixed(1)}"
+        fill="${color}" rx="2" opacity="${Math.abs(pct) > 0.01 ? 0.85 : 0.3}"/>
+</svg>`;
+  }
+
+  const minP = Math.min(...allPrices);
+  const maxP = Math.max(...allPrices);
+  // 以昨收為中心，固定 ±6% 對應畫布高度（統一比例，K棒大小一致）
+  const center  = prev > 0 ? prev : close;
+  const span    = center * 0.06;  // ±6%
+  const minPY   = center - span;
+  const maxPY   = center + span;
+
+  // Y 座標換算（高價在上，以昨收為中心軸）
+  const toY = v => PAD + (1 - (v - minPY) / (maxPY - minPY)) * (H - PAD * 2);
+
+  const yOpen  = toY(open);
+  const yClose = toY(close);
+  const yHigh  = toY(high);
+  const yLow   = toY(low);
+  const yPrev  = toY(prev);
+
+  const bodyTop    = Math.min(yOpen, yClose);
+  const bodyH      = Math.max(Math.abs(yClose - yOpen), 1.5);  // 十字星至少 1.5px
+  // 台股慣例：對比昨收判斷漲跌色（不是對比開盤）
+  const isUp       = close >= prev;
+
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;">
+  <line x1="${wickX}" y1="${yHigh.toFixed(1)}" x2="${wickX}" y2="${yLow.toFixed(1)}"
+        stroke="${color}" stroke-width="1.5"/>
+  <rect x="${barX}" y="${bodyTop.toFixed(1)}" width="${barW}" height="${bodyH.toFixed(1)}"
+        fill="${color}" stroke="${color}" stroke-width="1.5" rx="1"/>
+</svg>`;
+}
+
 /** 從 points string 生成 SVG markup */
 function _svgFromPts(pts, color) {
   const last = pts.split(' ').pop().split(',');
@@ -211,8 +294,14 @@ function _svgFromPts(pts, color) {
 /** 同步取得 sparkline HTML（快取優先；未命中則排隊載入並回傳 placeholder） */
 function _sparkHtmlSync(code, isUp, domId) {
   const color = isUp ? '#ef5350' : '#26a69a';
-  let prices = null;
 
+  // ★ bar 模式：從 __priceCache 拿 OHLC 畫今日 K 棒，不需要 IndexedDB，瞬間完成
+  if (_sparkMode === 'bar') {
+    const p = (window.__priceCache ?? {})[code];
+    return _svgDayBar(p?.chgPct ?? 0, color, p);
+  }
+
+  let prices = null;
   if (_sparkMode === '40d') {
     prices = _kline40Cache.get(code) ?? null;
   } else {
@@ -239,6 +328,14 @@ function _updateSparkDom(code) {
   const isUp = (p?.chgPct ?? 0) >= 0;
   const color = isUp ? '#ef5350' : '#26a69a';
 
+  // ★ bar 模式：從 __priceCache 拿 OHLC 畫今日 K 棒
+  if (_sparkMode === 'bar') {
+    const svg = _svgDayBar(p?.chgPct ?? 0, color, p);
+    container.querySelectorAll(`.wl-item[data-code="${CSS.escape(code)}"] .wl-item-right`)
+      .forEach(el => { el.innerHTML = svg; });
+    return;
+  }
+
   let prices = null;
   if (_sparkMode === '40d') {
     prices = _kline40Cache.get(code) ?? null;
@@ -259,7 +356,10 @@ function _updateSparkDom(code) {
 /** 批次啟動 sparkline 載入（renderWatchlist 後呼叫，next tick） */
 function _kickoffSparkLoads() {
   const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+  // 只加尚未在快取中的 code（已有快取的在 renderWatchlist 裡同步畫了）
+  // drain 已在跑時，只補 queue 不重啟，避免 _sparkRunning 鎖造成 code 永遠不畫
   for (const code of allCodes) {
+    if (_sparkMode === '40d' && _kline40Cache.has(code)) continue;  // 已有快取，跳過
     _sparkQueue.add(code);
   }
   _drainSparkQueue();
@@ -305,8 +405,8 @@ async function _drainSparkQueue() {
 async function _loadSparkForCode(code) {
   if (_sparkMode === '40d') {
     if (_kline40Cache.has(code)) { _updateSparkDom(code); return; }
-    const symbol  = toYahooSymbol(code);
-    const candles = await _readKline40(symbol);
+    // 直接傳 code，_readKline40 內部自動試 .TW / .TWO（與 theme-ui.js 一致）
+    const candles = await _readKline40(code);
     const closes  = candles.length >= 2
       ? candles.slice(-40).map(c => c.close).filter(v => v != null)
       : [];
@@ -320,24 +420,45 @@ async function _loadSparkForCode(code) {
   _updateSparkDom(code);
 }
 
-/** 從 IndexedDB kline_cache 讀取 K 線（試 3mo → 1y） */
-async function _readKline40(symbol) {
+/** 從 IndexedDB kline_cache 讀取 K 線
+ *  先試 .TW，找不到自動試 .TWO（與 theme-ui.js _drawSparkline 一致）
+ *  period 順序：1y → 3mo
+ */
+async function _readKline40(code) {
   try {
     const db = await new Promise((res, rej) => {
       const req = indexedDB.open('stockdash');
-      req.onsuccess  = () => res(req.result);
-      req.onerror    = () => rej(req.error);
+      req.onsuccess       = () => res(req.result);
+      req.onerror         = () => rej(req.error);
       req.onupgradeneeded = () => {};   // 純讀取，不改 schema
     });
     if (!db.objectStoreNames.contains('kline_cache')) return [];
-    for (const period of ['3mo', '1y']) {
-      const candles = await new Promise(res => {
-        const tx  = db.transaction('kline_cache', 'readonly');
-        const req = tx.objectStore('kline_cache').get(`${symbol}_${period}`);
-        req.onsuccess = () => res(req.result?.candles ?? []);
-        req.onerror   = () => res([]);
-      });
-      if (candles.length > 0) return candles;
+
+    const _get = (symbol, period) => new Promise(res => {
+      const tx  = db.transaction('kline_cache', 'readonly');
+      const req = tx.objectStore('kline_cache').get(`${symbol}_${period}`);
+      req.onsuccess = () => res(req.result?.candles ?? []);
+      req.onerror   = () => res([]);
+    });
+
+    // 指數（^ 開頭）直接用 code 當 key，不加 suffix
+    if (code.startsWith('^')) {
+      for (const period of ['1y', '3mo']) {
+        const candles = await _get(code, period);
+        if (candles.length > 0) return candles;
+      }
+      return [];
+    }
+
+    // 一般股票：4碼以下先試 .TW，5碼以上先試 .TWO
+    const sym1 = code.length <= 4 ? `${code}.TW` : `${code}.TWO`;
+    const sym2 = code.length <= 4 ? `${code}.TWO` : `${code}.TW`;
+
+    for (const symbol of [sym1, sym2]) {
+      for (const period of ['1y', '3mo']) {
+        const candles = await _get(symbol, period);
+        if (candles.length > 0) return candles;
+      }
     }
     return [];
   } catch (e) {
@@ -443,6 +564,20 @@ export function renderWatchlist() {
   container.innerHTML = _renderSparkModeBar() + _groups.map(g => _renderGroup(g)).join('');
   _bindGroupEvents();
 
+  // DOM 重建後，立即把已快取的 sparkline 同步畫上去（解決 drain race condition）
+  if (_sparkMode === '40d') {
+    // _kline40Cache 已有資料的 code 不需要等 drain，直接更新新 DOM
+    for (const [code] of _kline40Cache) {
+      _updateSparkDom(code);
+    }
+  } else if (_sparkMode === 'bar') {
+    // bar 模式：全部同步畫，不需要 drain
+    const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+    for (const code of allCodes) {
+      _updateSparkDom(code);
+    }
+  }
+
   // v3: 下一 tick 啟動 sparkline 載入（DOM 已就緒才可查 getElementById）
   setTimeout(_kickoffSparkLoads, 0);
 }
@@ -454,6 +589,8 @@ function _renderSparkModeBar() {
   <div class="wl-sptg">
     ${FEATURE_INTRADAY_5M ? `<button class="wl-spt${_sparkMode === 'day' ? ' wl-spt-on' : ''}"
             data-action="set-spark-mode" data-mode="day">今日</button>` : ''}
+    <button class="wl-spt${_sparkMode === 'bar' ? ' wl-spt-on' : ''}"
+            data-action="set-spark-mode" data-mode="bar">今日K</button>
     <button class="wl-spt${_sparkMode === '40d' ? ' wl-spt-on' : ''}"
             data-action="set-spark-mode" data-mode="40d">40日</button>
   </div>
@@ -558,15 +695,29 @@ function _renderStock(stock, groupId) {
   // 走勢圖（同步取快取；未命中 → placeholder + 排隊載入）
   const sparkHtml = _sparkHtmlSync(stock.code, isUp);
 
-  // stockInfo 邊框 class（只有 forward 才顯示）
+  // stockInfo 邊框 class + pill（只有 forward 才顯示）
   const _si = _siInfoCache[stock.code] ?? null;
   let _siBorderCls = '';
+  let _siPillHtml  = '';
   if (_si?.forward?.story || _si?.forward?.consensus) {
     const _updatedAt = _si.forward.updatedAt;
-    const daysSince = _updatedAt
+    const daysSince  = _updatedAt
       ? Math.floor((Date.now() - new Date(_updatedAt).getTime()) / 86400000)
-      : 0;
-    _siBorderCls = daysSince > 30 ? 'wl-si-stale' : 'wl-si-fresh';
+      : null;
+    if (daysSince == null || daysSince < 0) {
+      // 無日期
+      _siBorderCls = 'wl-si-fresh';
+      _siPillHtml  = '<span class="wl-si-pill wl-si-pill-ok">正常</span>';
+    } else if (daysSince < 30) {
+      _siBorderCls = 'wl-si-fresh';
+      _siPillHtml  = '<span class="wl-si-pill wl-si-pill-ok">正常</span>';
+    } else if (daysSince < 60) {
+      _siBorderCls = 'wl-si-warn';
+      _siPillHtml  = `<span class="wl-si-pill wl-si-pill-warn">${daysSince}天前更新</span>`;
+    } else {
+      _siBorderCls = 'wl-si-stale';
+      _siPillHtml  = `<span class="wl-si-pill wl-si-pill-stale">${daysSince}天前更新</span>`;
+    }
   }
 
   return `
@@ -580,6 +731,7 @@ function _renderStock(stock, groupId) {
       <span class="wl-code">${_esc(stock.code)}</span>
       <span class="wl-name">${_esc(displayName)}</span>
       ${dupBadge}
+      ${_siPillHtml}
     </div>
     <div class="wl-price">${priceStr}</div>
     <div class="wl-chg ${isUp ? 'wl-chg-up' : 'wl-chg-dn'}">${chgStr}</div>
@@ -681,7 +833,7 @@ function _toggleDropdown(id) {
 }
 
 function _setSparkMode(mode) {
-  if (mode !== 'day' && mode !== '40d') return;
+  if (mode !== 'day' && mode !== '40d' && mode !== 'bar') return;
   if (mode === 'day' && !FEATURE_INTRADAY_5M) return;  // ★ 無 FinMind token，今日模式鎖定
   _drainGen++;                           // 使當前正在跑的 drain 世代失效
   _sparkRunning = false;                 // 強制釋放鎖（舊 drain 的 finally 會跳過重設）
@@ -787,6 +939,7 @@ let _importFileInput = null;
 function _bindSidebarEvents() {
   const addGroupBtn = document.getElementById('watchlistAddGroup');
   const importBtn   = document.getElementById('watchlistImportBtn');
+  const siListBtn   = document.getElementById('watchlistSiListBtn');
 
   if (addGroupBtn && !addGroupBtn.dataset.bound) {
     addGroupBtn.dataset.bound = '1';
@@ -795,6 +948,10 @@ function _bindSidebarEvents() {
   if (importBtn && !importBtn.dataset.bound) {
     importBtn.dataset.bound = '1';
     importBtn.addEventListener('click', () => _triggerImport());
+  }
+  if (siListBtn && !siListBtn.dataset.bound) {
+    siListBtn.dataset.bound = '1';
+    siListBtn.addEventListener('click', () => { _closeAllDropdowns(); _showSiListPanel(); });
   }
 
   // ── v3: 點 dropdown 外部時關閉所有 dropdown ──────────────────
@@ -806,6 +963,117 @@ function _bindSidebarEvents() {
       }
     });
   }
+}
+
+// ─── 補充資訊清單面板 ──────────────────────────────────────────────────────────
+
+function _showSiListPanel() {
+  // 收集所有有 stockInfo 的個股
+  const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+  const rows = [];
+  for (const code of allCodes) {
+    const info = _siInfoCache[code];
+    if (!info?.forward?.story && !info?.forward?.consensus) continue;
+    const name       = getChineseName(code) || code;
+    const updatedAt  = info.forward.updatedAt ?? null;
+    const daysSince  = updatedAt
+      ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000)
+      : null;
+    rows.push({ code, name, updatedAt, daysSince });
+  }
+
+  // 排序：過期最久的優先
+  rows.sort((a, b) => (b.daysSince ?? 0) - (a.daysSince ?? 0));
+
+  const container = document.getElementById('watchlistContainer');
+  if (!container) return;
+
+  // CSS 注入（只注入一次）
+  if (!document.getElementById('wl-si-list-style')) {
+    const s = document.createElement('style');
+    s.id = 'wl-si-list-style';
+    s.textContent = `
+      .wl-si-panel { padding: 10px 12px; }
+      .wl-si-panel-header {
+        display: flex; align-items: center; gap: 8px;
+        margin-bottom: 10px; padding-bottom: 8px;
+        border-bottom: 0.5px solid rgba(255,255,255,.08);
+      }
+      .wl-si-panel-title { font-size: 13px; font-weight: 500; color: #e8eaed; flex: 1; }
+      .wl-si-panel-close {
+        background: none; border: none; color: #8a8f99;
+        font-size: 16px; cursor: pointer; padding: 0 4px;
+      }
+      .wl-si-panel-close:hover { color: #e8eaed; }
+      .wl-si-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 4px; border-bottom: 0.5px solid rgba(255,255,255,.05);
+        cursor: pointer;
+      }
+      .wl-si-row:hover { background: rgba(255,255,255,.04); border-radius: 4px; }
+      .wl-si-row-code { font-size: 13px; font-weight: 500; color: #e8eaed; font-family: monospace; min-width: 44px; }
+      .wl-si-row-name { font-size: 12px; color: #c9d1d9; flex: 1; }
+      .wl-si-row-arrow { font-size: 14px; color: #8a8f99; }
+      .wl-si-empty { font-size: 13px; color: #8a8f99; padding: 20px 0; text-align: center; }
+      .wl-si-pill {
+        font-size: 10px; font-weight: 500;
+        padding: 2px 6px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+      }
+      .wl-si-pill-ok    { background: #ef5350; color: #fff; }
+      .wl-si-pill-warn  { background: #f59e0b; color: #fff; }
+      .wl-si-pill-stale { background: #26a69a; color: #fff; }
+      .wl-si-fresh { border-left: 2px solid #ef5350; padding-left: 6px; }
+      .wl-si-warn  { border-left: 2px solid #f59e0b; padding-left: 6px; }
+      .wl-si-stale { border-left: 2px solid #26a69a; padding-left: 6px; }
+    `;
+    document.head.appendChild(s);
+  }
+
+  // 渲染清單
+  const rowsHtml = rows.length === 0
+    ? `<div class="wl-si-empty">目前沒有補充資訊</div>`
+    : rows.map(r => {
+        let pillCls, pillText, rowCls;
+        if (r.daysSince == null || r.daysSince < 30) {
+          pillCls = 'wl-si-pill-ok';   pillText = '正常';               rowCls = 'wl-si-fresh';
+        } else if (r.daysSince < 60) {
+          pillCls = 'wl-si-pill-warn';  pillText = `${r.daysSince}天前更新`; rowCls = 'wl-si-warn';
+        } else {
+          pillCls = 'wl-si-pill-stale'; pillText = `${r.daysSince}天前更新`; rowCls = 'wl-si-stale';
+        }
+        return `<div class="wl-si-row ${rowCls}" data-si-code="${r.code}">
+          <span class="wl-si-row-code">${r.code}</span>
+          <span class="wl-si-row-name">${r.name}</span>
+          <span class="wl-si-pill ${pillCls}">${pillText}</span>
+          <span class="wl-si-row-arrow">›</span>
+        </div>`;
+      }).join('');
+
+  container.innerHTML = `
+    <div class="wl-si-panel">
+      <div class="wl-si-panel-header">
+        <span class="wl-si-panel-title">補充資訊清單</span>
+        <button class="wl-si-panel-close" id="wlSiPanelClose">✕</button>
+      </div>
+      ${rowsHtml}
+    </div>`;
+
+  // 關閉按鈕
+  document.getElementById('wlSiPanelClose')?.addEventListener('click', () => renderWatchlist());
+
+  // 點列 → 開啟個股補充資訊
+  container.querySelectorAll('.wl-si-row[data-si-code]').forEach(row => {
+    row.addEventListener('click', () => {
+      const code = row.dataset.siCode;
+      // 發送 stockSelect 事件（讓 main.js 切換個股）
+      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code } }));
+      // 切換到補充資訊 tab（stockinfo）
+      setTimeout(() => {
+        const siTab = document.querySelector('.stock-tab[data-stock-tab="stockinfo"]');
+        siTab?.click();
+      }, 300);
+    });
+  });
 }
 
 function _triggerImport() {

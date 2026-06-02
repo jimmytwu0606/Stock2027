@@ -104,6 +104,8 @@ async function loadStock(code, opts = {}) {
   setHeaderLoading(code);
   updateDataInfo('載入中…');
   _switchStockTab('chart');
+  // 手機版：推出個股全頁
+  window.__mobileOpenStock?.();
 
   // ── Phase 7.1:燈燈導讀 loading ──
   let dengHandle = null;
@@ -162,6 +164,8 @@ async function loadStock(code, opts = {}) {
         if (el && el.textContent !== chName) el.textContent = chName;
         PriceHub.push({ [code]: { price: quote.price, chg, chgPct, name: chName } }, { persist: false, updateHeader: false, source: 'loadStock-namefix' });
         reloadStockTabs(code, chName);
+        window.__mobileUpdateTitle?.(`${chName}（${code}）`);
+        window.__mobileRenderWatchlist?.();
       }
     });
 
@@ -333,6 +337,11 @@ async function reloadChart(opts = {}) {
 // ─────────────────────────────────────────────
 // 個股內頁 Tab 切換
 // ─────────────────────────────────────────────
+// 手機版橋接
+window.__switchStockTab = (tab) => _switchStockTab(tab);
+window.__loadStock = (code) => loadStock(code);
+const _isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+
 function _switchStockTab(tab) {
   document.querySelectorAll('.stock-tab').forEach(b => {
     b.classList.toggle('active', b.dataset.stockTab === tab);
@@ -341,6 +350,8 @@ function _switchStockTab(tab) {
     p.classList.toggle('active', p.id === `${tab}Panel`);
   });
 }
+window.__switchStockTab = _switchStockTab;
+window.__loadStock = (code) => loadStock(code);
 
 // ─────────────────────────────────────────────
 // 桌面主 Tab
@@ -377,26 +388,69 @@ function initMainTabs() {
 // 手機 Tab Bar
 // ─────────────────────────────────────────────
 function initMobileTabs() {
-  document.querySelectorAll('.tab-item').forEach(btn => {
+  if (!window.matchMedia('(max-width: 767px)').matches) return;
+
+  document.querySelectorAll('.tab-item[data-mobile-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.mobileTab;
 
       if (tab === 'settings') { openSettings(); return; }
 
-      if (tab === 'watchlist') {
-        _toggleMobileSidebar(true);
-        document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        return;
-      }
-
-      _toggleMobileSidebar(false);
+      // active 狀態
       document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+
+      // 所有 tab-panel 隱藏
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById(`tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`)
-        ?.classList.add('active');
+
+      // 對應 panel 顯示
+      const panelId = {
+        chart:     'tabChart',
+        watchlist: 'tabWatchlist',
+        screener:  'tabScreener',
+        theme:     'tabTheme',
+      }[tab];
+      if (panelId) document.getElementById(panelId)?.classList.add('active');
+
+      // 題材頁：觸發重載
+      if (tab === 'theme') {
+        document.dispatchEvent(new CustomEvent('mobileRefreshTheme'));
+      }
+
+      // 自選頁：同步 watchlistContainer 內容到手機版 panel
+      if (tab === 'watchlist') {
+        _syncMobileWatchlist();
+      }
     });
+  });
+}
+
+// 把 sidebar 的 watchlistContainer 內容同步到手機版 panel
+function _syncMobileWatchlist() {
+  const src = document.getElementById('watchlistContainer');
+  const dst = document.getElementById('watchlistContainerMobile');
+  if (!src || !dst) return;
+  // 同步 innerHTML（輕量，watchlist 通常不大）
+  if (dst.innerHTML !== src.innerHTML) {
+    dst.innerHTML = src.innerHTML;
+  }
+  // 把桌機版的 wl 按鈕事件橋接到手機版同名 id
+  _bridgeWlButtons();
+}
+
+function _bridgeWlButtons() {
+  const pairs = [
+    ['wlMobileRescan',  'watchlistRescanAll'],
+    ['wlMobileAddStock','watchlistAddStock'],
+    ['wlMobileAddGroup','watchlistAddGroup'],
+    ['wlMobileImport',  'watchlistImportBtn'],
+    ['wlMobileMenuBtn', 'wlMenuBtn'],
+  ];
+  pairs.forEach(([mobileId, desktopId]) => {
+    const mobileBtn  = document.getElementById(mobileId);
+    const desktopBtn = document.getElementById(desktopId);
+    if (!mobileBtn || !desktopBtn) return;
+    mobileBtn.onclick = () => desktopBtn.click();
   });
 }
 
@@ -1200,11 +1254,25 @@ function _initWatchlistToolbar() {
       const isOpen = dropdown.classList.toggle('open');
       menuBtn.setAttribute('aria-expanded', String(isOpen));
     });
-    dropdown.addEventListener('click', () => setTimeout(_closeMenu, 80));
+    dropdown.addEventListener('click', (e) => {
+      // 補充資訊清單按鈕不關選單（由按鈕自己處理）
+      if (e.target.closest('#watchlistSiListBtn')) return;
+      setTimeout(_closeMenu, 80);
+    });
     document.addEventListener('click', (e) => {
       if (!document.getElementById('wlMenuWrap')?.contains(e.target)) _closeMenu();
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeMenu(); });
+
+    // 補充資訊清單按鈕
+    const siListBtn = document.getElementById('watchlistSiListBtn');
+    if (siListBtn) {
+      siListBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _closeMenu();
+        window.__showSiListPanel?.();
+      });
+    }
   }
 
   // 更新按鈕：報價 + 燈號 合一
@@ -1453,38 +1521,19 @@ function _initFullscreen() {
   window.__ensureFundamentals = ensureFundamentals;  // 觀點卡背景預拉基本面用
   initMobileTabs();
 
-  // ── Phase 10：手機版 View Engine ──────────────────────────
+  // ── 手機版：統一入口（js/mobile/index.js）──────────────────────────────
   if (window.matchMedia('(max-width: 767px)').matches) {
-    const { initMobileScreener } = await import('./mobile-screener.js');
-    initMobileScreener({
+    const { initMobile } = await import('./mobile/index.js');
+    await initMobile({
       AppState,
       showToast,
       getChineseName,
       fetchTWSEPrices,
-    });
-
-    // 策略掃描橋接：mobile-screener 發事件 → 呼叫現有 screener-ui 邏輯
-    document.addEventListener('mobileRunStrat', async (e) => {
-      const opts = e.detail ?? {};
-      // 把過濾條件寫入 Config
-      const { Config } = await import('./config.js');
-      Config.priceMin  = opts.priceMin  ?? 10;
-      Config.priceMax  = opts.priceMax  ?? 9999;
-      Config.volumeMin = opts.volumeMin ?? 0;
-      // 觸發現有選股流程（screener-ui.js 監聽 screenerRunFromMobile）
-      document.dispatchEvent(new CustomEvent('screenerRunFromMobile', { detail: opts }));
-    });
-
-    // 追蹤 / 題材行情更新橋接
-    document.addEventListener('mobileRefreshTrack', () => {
-      document.dispatchEvent(new CustomEvent('portfolioRefresh'));
-    });
-    document.addEventListener('mobileRefreshTheme', async () => {
-      const { reloadThemes } = await import('./theme.js');
-      await reloadThemes();
+      openSettings,
     });
   }
-  // ── Phase 10 end ──────────────────────────────────────────
+
+  // Phase 10 已移至 js/mobile/index.js
 
   // 4. 新版自選清單（群組版）
   await initWatchlist();

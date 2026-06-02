@@ -521,14 +521,21 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
   if (!opts.force) {
     try {
       const cached = await getKlineCache(symbol, period);
-      if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+      // ⚠️ 踩雷備忘（2026-06-02）：
+      //   快取命中時必須檢查根數是否足夠當前 period。
+      //   否則 1mo 載入存了 22 根，切到 3mo/6mo/1y 時快取 hit 但只有 22 根 → 圖表異常。
+      //   修法：快取根數 < period 最低需求的 60%，視為不足，重打 API。
+      const _minRequired = Math.floor((_PERIOD_DAYS[period] ?? 0) * 0.6);
+      if (cached && Array.isArray(cached.candles) && cached.candles.length >= Math.max(2, _minRequired)) {
         const now = Date.now();
         const isTradingNow = _isCurrentlyTrading();
 
         if (isTradingNow) {
           const todayEndTs = _todayTradingEndTs();
           if (cached.validUntil >= todayEndTs) {
-            // validUntil 超過今天收盤 → 昨晚盤後設的 → 強制過期，但保留備用
+            // validUntil 超過今天收盤 → 昨晚盤後設的 → STALE
+            // allowStale=true（如 fallback 1y 截斷）→ 直接回傳，不重打 API
+            if (opts.allowStale) return cached.candles;
             console.log(`[api] kline_cache STALE(盤後快取 in 盤中) → 重抓 ${symbol}_${period}`);
             staleCandles = cached.candles; // ★ 保留，API 失敗時 fallback
             // fall through → 打 API
@@ -566,6 +573,27 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
   // 2. 走 API
   try {
     const candles = await fetchHistory(symbol, period);
+
+    // ⚠️ 踩雷備忘（2026-06-02）：
+    //   Yahoo 對部分個股的短 period（3mo/6mo）只回 22 根左右（受限於資料授權或股票流動性）。
+    //   修法：根數不足期望的 60% 時，fallback 改拿 1y（走快取優先），再截斷成目標 period。
+    //   在 fetchHistoryCached 層做而非 fetchHistory，確保 fallback 走 IndexedDB/R2 快取，不重打 Yahoo。
+    const minRequired = Math.floor((_PERIOD_DAYS[period] ?? 0) * 0.6);
+    if (period !== '1y' && period !== '2y' && minRequired > 0 && candles.length < minRequired) {
+      console.log(`[api] ${symbol} ${period} 根數不足(${candles.length}<${minRequired})，走 1y 快取截斷`);
+      try {
+        const candles1y = await fetchHistoryCached(symbol, '1y', { allowStale: true });
+        if (candles1y.length >= minRequired) {
+          const trimmed = _trimCandlesToPeriod(candles1y, period);
+          // 寫回正確根數的快取
+          const validUntil = _computeCacheValidUntil();
+          setKlineCache(symbol, period, trimmed, validUntil).catch(() => {});
+          return trimmed;
+        }
+      } catch (e) {
+        console.warn(`[api] ${symbol} 1y fallback 失敗:`, e.message);
+      }
+    }
 
     // 3. 寫回快取(fire-and-forget,失敗不影響本次回傳)
     if (candles.length > 0) {
@@ -1738,7 +1766,11 @@ export async function fetchMisIntraday(codes) {
       const change = price - prev;
       const chgPct = prev > 0 ? (change / prev) * 100 : 0;
       const volume = Math.round(parseFloat(item.v ?? '0') / 1000);
-      out[code] = { price, prev, chgPct, volume, name };
+      // ★ 補解析今日 OHLC（供今日K棒 sparkline 使用）
+      const open = parseFloat(item.o) || price;
+      const high = parseFloat(item.h) || price;
+      const low  = parseFloat(item.l) || price;
+      out[code] = { price, prev, chgPct, volume, name, open, high, low };
       // 順帶記錄上櫃（MIS 回傳 ex='o' 表示上櫃）
       if (item.ex === 'o') _otcSet.add(code);
       if (name && name !== code) _nameCache[code] = name;
@@ -2269,7 +2301,21 @@ export async function fetchScreenerData(codes, {
     await Promise.allSettled(
       batch.map(async code => {
         try {
-          const candles = await fetchHistory(toYahooSymbol(code), period);
+          // ⚠️ 固定用 1y + allowStale，走 R2 快取不打 Yahoo
+          //   上櫃股用 toYahooSymbol 可能猜錯 suffix → Not Found
+          //   改用雙 suffix fallback：先試 .TW，404 再試 .TWO
+          let candles = [];
+          const sym1 = toYahooSymbol(code);
+          try {
+            candles = await fetchHistoryCached(sym1, '1y', { allowStale: true });
+          } catch (e1) {
+            if (/Not Found/i.test(e1.message)) {
+              const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
+              candles = await fetchHistoryCached(sym2, '1y', { allowStale: true });
+            } else {
+              throw e1;
+            }
+          }
           if (candles.length) result.set(code, candles);
         } catch (e) {
           console.warn(`[screener] failed for ${code}:`, e.message);
@@ -2351,4 +2397,34 @@ export async function fetchScreenerDataFinMind(codes, {
 
   console.log(`[screener] 完成：${result.size} / ${normalCodes.length} 檔有 K 線資料`);
   return result;
+}
+
+// ============================================================================
+// fetchVerifyData — 補充資訊 JSON 勘誤用
+// 用 FinMind TaiwanStockPER 取得最新 PE / PB / 殖利率，與 AI 給的數字比對
+// ============================================================================
+
+/**
+ * 取得 FinMind 最新一筆 PE / PB / 殖利率，用於補充資訊勘誤
+ * @param {string} code  股票代號，例如 '2330'
+ * @returns {Promise<{pe:number|null, pbRatio:number|null, dividendYield:number|null, fetchedAt:string}>}
+ *          無 token 或 API 失敗時回 null
+ */
+export async function fetchVerifyData(code) {
+  const token = getFinMindToken();
+  if (!token) return null;                   // 無 token → 跳過驗證
+  try {
+    const data = await _fetchFinMindPER(code, token);
+    return {
+      pe            : data.pe            ?? null,
+      pbRatio       : data.pbRatio       ?? null,
+      dividendYield : data.dividendYield != null
+                        ? parseFloat((data.dividendYield * 100).toFixed(2))  // 轉成 % 格式，對齊 AI 給的值
+                        : null,
+      fetchedAt     : new Date().toISOString().slice(0, 10),
+    };
+  } catch (e) {
+    console.warn('[fetchVerifyData] failed:', code, e.message);
+    return null;
+  }
 }

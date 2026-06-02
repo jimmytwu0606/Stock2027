@@ -13,7 +13,7 @@ import { loadStockInfo, saveStockInfo, deleteStockInfo } from './db.js';
 import { fsGetShared } from './firebase.js';
 import { calcHealthWithSignals } from './stock-tabs.js';
 import { calcHealthLong } from './health.js';
-import { fetchHistory, fetchFundamentalsFromFirestore, toYahooSymbol } from './api.js';
+import { fetchHistory, fetchFundamentalsFromFirestore, toYahooSymbol, fetchVerifyData } from './api.js';
 
 import {
   calcEMA, calcGMMA, calcBollinger, calcEnvelope, calcSAR,
@@ -181,6 +181,10 @@ function _renderTab(tab, r, candles) {
         // 開啟補充資訊 → Modal
         body.querySelectorAll('.si-open-tab-btn').forEach(btn => {
           btn.addEventListener('click', () => _siShowModal(window.__stockDashCode ?? ''));
+        });
+        // 即時比對按鈕
+        body.querySelectorAll('.si-verify-now-btn').forEach(btn => {
+          btn.addEventListener('click', () => _siRunLiveVerify(btn, btn.dataset.code));
         });
       }).catch(e => console.warn('[perspective]', e));
       return;
@@ -440,6 +444,62 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
   // ── 前瞻面分析（新版圖文卡）──────────────────────────────────────────────
   if (hasForward) {
     const f = forward;
+
+    // ── verify 狀態列（顯示勘誤結果 + 過期提醒）──────────────────────────
+    const today = new Date().toISOString().slice(0, 10);
+    let verifyHtml = '';
+    const verifyWarnings = info?._verify?.warnings ?? [];
+
+    // 過期偵測
+    let staleMsg = '';
+    if (f.updatedAt) {
+      const days = Math.floor((Date.now() - new Date(f.updatedAt).getTime()) / 86400000);
+      if (days > 60) {
+        staleMsg = `🔴 前瞻資料已 <strong>${days} 天</strong>未更新（截止：${f.updatedAt}），市場情況可能已大幅改變`;
+      } else if (days > 30) {
+        staleMsg = `🟡 前瞻資料已 ${days} 天（截止：${f.updatedAt}），建議重新確認`;
+      }
+    } else if (f.story || f.consensus) {
+      staleMsg = `🟡 前瞻資料缺少截止日期，無法判斷新鮮度`;
+    }
+
+    // checkedAt + FinMind 比對值 + 歷史 warnings
+    const checkedAt     = info?._verify?.checkedAt;
+    const finmindValues = info?._verify?.finmind;
+    const hasVerifyWarnings = verifyWarnings.length > 0;
+
+    // FinMind 比對值小字
+    let finmindRow = '';
+    if (finmindValues) {
+      const fmItems = [];
+      if (finmindValues.pbRatio != null)      fmItems.push(`PB ${finmindValues.pbRatio}`);
+      if (finmindValues.dividendYield != null) fmItems.push(`殖利率 ${finmindValues.dividendYield}%`);
+      if (finmindValues.pe != null)            fmItems.push(`PE ${finmindValues.pe}`);
+      if (fmItems.length) finmindRow = `<div style="font-size:10px;color:${C_MUTED};margin-top:3px">FinMind 實際值：${fmItems.join(' · ')}</div>`;
+    }
+
+    if (staleMsg || hasVerifyWarnings || checkedAt) {
+      const staleRow  = staleMsg ? `<div style="margin-bottom:${hasVerifyWarnings?'5px':'0'}">${staleMsg}</div>` : '';
+      const warnRows  = hasVerifyWarnings
+        ? verifyWarnings.map(w => `<div>⚠️ ${w}</div>`).join('')
+        : '';
+      const okRow     = !staleMsg && !hasVerifyWarnings && checkedAt
+        ? `<span style="color:#26a69a">✅ 上次匯入 FinMind 驗證通過</span>` : '';
+      const checkedRow = checkedAt ? `<div style="font-size:10px;color:${C_MUTED};margin-top:4px">驗證日：${checkedAt} · AI 推理，僅供參考</div>` : '';
+
+      const bannerColor = staleMsg?.startsWith('🔴') ? 'rgba(239,83,80,.1)'
+        : (staleMsg || hasVerifyWarnings) ? 'rgba(245,158,11,.1)' : 'rgba(38,166,154,.08)';
+      const borderColor = staleMsg?.startsWith('🔴') ? 'rgba(239,83,80,.3)'
+        : (staleMsg || hasVerifyWarnings) ? 'rgba(245,158,11,.3)' : 'rgba(38,166,154,.25)';
+      const textColor   = staleMsg?.startsWith('🔴') ? '#ef5350'
+        : (staleMsg || hasVerifyWarnings) ? '#f59e0b' : '#26a69a';
+
+      verifyHtml = `
+        <div style="background:${bannerColor};border:0.5px solid ${borderColor};border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:${textColor};line-height:1.6">
+          ${staleRow}${warnRows}${okRow}${finmindRow}${checkedRow}
+          ${staleMsg ? `<button class="si-copy-prompt-btn" data-si-code="${code}" style="margin-top:6px;padding:3px 10px;border-radius:4px;background:rgba(255,255,255,.08);border:0.5px solid rgba(255,255,255,.15);color:#e8eaed;font-size:11px;cursor:pointer">📋 重新更新 Prompt</button>` : ''}
+        </div>`;
+    }
     // 計算 EPS 成長率
     // 近四季 EPS TTM：從 autoData.eps 最新 4 季加總，fallback 單季 * 4
     const _epsRows = autoData?.eps?.data
@@ -464,13 +524,19 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
         </div>
         <div style="display:flex;align-items:center;justify-content:center;color:${C_MUTED};font-size:18px;flex-shrink:0;padding:0 4px">→</div>` : ''}
         ${f.epsEstNext ? `<div style="flex:1;background:rgba(239,83,80,.06);border-radius:8px;padding:10px 12px;border:0.5px solid rgba(239,83,80,.2)">
-          <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">法人預估（明年）</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <div style="font-size:11px;color:${C_MUTED}">法人預估（明年）</div>
+            ${f.epsEstNextConf ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:${f.epsEstNextConf==='high'?'rgba(38,166,154,.2)':f.epsEstNextConf==='mid'?'rgba(245,158,11,.2)':'rgba(239,83,80,.15)'};color:${f.epsEstNextConf==='high'?'#26a69a':f.epsEstNextConf==='mid'?'#f59e0b':'#ef5350'}">${f.epsEstNextConf==='high'?'高信心':f.epsEstNextConf==='mid'?'中信心':'低信心'}</span>` : ''}
+          </div>
           <div style="font-size:20px;font-weight:500;color:${C_UP}">${f.epsEstNext}</div>
           ${nextPct ? `<div style="font-size:11px;color:${C_UP};margin-top:3px">+${nextPct}%</div>` : ''}
         </div>` : ''}
         ${f.epsEstNext && f.epsEstYear2 ? `<div style="display:flex;align-items:center;justify-content:center;color:${C_MUTED};font-size:18px;flex-shrink:0;padding:0 4px">→</div>` : ''}
         ${f.epsEstYear2 ? `<div style="flex:1;background:rgba(239,83,80,.1);border-radius:8px;padding:10px 12px;border:0.5px solid rgba(239,83,80,.3)">
-          <div style="font-size:11px;color:${C_MUTED};margin-bottom:4px">法人預估（後年）</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+            <div style="font-size:11px;color:${C_MUTED}">法人預估（後年）</div>
+            ${f.epsEstYear2Conf ? `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:${f.epsEstYear2Conf==='high'?'rgba(38,166,154,.2)':f.epsEstYear2Conf==='mid'?'rgba(245,158,11,.2)':'rgba(239,83,80,.15)'};color:${f.epsEstYear2Conf==='high'?'#26a69a':f.epsEstYear2Conf==='mid'?'#f59e0b':'#ef5350'}">${f.epsEstYear2Conf==='high'?'高信心':f.epsEstYear2Conf==='mid'?'中信心':'低信心'}</span>` : ''}
+          </div>
           <div style="font-size:20px;font-weight:500;color:${C_UP}">${f.epsEstYear2}</div>
           ${yr2Pct ? `<div style="font-size:11px;color:${C_UP};margin-top:3px">+${yr2Pct}%</div>` : ''}
         </div>` : ''}
@@ -489,6 +555,7 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
     ).join('');
 
     parts.push(`
+      ${verifyHtml}
       <div style="background:rgba(129,140,248,.06);border:0.5px solid rgba(129,140,248,.25);border-radius:8px;padding:14px 16px;margin-bottom:10px">
         <div style="font-size:11px;color:#818cf8;font-weight:500;margin-bottom:6px">市場核心押注</div>
         <div style="font-size:15px;font-weight:500;color:#e8eaed;line-height:1.6">${f.story}</div>
@@ -503,6 +570,26 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
           <div style="font-size:12px;font-weight:500;color:${C_DOWN};margin-bottom:8px">主要風險</div>
           ${risksHtml}
         </div>
+      </div>` : ''}
+      ${f.moat ? `<div style="background:rgba(251,191,36,.05);border:0.5px solid rgba(251,191,36,.2);border-radius:6px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:flex-start;gap:8px">
+        <span style="font-size:14px;flex-shrink:0">🏰</span>
+        <div>
+          <div style="font-size:11px;color:#fbbf24;font-weight:500;margin-bottom:3px">護城河</div>
+          <div style="font-size:13px;color:#e8eaed;line-height:1.5">${f.moat}</div>
+        </div>
+      </div>` : ''}
+      ${(f.catalysts?.length) ? `<div style="margin-bottom:10px">
+        <div style="font-size:11px;color:${C_AMBER};font-weight:500;margin-bottom:6px">⚡ 近期催化劑</div>
+        ${f.catalysts.map(c => `<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:5px;font-size:12px;color:#c9d1d9">
+          <div style="width:4px;height:4px;border-radius:50%;background:${C_AMBER};flex-shrink:0;margin-top:5px"></div>${c}
+        </div>`).join('')}
+      </div>` : ''}
+      ${f.riskScore != null ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="font-size:11px;color:${C_MUTED}">綜合風險</div>
+        <div style="display:flex;gap:3px">
+          ${[1,2,3,4,5].map(i => `<div style="width:18px;height:6px;border-radius:2px;background:${i <= f.riskScore ? (f.riskScore<=2?'#26a69a':f.riskScore<=3?'#f59e0b':'#ef5350') : 'rgba(255,255,255,.1)'}"></div>`).join('')}
+        </div>
+        <div style="font-size:11px;color:${f.riskScore<=2?'#26a69a':f.riskScore<=3?'#f59e0b':'#ef5350'}">${f.riskScore<=2?'偏低':f.riskScore<=3?'中等':f.riskScore<=4?'偏高':'高風險'}</div>
       </div>` : ''}
       ${f.consensus ? `<div style="background:rgba(255,255,255,.03);border:0.5px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:0.5px solid rgba(255,255,255,.07)">
@@ -531,10 +618,15 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
     }
     if (info.analystRating || info.targetPrice) {
       const ratingColor = info.analystRating === '買進' ? C_UP : info.analystRating === '賣出' ? C_DOWN : C_AMBER;
+      // 找 targetPrice 的 sources 來源
+      const tpSrc = (info.sources || []).find(s => s.field === 'targetPrice');
+      const srcLabel = info.targetPriceSrc || (tpSrc ? `${tpSrc.src}${tpSrc.date?' '+tpSrc.date.slice(5):''}` : null);
       metaItems.push(`<div style="flex:1;background:rgba(255,255,255,.03);border-radius:6px;padding:8px 10px;border:0.5px solid rgba(255,255,255,.07)">
         <div style="font-size:11px;color:${C_MUTED};margin-bottom:3px">法人評等</div>
         ${info.analystRating ? `<div style="font-size:14px;font-weight:500;color:${ratingColor}">${info.analystRating}</div>` : ''}
-        ${info.targetPrice   ? `<div style="font-size:12px;color:${C_MUTED};margin-top:2px">目標價 $${info.targetPrice}</div>` : ''}
+        ${info.targetPrice ? `<div style="font-size:12px;color:${C_MUTED};margin-top:2px">目標價 $${info.targetPrice}
+          ${srcLabel ? `<span style="font-size:10px;color:${C_MUTED};opacity:.7;margin-left:4px">${srcLabel}</span>` : `<span style="font-size:10px;color:#ef5350;opacity:.8;margin-left:4px">⚠️ 來源不明</span>`}
+        </div>` : ''}
       </div>`);
     }
     if (info.peRatio || info.pbRatio || info.dividendYield) {
@@ -610,11 +702,36 @@ function _buildStockInfoSection(info, autoData, code, C_UP, C_DOWN, C_AMBER, C_M
     </div>`);
   }
 
+  // ── 資料來源表 ────────────────────────────────────────────────────────────
+  if (info?.sources?.length > 0) {
+    const srcRows = info.sources.map(s =>
+      `<div style="display:flex;align-items:baseline;gap:6px;padding:4px 0;border-bottom:0.5px solid rgba(255,255,255,.04);font-size:11px">
+        <span style="color:${C_MUTED};min-width:80px;flex-shrink:0">${s.field}</span>
+        <span style="color:#c9d1d9">${s.src ?? '—'}</span>
+        ${s.date ? `<span style="color:${C_MUTED};margin-left:auto">${s.date}</span>` : ''}
+      </div>`
+    ).join('');
+    parts.push(`<div style="margin-bottom:10px">
+      <div style="font-size:11px;color:${C_MUTED};font-weight:500;margin-bottom:6px">🔗 資料來源</div>
+      ${srcRows}
+    </div>`);
+  }
+
   // ── Prompt 操作區 ─────────────────────────────────────────────────────────
   parts.push(_siPromptArea(code, C_UP, C_AMBER, C_MUTED));
 
   return `<div class="cao-card">
-    <div style="font-size:11px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase;margin-bottom:12px">補充資訊</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:500;letter-spacing:.07em;color:${C_MUTED};text-transform:uppercase">補充資訊</div>
+      ${hasManual ? `<button class="si-verify-now-btn" data-code="${code}"
+        style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;
+               background:rgba(255,255,255,.06);border:0.5px solid rgba(255,255,255,.15);
+               color:#8a8f99;font-size:11px;cursor:pointer;white-space:nowrap"
+        title="與 FinMind 即時比對數字">
+        <span class="si-verify-dot" style="width:6px;height:6px;border-radius:50%;background:#8a8f99;display:inline-block;flex-shrink:0"></span>
+        <span>即時比對</span>
+      </button>` : ''}
+    </div>
     ${parts.join('')}
   </div>`;
 }
@@ -647,6 +764,7 @@ function _siCopyPrompt(code) {
   "meetingDate": null,
   "analystRating": null,
   "targetPrice": null,
+  "targetPriceSrc": null,
   "peRatio": null,
   "pbRatio": null,
   "dividendYield": null,
@@ -656,21 +774,37 @@ function _siCopyPrompt(code) {
     "drivers": [],
     "risks": [],
     "epsEstNext": null,
+    "epsEstNextConf": null,
     "epsEstYear2": null,
+    "epsEstYear2Conf": null,
+    "catalysts": [],
+    "moat": null,
+    "riskScore": null,
     "consensus": null,
     "updatedAt": null
-  }
+  },
+  "sources": []
 }
 
 欄位說明：
+- targetPriceSrc：目標價來源（例：「摩根士丹利 2026-05-15」），不確定填 null
 - forward.story：市場現在在賭的核心故事，一句話說清楚
 - forward.drivers：成長動能，條列式，3-5點
 - forward.risks：主要風險，條列式，2-4點
 - forward.epsEstNext：下一年度 EPS 共識預估（元）
+- forward.epsEstNextConf：EPS 預估信心度（high / mid / low）
 - forward.epsEstYear2：後年度 EPS 共識預估（元）
+- forward.epsEstYear2Conf：後年度 EPS 預估信心度（high / mid / low）
+- forward.catalysts：近期重大催化劑／時程，條列式，2-4點
+- forward.moat：競爭護城河，一句話
+- forward.riskScore：綜合風險評級 1-5（1最低風險，5最高風險）
 - forward.consensus：整體評估一句話結論
 - forward.updatedAt：資料截止日期（YYYY-MM-DD）
+- sources：每個有來源的欄位獨立標記，格式 { "field": "欄位名", "src": "來源名稱", "date": "YYYY-MM-DD" }
+  例：[{ "field": "targetPrice", "src": "摩根士丹利", "date": "2026-05-15" },
+       { "field": "epsEstNext",  "src": "Bloomberg 共識", "date": "2026-06-01" }]
 
+（月營收、EPS、除息資料系統已自動抓取，不需填入）
 只回覆 JSON，不要其他說明文字。`;
 
   navigator.clipboard.writeText(prompt).then(() => {
@@ -718,24 +852,24 @@ function _siShowModal(code) {
     const raw = document.getElementById('siModalJson')?.value?.trim();
     const msg = document.getElementById('siModalMsg');
     if (!raw) { msg.textContent = '請先貼上 JSON ~'; return; }
+
     let parsed;
     try {
       parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim());
     } catch(e) { msg.textContent = 'JSON 格式有誤，請確認後再試'; return; }
+
     if (parsed.code && parsed.code !== code) parsed.code = code;
-    try {
-      await saveStockInfo(code, parsed);
+
+    // ── 結構驗證 ───────────────────────────────────────────────────────────
+    const { errors, warnings } = _siValidate(parsed, code);
+
+    if (errors.length) {
       msg.style.color = '#ef5350';
-      msg.textContent = '✓ 已儲存！重新整理觀點卡中…';
-      setTimeout(() => {
-        close();
-        // 重新渲染觀點卡
-        const body = document.getElementById('caBody');
-        const r    = window.__lastAnalysisResult;
-        const candles = window.__AppState?.lastCandles ?? [];
-        if (body && candles.length) _tabPerspective(body, r, candles).catch(() => {});
-      }, 800);
-    } catch(e) { msg.textContent = '儲存失敗：' + e.message; }
+      msg.innerHTML = errors.map(e => `❌ ${e}`).join('<br>');
+      return;
+    }
+
+    _siDoSave(code, parsed, warnings, msg, close);
   });
 
   document.getElementById('siModalClear').addEventListener('click', async () => {
@@ -747,8 +881,264 @@ function _siShowModal(code) {
   });
 }
 
-// ============================================================================
-// 燈燈觀點卡選句引擎
+// ── 補充資訊 JSON 驗證（Modal 用）────────────────────────────────────────
+function _siValidate(parsed, code) {
+  const errors   = [];
+  const warnings = [];
+  const today    = new Date().toISOString().slice(0, 10);
+
+  if (parsed.code && parsed.code !== code) {
+    errors.push(`代號不符：JSON 是 ${parsed.code}，當前是 ${code}`);
+  }
+
+  const pb = parseFloat(parsed.pbRatio);
+  if (parsed.pbRatio != null && (!isFinite(pb) || pb <= 0 || pb > 100)) {
+    warnings.push(`股淨比 ${parsed.pbRatio} 超出合理範圍（0.1 ~ 100）`);
+  }
+
+  const dy = parseFloat(parsed.dividendYield);
+  if (parsed.dividendYield != null && (!isFinite(dy) || dy < 0 || dy > 30)) {
+    warnings.push(`殖利率 ${parsed.dividendYield}% 超出合理範圍（0 ~ 30%）`);
+  }
+
+  const pe = parseFloat(parsed.peRatio);
+  if (parsed.peRatio != null && (!isFinite(pe) || pe < 0 || pe > 5000)) {
+    warnings.push(`本益比 ${parsed.peRatio} 超出合理範圍`);
+  }
+
+  const f = parsed.forward;
+  if (f) {
+    if (f.updatedAt) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f.updatedAt)) {
+        warnings.push(`forward.updatedAt 格式有誤（應為 YYYY-MM-DD）`);
+      } else if (f.updatedAt > today) {
+        warnings.push(`forward.updatedAt（${f.updatedAt}）是未來日期`);
+      }
+    } else if (f.story || f.consensus) {
+      warnings.push('前瞻資料缺少 updatedAt 截止日期，未來無法判斷是否過期');
+    }
+    if (f.drivers != null && !Array.isArray(f.drivers)) errors.push('forward.drivers 應為陣列格式');
+    if (f.risks   != null && !Array.isArray(f.risks))   errors.push('forward.risks 應為陣列格式');
+    if (f.epsEstNext  != null && typeof f.epsEstNext  !== 'number') warnings.push(`forward.epsEstNext 應為數字`);
+    if (f.epsEstYear2 != null && typeof f.epsEstYear2 !== 'number') warnings.push(`forward.epsEstYear2 應為數字`);
+  }
+
+  return { errors, warnings };
+}
+
+// ── 實際存入（驗證通過後）────────────────────────────────────────────────
+async function _siDoSave(code, parsed, warnings, msgEl, close) {
+  // ── FinMind 交叉比對 ──────────────────────────────────────────────────────
+  msgEl.style.color = '#8a8f99';
+  msgEl.textContent = '正在向 FinMind 驗證數字…';
+
+  const crossResult  = await _siCrossCheck(code, parsed);
+  const allWarnings  = [...warnings, ...crossResult.warnings];
+
+  // 差距過大 → 阻擋，讓使用者確認
+  if (crossResult.errors.length) {
+    msgEl.style.color = '#ef5350';
+    msgEl.innerHTML = crossResult.errors.map(e => `❌ ${e}`).join('<br>') +
+      `<br><button id="siModalForceImport" style="margin-top:8px;padding:4px 12px;border-radius:4px;background:rgba(239,83,80,.15);border:0.5px solid rgba(239,83,80,.4);color:#ef5350;font-size:12px;cursor:pointer">仍要強制存入</button>`;
+    document.getElementById('siModalForceImport')?.addEventListener('click', () => {
+      _siCommit(code, parsed, allWarnings, crossResult.finmindValues, msgEl, close);
+    });
+    return;
+  }
+
+  // 有警告 → 顯示後讓使用者決定
+  if (allWarnings.length) {
+    msgEl.style.color = '#f59e0b';
+    msgEl.innerHTML = allWarnings.map(w => `⚠️ ${w}`).join('<br>') +
+      `<br><button id="siModalConfirmWarn" style="margin-top:8px;padding:4px 12px;border-radius:4px;background:rgba(245,158,11,.15);border:0.5px solid rgba(245,158,11,.4);color:#f59e0b;font-size:12px;cursor:pointer">了解，仍要存入</button>`;
+    document.getElementById('siModalConfirmWarn')?.addEventListener('click', () => {
+      _siCommit(code, parsed, allWarnings, crossResult.finmindValues, msgEl, close);
+    });
+    return;
+  }
+
+  _siCommit(code, parsed, [], crossResult.finmindValues, msgEl, close);
+}
+
+async function _siCommit(code, parsed, allWarnings, finmindValues, msgEl, close) {
+  parsed._verify = {
+    checkedAt : new Date().toISOString().slice(0, 10),
+    warnings  : allWarnings,
+    source    : 'ai_prompt',
+    finmind   : finmindValues,
+  };
+  try {
+    await saveStockInfo(code, parsed);
+    msgEl.style.color = '#26a69a';
+    msgEl.textContent = allWarnings.length
+      ? `✓ 已儲存（${allWarnings.length} 項提醒請留意）`
+      : '✓ 已儲存！重新整理觀點卡中…';
+    document.dispatchEvent(new CustomEvent('stockInfoUpdated', { detail: { code } }));
+    setTimeout(() => {
+      close();
+      const body    = document.getElementById('caBody');
+      const r       = window.__lastAnalysisResult;
+      const candles = window.__AppState?.lastCandles ?? [];
+      if (body && candles.length) _tabPerspective(body, r, candles).catch(() => {});
+    }, 800);
+  } catch(e) { msgEl.textContent = '儲存失敗：' + e.message; }
+}
+
+// ── FinMind 交叉比對（Modal 用）──────────────────────────────────────────
+async function _siCrossCheck(code, parsed) {
+  const errors = [], warnings = [];
+  let finmindValues = null;
+  try {
+    const fm = await fetchVerifyData(code);
+    if (!fm) return { errors, warnings, finmindValues };
+    finmindValues = fm;
+
+    if (parsed.pbRatio != null && fm.pbRatio != null) {
+      const diff = Math.abs(parseFloat(parsed.pbRatio) - fm.pbRatio);
+      if (diff > 0.5)      errors.push(`股淨比差距過大：AI ${parsed.pbRatio} vs FinMind ${fm.pbRatio}（差 ${diff.toFixed(2)}）`);
+      else if (diff > 0.2) warnings.push(`股淨比略有偏差：AI ${parsed.pbRatio} vs FinMind ${fm.pbRatio}`);
+    }
+    if (parsed.dividendYield != null && fm.dividendYield != null) {
+      const diff = Math.abs(parseFloat(parsed.dividendYield) - fm.dividendYield);
+      if (diff > 1.0)      errors.push(`殖利率差距過大：AI ${parsed.dividendYield}% vs FinMind ${fm.dividendYield}%（差 ${diff.toFixed(2)}%）`);
+      else if (diff > 0.5) warnings.push(`殖利率略有偏差：AI ${parsed.dividendYield}% vs FinMind ${fm.dividendYield}%`);
+    }
+    if (parsed.peRatio != null && fm.pe != null) {
+      const diff = Math.abs(parseFloat(parsed.peRatio) - fm.pe);
+      if (diff > 10) warnings.push(`本益比偏差較大：AI ${parsed.peRatio} vs FinMind ${fm.pe}（差 ${diff.toFixed(1)}）`);
+    }
+  } catch(e) { console.warn('[_siCrossCheck]', e.message); }
+  return { errors, warnings, finmindValues };
+}
+
+// ── 觀點卡版即時比對（複用 _siCrossCheck + popup）────────────────────────
+async function _siRunLiveVerify(btn, code) {
+  const dot   = btn.querySelector('.si-verify-dot');
+  const label = btn.querySelector('span:not(.si-verify-dot)') || btn;
+
+  // pulse 動畫
+  if (!document.getElementById('si-dot-anim')) {
+    const s = document.createElement('style');
+    s.id = 'si-dot-anim';
+    s.textContent = `@keyframes si-dot-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }`;
+    document.head.appendChild(s);
+  }
+
+  // 無 token → 明確提示
+  const { getFinMindToken } = await import('./config.js');
+  if (!getFinMindToken()) {
+    _siShowVerifyPopup(btn, [], [], null, 'no_token');
+    return;
+  }
+
+  const info = await (await import('./db.js')).loadStockInfo(code);
+  if (!info) {
+    _siShowVerifyPopup(btn, ['尚無已存資料'], [], null, 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  if (dot) { dot.style.background = '#8a8f99'; dot.style.animation = 'si-dot-pulse 1s infinite'; }
+
+  try {
+    const result = await _siCrossCheck(code, info);
+    const fm     = result.finmindValues;
+    if (dot) dot.style.animation = '';
+    btn.disabled = false;
+
+    // API 失敗（有 token 但拿不到資料）
+    if (!fm) {
+      dot && (dot.style.background = '#8a8f99');
+      _siShowVerifyPopup(btn, [], [], null, 'api_fail');
+      return;
+    }
+
+    const level    = result.errors.length ? 'error' : result.warnings.length ? 'warn' : 'ok';
+    const dotColor = level === 'error' ? '#ef5350' : level === 'warn' ? '#f59e0b' : '#26a69a';
+    if (dot) dot.style.background = dotColor;
+    btn.style.color = dotColor;
+    btn.style.borderColor = level === 'error' ? 'rgba(239,83,80,.4)' : level === 'warn' ? 'rgba(245,158,11,.4)' : 'rgba(38,166,154,.35)';
+    _siShowVerifyPopup(btn, result.errors, result.warnings, fm, level);
+  } catch(e) {
+    if (dot) dot.style.animation = '';
+    btn.disabled = false;
+    console.error('[_siRunLiveVerify]', e);
+    _siShowVerifyPopup(btn, [`比對失敗：${e.message}`], [], null, 'error');
+  }
+}
+
+function _siShowVerifyPopup(anchorBtn, errors, warnings, fm, level) {
+  document.getElementById('siVerifyPopup')?.remove();
+
+  // 特殊狀態
+  if (level === 'no_token') {
+    _siShowVerifyPopupRaw(anchorBtn,
+      '<div style="color:#f59e0b">⚠️ 需要 FinMind Token 才能比對</div>' +
+      '<div style="font-size:11px;color:#8a8f99;margin-top:4px">請在設定頁填入 FinMind Token</div>',
+      'rgba(245,158,11,.1)', 'rgba(245,158,11,.3)');
+    return;
+  }
+  if (level === 'api_fail') {
+    _siShowVerifyPopupRaw(anchorBtn,
+      '<div style="color:#8a8f99">⚠️ FinMind API 無回應</div>' +
+      '<div style="font-size:11px;color:#8a8f99;margin-top:4px">請確認網路或稍後再試</div>',
+      'rgba(255,255,255,.05)', 'rgba(255,255,255,.12)');
+    return;
+  }
+
+  const bg     = level === 'error' ? 'rgba(239,83,80,.12)'  : level === 'warn' ? 'rgba(245,158,11,.1)' : 'rgba(38,166,154,.08)';
+  const border = level === 'error' ? 'rgba(239,83,80,.4)'   : level === 'warn' ? 'rgba(245,158,11,.35)' : 'rgba(38,166,154,.3)';
+  const color  = level === 'error' ? '#ef5350'              : level === 'warn' ? '#f59e0b' : '#26a69a';
+  const lines  = [];
+  errors.forEach(e   => lines.push(`❌ ${e}`));
+  warnings.forEach(w => lines.push(`⚠️ ${w}`));
+  if (!lines.length) lines.push('✅ FinMind 數字比對正常');
+  if (fm) {
+    const fmItems = [];
+    if (fm.pbRatio != null)      fmItems.push(`PB ${fm.pbRatio}`);
+    if (fm.dividendYield != null) fmItems.push(`殖利率 ${fm.dividendYield}%`);
+    if (fm.pe != null)            fmItems.push(`PE ${fm.pe}`);
+    if (fmItems.length) lines.push(`FinMind 實際：${fmItems.join(' · ')}`);
+  }
+  const popup = document.createElement('div');
+  popup.id = 'siVerifyPopup';
+  popup.style.cssText = `position:fixed;z-index:99999;background:#161b22;border:0.5px solid ${border};
+    border-radius:8px;padding:10px 14px;font-size:12px;color:${color};line-height:1.8;
+    box-shadow:0 4px 20px rgba(0,0,0,.6);max-width:320px;`;
+  popup.innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+  document.body.appendChild(popup);
+  const rect = anchorBtn.getBoundingClientRect();
+  popup.style.top  = `${rect.bottom + 6}px`;
+  popup.style.left = `${Math.max(8, Math.min(rect.left - 40, window.innerWidth - 340))}px`;
+  const close = (e) => {
+    if (!popup.contains(e.target) && e.target !== anchorBtn) {
+      popup.remove();
+      document.removeEventListener('click', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 50);
+}
+
+function _siShowVerifyPopupRaw(anchorBtn, html, bg, border) {
+  document.getElementById('siVerifyPopup')?.remove();
+  const popup = document.createElement('div');
+  popup.id = 'siVerifyPopup';
+  popup.style.cssText = `position:fixed;z-index:99999;background:#161b22;border:0.5px solid ${border};
+    border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.7;
+    box-shadow:0 4px 20px rgba(0,0,0,.6);max-width:300px;`;
+  popup.innerHTML = html;
+  document.body.appendChild(popup);
+  const rect = anchorBtn.getBoundingClientRect();
+  popup.style.top  = `${rect.bottom + 6}px`;
+  popup.style.left = `${Math.max(8, Math.min(rect.left - 40, window.innerWidth - 320))}px`;
+  const close = (e) => {
+    if (!popup.contains(e.target) && e.target !== anchorBtn) {
+      popup.remove();
+      document.removeEventListener('click', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close, true), 50);
+}
 // ============================================================================
 // 根據技術面、基本面、籌碼面的組合，從 DENG_MESSAGES 挑出最貼切的場景
 // 再隨機取一句，填入插值佔位符後回傳

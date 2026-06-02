@@ -952,3 +952,60 @@ body.resizing {
 /* ── 五燈內聯（價格列右側）──────── */
 .sh-lamps .lamp-label { font-size: 12px; color: var(--muted); }
 .sh-lamps .lamp-row   { display: inline-flex; gap: 3px; vertical-align: middle; }
+/* ── 搜尋 bar autocomplete dropdown ── */
+.search-box {
+  position: relative;
+}
+.search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #1a1c1f;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  z-index: 9999;
+  max-height: 320px;
+  overflow-y: auto;
+  display: none;
+}
+.search-dropdown.open { display: block; }
+.search-dd-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background .1s;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.search-dd-item:last-child { border-bottom: none; }
+.search-dd-item:hover,
+.search-dd-item.focused { background: rgba(255,255,255,.07); }
+.search-dd-code {
+  font-size: 13px;
+  font-weight: 700;
+  color: #60a5fa;
+  min-width: 44px;
+  font-variant-numeric: tabular-nums;
+}
+.search-dd-name {
+  font-size: 13px;
+  color: #e2e8f0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-dd-mark {
+  font-size: 11px;
+  color: rgba(255,255,255,.3);
+}
+.search-dd-empty {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: rgba(255,255,255,.3);
+  text-align: center;
+}
+

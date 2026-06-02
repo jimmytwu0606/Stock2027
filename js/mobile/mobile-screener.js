@@ -46,14 +46,13 @@ function _buildDOM() {
       </div>
 
       <div class="m-seg-wrap">
-        <div class="m-seg-scroll" id="mSegScroll">
-          <div class="m-seg-tab active" data-mode="theme">🏷 題材<span class="m-seg-cnt" id="mCnt-theme">0</span></div>
-          <div class="m-seg-tab"        data-mode="strat">⚡ 策略<span class="m-seg-cnt" id="mCnt-strat">0</span></div>
-          <div class="m-seg-tab"        data-mode="track">📋 追蹤<span class="m-seg-cnt" id="mCnt-track">0</span></div>
-          <div class="m-seg-tab"        data-mode="pattern">〰 型態<span class="m-seg-cnt" id="mCnt-pattern">0</span></div>
-          <div class="m-seg-tab"        data-mode="seed">🌱 種子<span class="m-seg-cnt" id="mCnt-seed">0</span></div>
-        </div>
-        <div class="m-seg-line"></div>
+        <select class="m-mode-select" id="mModeSelect">
+          <option value="theme">🏷 題材</option>
+          <option value="strat">⚡ 策略</option>
+          <option value="track">📋 追蹤</option>
+          <option value="pattern">〰 型態</option>
+          <option value="seed">🌱 種子</option>
+        </select>
       </div>
 
       <div class="m-result-body" id="mResultBody">
@@ -143,14 +142,9 @@ function _buildDOM() {
 
 // ─── Seg Tab 切換 ────────────────────────────────────────
 function _bindSegTabs() {
-  document.getElementById('mSegScroll')?.querySelectorAll('.m-seg-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('#mSegScroll .m-seg-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      _currentMode = tab.dataset.mode;
-      tab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      _renderCurrentMode();
-    });
+  document.getElementById('mModeSelect')?.addEventListener('change', (e) => {
+    _currentMode = e.target.value;
+    _renderCurrentMode();
   });
 }
 
@@ -188,7 +182,7 @@ async function _renderCurrentMode() {
 
 // ── 題材 ──────────────────────────────────────────────────
 async function _renderTheme(body) {
-  const { getThemes } = await import('./theme.js');
+  const { getThemes } = await import('../theme.js');
   const themes = getThemes();
   _updateCnt('theme', themes.length);
 
@@ -271,7 +265,7 @@ function _renderStrat(body) {
 
 // ── 追蹤 ──────────────────────────────────────────────────
 async function _renderTrack(body) {
-  const { listAll } = await import('./portfolio.js');
+  const { listAll } = await import('../portfolio.js');
   const lists = listAll('watch');
   const total = lists.reduce((n, l) => n + (l.items || []).length, 0);
   _updateCnt('track', total);
@@ -461,11 +455,13 @@ function _bindResultCards(body, results, sheetMeta) {
 // ══════════════════════════════════════════════════════════
 
 function _openSetup() {
+  document.getElementById('mScrMain')?.classList.add('m-hidden');
   document.getElementById('mSetupScreen')?.classList.add('open');
   _renderSetupTab('strat');
 }
 
 function _closeSetup() {
+  document.getElementById('mScrMain')?.classList.remove('m-hidden');
   document.getElementById('mSetupScreen')?.classList.remove('open');
 }
 
@@ -969,7 +965,7 @@ function _addSeedChip() {
 
 // ── 設定：追蹤 ────────────────────────────────────────────
 async function _renderSetupTrack(body) {
-  const { listAll, createList } = await import('./portfolio.js');
+  const { listAll, createList } = await import('../portfolio.js');
   const lists = listAll('watch');
 
   body.innerHTML = `
@@ -1015,7 +1011,7 @@ async function _renderSetupTrack(body) {
 
 // ── 設定：題材 ────────────────────────────────────────────
 async function _renderSetupTheme(body) {
-  const { getThemes, reloadThemes } = await import('./theme.js');
+  const { getThemes, reloadThemes } = await import('../theme.js');
   const themes = getThemes();
 
   body.innerHTML = `
@@ -1083,7 +1079,7 @@ async function _runStratScan(opts) {
 async function _runPatternScan(opts) {
   _showScanOverlay('型態比對');
   try {
-    const { runPatternScan, abortScan } = await import('./pattern-scan.js');
+    const { runPatternScan, abortScan } = await import('../pattern-scan.js');
     _scanAbort = new AbortController();
     const { AppState } = _deps;
     const template = AppState?.pattern?.template;
@@ -1117,9 +1113,9 @@ async function _runPatternScan(opts) {
 async function _runSeedScan(opts) {
   _showScanOverlay('種子選股');
   try {
-    const { runSeedScan }          = await import('./seed-scan.js');
-    const { extractSeedFeatures, mergeTemplates } = await import('./seed.js');
-    const { fetchHistoryCached, toYahooSymbol } = await import('./api.js');
+    const { runSeedScan }          = await import('../seed-scan.js');
+    const { extractSeedFeatures, mergeTemplates } = await import('../seed.js');
+    const { fetchHistoryCached, toYahooSymbol } = await import('../api.js');
     const { AppState } = _deps;
 
     // Phase A：提取種子特徵

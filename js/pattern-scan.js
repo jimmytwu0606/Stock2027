@@ -192,18 +192,25 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
   // 最多重試 2 次（僅針對非 429 錯誤）
   const MAX_RETRY = 2;
 
+  // ⚠️ 踩雷備忘（永久，2026-06-02）：
+  //   傳入的 period（pdPeriod，可能為 3mo）送給 Worker 時 R2 key = yahoo:{sym}:3mo → 永遠 MISS。
+  //   GAS 只寫 1y，固定送 '1y' 才能命中 R2。
+  //   型態比對實際上只用最後 windowSize 根（slice(-scanLen)），
+  //   用 1y 資料截尾結果完全等同，且 IndexedDB 命中時完全不打 Worker。
+  const FETCH_PERIOD = '1y';
+
   for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
     if (signal?.aborted) return null;
 
     try {
-      // fetchHistoryCached：先查 IndexedDB，cache hit → <5ms，miss → 打 Yahoo
+      // fetchHistoryCached：IndexedDB → Worker R2（key=yahoo:{sym}:1y）→ live Yahoo
       // ⚠️ 踩雷備忘（永久，2026-05-28）：
       //   resolveYahooSymbol 每檔打兩次 API（.TW + .TWO），全市場 1700 檔 × 2 = 3400 次
       //   proxy 立刻被打爆，大量 502 → 全部 return null → 結果 0。
-      //   型態比對用 toYahooSymbol + fetchHistoryCached 即可，上櫃比例少且 KV 有快取。
+      //   型態比對用 toYahooSymbol + fetchHistoryCached 即可，上櫃比例少且 R2 有快取。
       const symbol = toYahooSymbol(code);
       const _t0 = Date.now();
-      const candles = await fetchHistoryCached(symbol, period);
+      const candles = await fetchHistoryCached(symbol, FETCH_PERIOD);
       const fromCache = (Date.now() - _t0) < 30;
 
       const scanLen = Math.max(templateCandles.length, windowSize);
