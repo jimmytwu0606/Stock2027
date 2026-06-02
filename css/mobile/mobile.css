@@ -253,7 +253,7 @@ body {
   display: none !important; /* 手機版 sidebar 不走原本邏輯 */
 }
 
-/* 自選清單手機版 panel */
+/* 自選清單手機版 panel（overflow/width → mobile-watchlist.css）*/
 #tabWatchlist {
   padding: 0;
   display: none;
@@ -279,11 +279,7 @@ body {
   color: #e6edf3;
 }
 
-#watchlistContainerMobile {
-  flex: 1;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
+/* #watchlistContainerMobile → mobile-watchlist.css */
 
 /* watchlist 卡片手機版優化 */
 .wl-row {
@@ -1359,30 +1355,35 @@ body {
 .main { margin-left: 64px !important; width: calc(100% - 64px) !important; }
 .tab-panel { height: 100dvh !important; }
 
-/* 個股全頁 */
+/* 個股全頁 — 個股模式時左側 nav 會隱藏，直接從 left:0 撐全屏 */
 #mStockPage {
   display: none;
   position: fixed;
-  top: 0; left: 64px; right: 0; bottom: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   z-index: 199;
   pointer-events: none;
 }
-#mStockPage.m-stock-open { display: block; }
+#mStockPage.m-stock-open {
+  display: block;
+  pointer-events: none; /* 容器本身穿透，子元素各自設定 */
+}
 
-/* topbar 和抽屜要能點擊 */
+/* topbar 和抽屜直接掛 body，不繼承 mStockPage pointer-events */
 #mStockTopbar,
 #mStockDrawer,
 #mDrawerOverlay { pointer-events: all; }
 
-/* 個股模式 topbar */
+/* 個股模式 topbar — 預設隱藏，開個股頁才顯示 */
 #mStockTopbar {
+  display: none;
   position: fixed;
   top: 0; left: 0; right: 0; height: 48px;
   background: #161b22;
   border-bottom: 0.5px solid #21262d;
-  display: flex; align-items: center;
+  align-items: center;
   padding: 0 12px; gap: 10px; z-index: 210;
 }
+body.m-stock-open #mStockTopbar { display: flex; }
 #mDrawerToggle, #mStockClose {
   background: none; border: none;
   font-size: 20px; color: #8b949e;
@@ -1393,7 +1394,8 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* tabChart 個股模式 */
+/* tabChart 個股模式：兩種選取器確保生效 */
+body.m-stock-open #tabChart,
 #tabChart.m-stock-active {
   position: fixed !important;
   top: 48px !important; left: 0 !important;
@@ -1404,19 +1406,30 @@ body {
   height: auto !important;
 }
 
-/* 個股模式隱藏桌機版多餘元件 */
-body.m-stock-open header                     { display: none !important; }
+/* 個股模式隱藏桌機版多餘元件
+   body.m-stock-open 為主判斷，確保不依賴 m-stock-active 時序 */
+body.m-stock-open header                { display: none !important; }
+body.m-stock-open .chart-toolbar        { display: none !important; }
+body.m-stock-open .stock-tabbar         { display: none !important; }
+body.m-stock-open .stock-tabs-bar       { display: none !important; }
+body.m-stock-open .sh-signals           { display: none !important; }
+body.m-stock-open .sh-stats             { display: none !important; }
+body.m-stock-open #stockYaoguChip       { display: none !important; }
+body.m-stock-open #stockSignalBubbles   { display: none !important; }
+body.m-stock-open #stockSignalTags      { display: none !important; }
+body.m-stock-open .sh-add-btn           { display: none !important; }
+/* 舊選取器保留相容 */
 #tabChart.m-stock-active .chart-toolbar      { display: none !important; }
 #tabChart.m-stock-active .stock-tabbar       { display: none !important; }
 #tabChart.m-stock-active .stock-tabs-bar     { display: none !important; }
 #tabChart.m-stock-active .sh-signals         { display: none !important; }
 #tabChart.m-stock-active .sh-stats           { display: none !important; }
-#tabChart.m-stock-active #stockYaoguChip     { display: none !important; }
-#tabChart.m-stock-active #stockSignalBubbles { display: none !important; }
-#tabChart.m-stock-active #stockSignalTags    { display: none !important; }
-#tabChart.m-stock-active .sh-add-btn         { display: none !important; }
 
 /* stock-header 精簡 */
+body.m-stock-open .stock-header { padding: 8px 12px 6px; flex-shrink: 0; }
+body.m-stock-open .sh-name      { font-size: 16px; }
+body.m-stock-open .sh-price     { font-size: 22px; }
+/* 相容 */
 #tabChart.m-stock-active .stock-header { padding: 8px 12px 6px; flex-shrink: 0; }
 #tabChart.m-stock-active .sh-name  { font-size: 16px; }
 #tabChart.m-stock-active .sh-price { font-size: 22px; }
@@ -1432,7 +1445,7 @@ body.m-stock-open header                     { display: none !important; }
 /* 抽屜 overlay */
 #mDrawerOverlay {
   display: none; position: fixed;
-  top: 48px; left: 64px; right: 0; bottom: 0;
+  top: 48px; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,.55); z-index: 205;
 }
 #mDrawerOverlay.open { display: block; }
@@ -1485,23 +1498,7 @@ body.m-stock-open header                     { display: none !important; }
   padding: 5px 10px; color: #8b949e; font-size: 12px; cursor: pointer;
 }
 .mwl-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 8px; }
-.mwl-group { margin-bottom: 16px; }
-.mwl-group-name { font-size: 11px; color: #8b949e; padding: 0 4px 8px; font-weight: 500; }
-.mwl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.mwl-card {
-  background: #161b22; border: 0.5px solid #21262d;
-  border-radius: 10px; padding: 10px; cursor: pointer; min-width: 0;
-}
-.mwl-card:active { opacity: .75; }
-.mwl-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
-.mwl-code { font-size: 13px; font-weight: 700; color: #e6edf3; }
-.mwl-name { font-size: 11px; color: #8b949e; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 56px; }
-.mwl-card-price { text-align: right; flex-shrink: 0; }
-.mwl-price { font-size: 13px; font-weight: 700; }
-.mwl-chg   { font-size: 11px; margin-top: 2px; }
-.mwl-spark { height: 32px; width: 100%; }
-.mwl-spark svg { display: block; width: 100%; }
-.mwl-loading, .mwl-empty { text-align: center; color: #8b949e; font-size: 13px; padding: 40px 0; }
+/* mwl 自選清單樣式 → 見 mobile-watchlist.css */
 
 /* 篩選 select */
 .m-seg-wrap { padding: 10px 12px; flex-shrink: 0; }
@@ -1520,7 +1517,41 @@ body.m-stock-open header                     { display: none !important; }
 #tabMobileSettings.active { display: flex; }
 .msettings-header { padding: 14px 16px; font-size: 16px; font-weight: 600; color: #e6edf3; border-bottom: 0.5px solid #21262d; background: #161b22; flex-shrink: 0; }
 
-/* ══ topbar logo + 分隔線（Phase 10.1 更新）══ */
+/* ══ nav 收合（點已 active btn 收起）══ */
+#mSideNav {
+  transition: width 0.25s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
+}
+#mSideNav.m-nav-collapsed {
+  width: 0 !important;
+  padding: 0 !important;
+  border-right: none !important;
+}
+/* main 區塊隨 nav 收合 */
+.main.m-nav-collapsed {
+  margin-left: 0 !important;
+  width: 100% !important;
+  transition: margin-left 0.25s cubic-bezier(0.4,0,0.2,1),
+              width 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+.main {
+  transition: margin-left 0.25s cubic-bezier(0.4,0,0.2,1),
+              width 0.25s cubic-bezier(0.4,0,0.2,1);
+}
+
+/* ══ 自選清單兩欄小卡覆蓋 ══ */
+/* 舊的單列 wl-row 隱藏，改用 mwl 體系 */
+#tabWatchlist .watchlist-container,
+#tabWatchlist .wl-list { display: none !important; }
+
+/* mwl 卡片精簡：兩欄 grid */
+.mwl-card { padding: 8px 10px; }
+.mwl-card-top { margin-bottom: 4px; }
+.mwl-code  { font-size: 12px; }
+.mwl-name  { font-size: 10px; max-width: 52px; }
+.mwl-price { font-size: 13px; }
+.mwl-chg   { font-size: 10px; }
+.mwl-spark { height: 28px; margin-top: 4px; }
 /* brand（logo + dengdeng 文字） */
 #mStockBrand {
   display: flex;
@@ -1571,3 +1602,72 @@ body.m-stock-open header                     { display: none !important; }
 .m-drawer-nav.active { color: #58a6ff; background: rgba(88,166,255,.08); opacity: 1; }
 
 } /* end @media (max-width: 767px) */
+
+/* ══ 策略設定收折群組（mobile-screener）══ */
+.mss-summary {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-bottom: 0.5px solid #21262d;
+  flex-shrink: 0; flex-wrap: wrap; min-height: 38px;
+}
+.mss-label { font-size: 11px; color: #3d444d; flex-shrink: 0; }
+.mss-pills { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+.mss-pill {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  background: rgba(239,83,80,0.12); color: #ef5350;
+}
+.mss-none { font-size: 11px; color: #3d444d; }
+.mss-clear {
+  margin-left: auto; font-size: 11px; color: #3d444d;
+  background: none; border: none; cursor: pointer; flex-shrink: 0;
+}
+
+.mss-grp { border-bottom: 0.5px solid #21262d; }
+.mss-grp-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 16px; cursor: pointer; user-select: none;
+}
+.mss-grp-left { display: flex; align-items: center; gap: 7px; }
+.mss-grp-icon { font-size: 14px; line-height: 1; }
+.mss-grp-name { font-size: 13px; font-weight: 600; color: #e6edf3; }
+.mss-grp-cnt {
+  font-size: 10px; color: #3d444d; background: #30363d;
+  padding: 2px 6px; border-radius: 4px;
+}
+.mss-grp-cnt.has-sel { background: rgba(239,83,80,0.15); color: #ef5350; }
+.mss-grp-arrow {
+  font-size: 13px; color: #3d444d;
+  transition: transform 0.2s; display: inline-block;
+}
+.mss-grp-body {
+  padding: 2px 12px 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.mss-grp-body.mss-collapsed { display: none; }
+
+.mss-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; border-radius: 9px; cursor: pointer;
+  transition: background 0.12s;
+}
+.mss-row:active { background: rgba(255,255,255,0.04); }
+.mss-row.selected { background: rgba(239,83,80,0.07); }
+.mss-row.locked { opacity: 0.45; cursor: default; }
+.mss-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid #30363d; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.mss-dot.checked {
+  background: #ef5350; border-color: #ef5350;
+}
+.mss-dot.checked::after {
+  content: ''; width: 6px; height: 6px;
+  border-radius: 50%; background: #fff;
+}
+.mss-info { flex: 1; min-width: 0; }
+.mss-sname { font-size: 13px; font-weight: 500; color: #e6edf3; }
+.mss-sdesc { font-size: 11px; color: #3d444d; margin-top: 1px; }
+.mss-pro-badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(245,158,11,0.1); color: #f59e0b; flex-shrink: 0;
+}

@@ -8,6 +8,8 @@
  */
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+let _deps = {};
+export function setNavDeps(deps) { _deps = deps; }
 
 const STOCK_TABS = [
   { id: 'chart',    label: 'K線圖',   icon: '📈' },
@@ -33,6 +35,8 @@ export function initMobileNav() {
 }
 
 // ── 左側導航列 ─────────────────────────────────────────────────────────────
+let _navCollapsed = false;
+
 function _buildSideNav() {
   if (document.getElementById('mSideNav')) return;
 
@@ -61,6 +65,21 @@ function _buildSideNav() {
   nav.querySelectorAll('.msn-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const page = btn.dataset.page;
+      const isAlreadyActive = btn.classList.contains('active');
+
+      if (isAlreadyActive) {
+        // 再點一次 active btn → 收合/展開 nav
+        _navCollapsed = !_navCollapsed;
+        nav.classList.toggle('m-nav-collapsed', _navCollapsed);
+        document.querySelector('.main')?.classList.toggle('m-nav-collapsed', _navCollapsed);
+        return;
+      }
+
+      // 切換到新頁面
+      _navCollapsed = false;
+      nav.classList.remove('m-nav-collapsed');
+      document.querySelector('.main')?.classList.remove('m-nav-collapsed');
+
       nav.querySelectorAll('.msn-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       _showPage(page);
@@ -94,6 +113,10 @@ function _showPage(page) {
   // 篩選頁：確保 mobile-screener 已初始化
   if (page === 'screener') {
     document.dispatchEvent(new CustomEvent('mobileScreenerActivate'));
+  }
+  // 自選清單：確保 mobile-watchlist 已初始化並 render
+  if (page === 'watchlist') {
+    import('./mobile-watchlist.js').then(m => m.initMobileWatchlist?.()).catch(() => {});
   }
 }
 
@@ -136,31 +159,43 @@ function _ensureSettingsPage() {
 function _buildStockOverlay() {
   if (document.getElementById('mStockPage')) return;
 
+  // mStockPage：純背景容器，pointer-events: none
   const el = document.createElement('div');
   el.id = 'mStockPage';
-  el.innerHTML = `
-    <div id="mStockTopbar">
-      <button id="mDrawerToggle" aria-label="切換頁籤">☰</button>
-      <div id="mStockBrand">
-        <img src="favicon.svg" alt="dengdeng" id="mStockLogoImg"/>
-        <span id="mStockLogoText">dengdeng</span>
-      </div>
-      <div id="mStockTitle">—</div>
-    </div>
-    <div id="mDrawerOverlay"></div>
-    <nav id="mStockDrawer">
-      ${STOCK_TABS.map(t => `
-        <button class="m-drawer-item" data-stock-tab="${t.id}">
-          <span>${t.icon}</span><span>${t.label}</span>
-        </button>`).join('')}
-      <div class="m-drawer-sep"></div>
-      ${NAV_ITEMS.map(n => `
-        <button class="m-drawer-item m-drawer-nav" data-nav-page="${n.page}">
-          <span>${n.icon}</span><span>${n.label}</span>
-        </button>`).join('')}
-    </nav>
-  `;
   document.body.appendChild(el);
+
+  // mStockTopbar：直接掛 body，完全不繼承 mStockPage 的 pointer-events
+  const topbar = document.createElement('div');
+  topbar.id = 'mStockTopbar';
+  topbar.innerHTML = `
+    <button id="mDrawerToggle" aria-label="切換頁籤">☰</button>
+    <div id="mStockBrand">
+      <img src="favicon.svg" alt="dengdeng" id="mStockLogoImg"/>
+      <span id="mStockLogoText">dengdeng</span>
+    </div>
+    <div id="mStockTitle">—</div>
+  `;
+  document.body.appendChild(topbar);
+
+  // overlay + drawer 也直接掛 body
+  const overlay = document.createElement('div');
+  overlay.id = 'mDrawerOverlay';
+  document.body.appendChild(overlay);
+
+  const drawerEl = document.createElement('nav');
+  drawerEl.id = 'mStockDrawer';
+  drawerEl.innerHTML = `
+    ${STOCK_TABS.map(t => `
+      <button class="m-drawer-item" data-stock-tab="${t.id}">
+        <span>${t.icon}</span><span>${t.label}</span>
+      </button>`).join('')}
+    <div class="m-drawer-sep"></div>
+    ${NAV_ITEMS.map(n => `
+      <button class="m-drawer-item m-drawer-nav" data-nav-page="${n.page}">
+        <span>${n.icon}</span><span>${n.label}</span>
+      </button>`).join('')}
+  `;
+  document.body.appendChild(drawerEl);
 
   document.getElementById('mDrawerToggle')
     .addEventListener('click', () => _drawerOpen ? _closeDrawer() : _openDrawer());
@@ -171,6 +206,8 @@ function _buildStockOverlay() {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.stockTab;
       _closeDrawer();
+      // 切回 K線或其他 stock tab 時，先還原內容區
+      _showStockPageContent('chart');
       _setDrawerActive(tab);
       window.__switchStockTab?.(tab);
       if (tab !== 'chart' && window.__stockDashCode)
@@ -183,26 +220,75 @@ function _buildStockOverlay() {
     btn.addEventListener('click', () => {
       const page = btn.dataset.navPage;
       _closeDrawer();
-      closeMobileStockPage();
-      // 切換到對應頁面
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      const map = { watchlist: 'tabWatchlist', screener: 'tabScreener', settings: 'tabMobileSettings' };
-      if (page === 'settings') {
-        // 確保設定頁已建立
-        document.dispatchEvent(new CustomEvent('mobileEnsureSettings'));
+
+      if (page === 'watchlist' || page === 'screener') {
+        // 自選/篩選：在個股全頁框架內切換，不離開全頁模式
+        _showStockPageContent(page);
+        return;
       }
-      const panelId = map[page];
-      if (panelId) document.getElementById(panelId)?.classList.add('active');
-      // 更新左側 nav active 狀態
+
+      // 設定：關閉個股全頁，切換到設定 panel
+      closeMobileStockPage();
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      if (page === 'settings') {
+        _ensureSettingsPage();
+        document.getElementById('tabMobileSettings')?.classList.add('active');
+      }
       document.querySelectorAll('.msn-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.page === page));
     });
   });
 }
 
+// ── 個股全頁內容切換 ──────────────────────────────────────────────────────
+// 在全頁框架內切換內容（K線 / 自選清單 / 篩選）
+function _showStockPageContent(type) {
+  const chartPanel = document.getElementById('chartPanel');
+  const title = document.getElementById('mStockTitle');
+
+  // 隱藏所有覆蓋 panel
+  const _hideAll = () => {
+    document.getElementById('mWatchlistPanel')?.remove();
+    document.getElementById('mScreenerPanel')?.remove();
+    if (chartPanel) chartPanel.style.display = '';
+  };
+
+  if (type === 'watchlist') {
+    _hideAll();
+    if (chartPanel) chartPanel.style.display = 'none';
+    const el = document.createElement('div');
+    el.id = 'mWatchlistPanel';
+    el.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:12px 8px;';
+    chartPanel?.parentElement?.appendChild(el);
+    if (title) title.textContent = '自選清單';
+    import('./mobile-watchlist.js').then(m => m.renderIntoEl?.(el)).catch(() => {});
+    _setDrawerActive(null);
+
+  } else if (type === 'screener') {
+    _hideAll();
+    if (chartPanel) chartPanel.style.display = 'none';
+    const el = document.createElement('div');
+    el.id = 'mScreenerPanel';
+    el.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;';
+    chartPanel?.parentElement?.appendChild(el);
+    if (title) title.textContent = '篩選';
+    import('./mobile-screener.js').then(m => m.renderIntoEl?.(el, _deps)).catch(() => {});
+    _setDrawerActive(null);
+
+  } else {
+    // 切回 K線
+    _hideAll();
+    if (title && window.__stockDashCode) {
+      title.textContent = window.__mobileStockName || window.__stockDashCode;
+    }
+  }
+}
+
 // ── 個股全頁開關 ───────────────────────────────────────────────────────────
 export function openMobileStockPage(title) {
   if (!isMobile()) return;
+  // 隱藏左側 nav（個股全頁從 left:0 撐滿）
+  document.getElementById('mSideNav')?.classList.add('m-nav-hidden');
   document.getElementById('tabChart')?.classList.add('m-stock-active');
   document.getElementById('mStockPage')?.classList.add('m-stock-open');
   document.body.classList.add('m-stock-open');
@@ -212,6 +298,7 @@ export function openMobileStockPage(title) {
 }
 
 export function closeMobileStockPage() {
+  document.getElementById('mSideNav')?.classList.remove('m-nav-hidden');
   document.getElementById('tabChart')?.classList.remove('m-stock-active');
   document.body.classList.remove('m-stock-open');
   document.getElementById('mStockPage')?.classList.remove('m-stock-open');

@@ -417,26 +417,14 @@ function initMobileTabs() {
         document.dispatchEvent(new CustomEvent('mobileRefreshTheme'));
       }
 
-      // 自選頁：同步 watchlistContainer 內容到手機版 panel
-      if (tab === 'watchlist') {
-        _syncMobileWatchlist();
-      }
+      // 自選頁：手機版由 mobile-watchlist.js 獨立管理，不同步桌機版 HTML
     });
   });
 }
 
 // 把 sidebar 的 watchlistContainer 內容同步到手機版 panel
-function _syncMobileWatchlist() {
-  const src = document.getElementById('watchlistContainer');
-  const dst = document.getElementById('watchlistContainerMobile');
-  if (!src || !dst) return;
-  // 同步 innerHTML（輕量，watchlist 通常不大）
-  if (dst.innerHTML !== src.innerHTML) {
-    dst.innerHTML = src.innerHTML;
-  }
-  // 把桌機版的 wl 按鈕事件橋接到手機版同名 id
-  _bridgeWlButtons();
-}
+// Phase 10.1：手機版 watchlist 由 mobile-watchlist.js 獨立管理，不同步桌機版 HTML
+function _syncMobileWatchlist() {}
 
 function _bridgeWlButtons() {
   const pairs = [
@@ -1537,6 +1525,15 @@ function _initFullscreen() {
 
   // 4. 新版自選清單（群組版）
   await initWatchlist();
+
+  // 手機版 watchlist 接管（inline，不依賴外部檔）
+  if (window.matchMedia('(max-width: 767px)').matches) {
+    try {
+      const { initMobileWatchlist } = await import('./mobile/mobile-watchlist.js');
+      await initMobileWatchlist();
+    } catch(e) { console.warn('[main] mobile watchlist init failed', e); }
+  }
+
   const { getGroups: _wlGetGroups } = await import('./watchlist.js');
   window.__watchlistAPI = { getGroups: _wlGetGroups };
 
