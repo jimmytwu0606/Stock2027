@@ -56,7 +56,9 @@ let _resizeObs   = null;
 let _crossAbortCtrl = null;  // 跨股測試取消控制器
 let _signalAbortCtrl = null; // 策略勝率測試取消控制器
 let _comboAbortCtrl  = null; // 組合驗證取消控制器
-let _exitAbortCtrl   = null; // 出場驗證取消控制器
+let _xgxiAbortCtrl   = null; // XG/XI 組合拳取消控制器
+let _x611AbortCtrl   = null; // X6~X11 特化策略驗證取消控制器
+let _kangAbortCtrl   = null; // 亢龍有悔出場驗證取消控制器
 let _customBasket    = null; // 使用者自選 basket（null = 使用 DEFAULT_BASKET）
 
 // ============================================================================
@@ -413,6 +415,7 @@ function _openSimWindow(candles) {
           <button class="mc-bt-btn mc-bt-btn-signal" id="mcBtSignal" title="集合回測 30+ 個技術訊號策略 (S1 量增底部 / S20 葛蘭碧 / S33 GMMA 等),9 種出場組合對照,看哪個策略真有效">⚔️ 策略勝率</button>
           <button class="mc-bt-btn mc-bt-btn-combo" id="mcBtCombo" title="三件套組合驗證 — 你指定的 5 組組合,看「三亮」vs「過濾」哪個邏輯勝率高(業界稱 Triple Confirmation)">🎰 組合驗證</button>
           <button class="mc-bt-btn mc-bt-btn-exit" id="mcBtExit" title="出場策略驗證 — 3 進場 (W6/S11/S40) × 4 出場 (固定 20 天/追蹤停損 5%/跌破 MA20/RSI<60),看哪個出場最配哪個進場">🎯 出場驗證</button>
+          ${window.__userTier === 'vvvip' ? `<button class="mc-bt-btn mc-bt-btn-xgxi" id="mcBtXGXI" title="🔬 XG/XI 組合拳實驗 — 葛蘭碧強化版(XG1~XG4) + 一目強化版(XI1/XI4/XI7) vs 原始版本，驗證加條件後勝率是否提升（VVVIP 限定）">🔬 組合拳驗證</button><button class="mc-bt-btn mc-bt-btn-x611" id="mcBtX611" title="🧪 X6~X11 純K線特化驗證 — 跳空缺口/缺口強勢/盤整噴出/量縮突破/均線多排/強化黃叉 vs X1~X5 對照，決定是否正式導入（VVVIP 限定）">🧪 X6~X11驗證</button><button class="mc-bt-btn mc-bt-btn-kang" id="mcBtKang" title="🐉 亢龍有悔出場驗證 — E8 W14即出 / E9 W14出50%+MA20出50% / E10 量退潮 vs 現有出場規則，找出最佳飆股出場時機（VVVIP 限定）">🐉 亢龍有悔</button>` : ''}
           <button class="mc-bt-btn mc-bt-btn-basket" id="mcBtBasketEdit" title="自選回測 basket（最多 20 檔）">🧺 自選標的</button>
           <button class="mc-bt-btn mc-bt-btn-strategy" id="mcBtStrategy" title="針對 basket 每檔股票跑所有策略，找出最適合的進出場方式">🎯 操作建議</button>
           <button class="mc-bt-btn mc-bt-btn-sandbox" id="mcBtSandbox" title="生成未來模擬K柱，自動偵測進出場訊號（沙盒模式）">🧪 沙盒K線</button>
@@ -533,6 +536,72 @@ function _openSimWindow(candles) {
       }
       _exitAbortCtrl = null;
       _resetExitBtn();
+    });
+  });
+
+  // XG/XI 組合拳驗證按鈕（VVVIP 限定）
+  document.getElementById('mcBtXGXI')?.addEventListener('click', () => {
+    if (_xgxiAbortCtrl) {
+      _xgxiAbortCtrl.abort();
+      _xgxiAbortCtrl = null;
+      const btn = document.getElementById('mcBtXGXI');
+      if (btn) { btn.textContent = '🔬 組合拳驗證'; btn.classList.remove('mc-bt-btn-running'); }
+      return;
+    }
+    _runXGXIBacktest().catch(err => {
+      console.error('[xgxi-bt] 失敗:', err);
+      const panel = document.getElementById('mcBtPanel');
+      if (panel) {
+        panel.style.display = '';
+        panel.innerHTML = `<div class="mc-bt-error">組合拳驗證失敗: ${err.message}</div>`;
+      }
+      _xgxiAbortCtrl = null;
+      const btn = document.getElementById('mcBtXGXI');
+      if (btn) { btn.textContent = '🔬 組合拳驗證'; btn.classList.remove('mc-bt-btn-running'); }
+    });
+  });
+
+  // X6~X11 純K線特化驗證按鈕（VVVIP 限定）
+  document.getElementById('mcBtX611')?.addEventListener('click', () => {
+    if (_x611AbortCtrl) {
+      _x611AbortCtrl.abort();
+      _x611AbortCtrl = null;
+      const btn = document.getElementById('mcBtX611');
+      if (btn) { btn.textContent = '🧪 X6~X11驗證'; btn.classList.remove('mc-bt-btn-running'); }
+      return;
+    }
+    _runX611Backtest().catch(err => {
+      console.error('[x611-bt] 失敗:', err);
+      const panel = document.getElementById('mcBtPanel');
+      if (panel) {
+        panel.style.display = '';
+        panel.innerHTML = `<div class="mc-bt-error">X6~X11驗證失敗: ${err.message}</div>`;
+      }
+      _x611AbortCtrl = null;
+      const btn = document.getElementById('mcBtX611');
+      if (btn) { btn.textContent = '🧪 X6~X11驗證'; btn.classList.remove('mc-bt-btn-running'); }
+    });
+  });
+
+  // 亢龍有悔出場驗證按鈕（VVVIP 限定）
+  document.getElementById('mcBtKang')?.addEventListener('click', () => {
+    if (_kangAbortCtrl) {
+      _kangAbortCtrl.abort();
+      _kangAbortCtrl = null;
+      const btn = document.getElementById('mcBtKang');
+      if (btn) { btn.textContent = '🐉 亢龍有悔'; btn.classList.remove('mc-bt-btn-running'); }
+      return;
+    }
+    _runKangBacktest().catch(err => {
+      console.error('[kang-bt] 失敗:', err);
+      const panel = document.getElementById('mcBtPanel');
+      if (panel) {
+        panel.style.display = '';
+        panel.innerHTML = `<div class="mc-bt-error">亢龍有悔驗證失敗: ${err.message}</div>`;
+      }
+      _kangAbortCtrl = null;
+      const btn = document.getElementById('mcBtKang');
+      if (btn) { btn.textContent = '🐉 亢龍有悔'; btn.classList.remove('mc-bt-btn-running'); }
     });
   });
 
@@ -2818,4 +2887,724 @@ function _dengSayStart(stdDev, drift, s1, r1, volCoeff = 1.0) {
   }
 
   dengToast(text, { mood, duration: 4500 });
+}
+
+// ============================================================================
+// 🔬 XG/XI 組合拳驗證（v2.9，VVVIP 限定）
+// 葛蘭碧強化版(XG1~XG4) + 一目強化版(XI1/XI4/XI7) vs 原始版本對照
+// ============================================================================
+async function _runXGXIBacktest() {
+  if (window.__userTier !== 'vvvip') return;
+
+  const panel = document.getElementById('mcBtPanel');
+  if (!panel) return;
+
+  const { runExitBacktest, getDefaultExitRules, findBestExitPerEntry } = await import('./exit-backtest.js');
+  const { getDefaultBacktestBasket } = await import('./mc-backtest.js');
+  const { fetchHistory, toYahooSymbol } = await import('./api.js');
+
+  const basket    = (_customBasket && _customBasket.length > 0) ? _customBasket : getDefaultBacktestBasket();
+  const exitRules = getDefaultExitRules();
+  const total     = basket.length;
+
+  // 只跑 XG/XI + 對照組原始版本
+  const XGXI_ENTRIES = [
+    // ── 對照組（葛蘭碧原始版）────────────────────────────────────────
+    { id: 'S20', ids: ['S20'], label: 'S20 葛蘭碧買一（原始）', window: 1, note: '基準對照' },
+    { id: 'S21', ids: ['S21'], label: 'S21 葛蘭碧買二（原始）', window: 1, note: '基準對照' },
+    { id: 'S22', ids: ['S22'], label: 'S22 葛蘭碧買三（原始）', window: 1, note: '基準對照' },
+    { id: 'S23', ids: ['S23'], label: 'S23 葛蘭碧買四（原始）', window: 1, note: '基準對照' },
+    // ── 對照組（一目原始版）──────────────────────────────────────────
+    { id: 'S_ICHI_CLOUD',    ids: ['S_ICHI_CLOUD'],    label: '一目雲層上行（原始）',   window: 1, note: '基準對照' },
+    { id: 'S_ICHI_TK_CROSS', ids: ['S_ICHI_TK_CROSS'], label: '一目TK交叉（原始）',     window: 1, note: '基準對照' },
+    { id: 'S_ICHI_3GOOD',    ids: ['S_ICHI_3GOOD'],    label: '一目三役好轉（原始）',   window: 1, note: '基準對照' },
+    // ── XG 強化版（葛蘭碧組合拳）v2.9.1 修正 ────────────────────────
+    { id: 'XG1', ids: ['S20', 'S31'],           label: 'XG1 葛蘭碧買一+DMI確認',   window: 3, note: '均線突破+趨勢強度，v2.9實證+30%勝率' },
+    { id: 'XG2', ids: ['S21', 'S_ICHI_CLOUD'],  label: 'XG2 均線撐回+雲層上方',    window: 3, note: '拉回買點+一目雲層確認（同為中線型）' },
+    { id: 'XG3', ids: ['S22', 'S1'],            label: 'XG3 快速收復+量價齊揚',    window: 2, note: '假跌破急彈+量能確認，v2.9實證+18%勝率' },
+    { id: 'XG4', ids: ['S23', 'S30'],           label: 'XG4 超跌回均+PSY超賣',     window: 3, note: '均值回歸+心理線雙確認（S23樣本少）' },
+    // ── XI 強化版（一目組合拳）v2.9.1 修正：改用同屬趨勢型條件 ────────
+    { id: 'XI1', ids: ['S_ICHI_CLOUD', 'S33'],           label: 'XI1 雲層上行+EMA黃金交叉',  window: 3, note: '趨勢對趨勢，時間尺度匹配' },
+    { id: 'XI4', ids: ['S_ICHI_TK_CROSS', 'S_ICHI_CLOUD'], label: 'XI4 TK交叉+雲層上方',      window: 3, note: '純一目系列雙確認' },
+    { id: 'XI7', ids: ['S_ICHI_3GOOD', 'S33'],           label: 'XI7 三役好轉+EMA確認',      window: 3, note: '最強一目多頭+EMA趨勢確認' },
+  ];
+
+  // 只跑核心出場規則（省時）
+  const CORE_EXIT_RULES = exitRules.filter(r =>
+    ['fixed-20d', 'break-ma20', 'rsi-below-60', 'trailing-5pct'].includes(r.id)
+  );
+
+  const btn = document.getElementById('mcBtXGXI');
+  if (btn) { btn.textContent = '✕ 取消組合拳驗證'; btn.classList.add('mc-bt-btn-running'); }
+
+  panel.style.display = '';
+  panel.innerHTML = `
+    <div class="mc-bt-header">
+      <div>
+        <span class="mc-bt-title">🔬 XG/XI 組合拳驗證 — 葛蘭碧 & 一目強化版 vs 原始版</span>
+        <span class="mc-bt-meta" id="mcXGXIMeta">準備中...</span>
+      </div>
+    </div>
+    <div class="mc-cross-progress">
+      <div class="mc-cross-progress-bar"><div class="mc-cross-progress-fill" id="mcXGXIFill" style="width:0%"></div></div>
+      <div class="mc-cross-progress-text" id="mcXGXIText">拉取 ${total} 檔 K 線資料...</div>
+    </div>
+    <div class="mc-cross-list" id="mcXGXIList"></div>
+  `;
+
+  _xgxiAbortCtrl = new AbortController();
+  const signal = _xgxiAbortCtrl.signal;
+  const t0 = performance.now();
+
+  // 階段 1：拉 K 線
+  const items = [];
+  let etf0050Candles = null;
+  try {
+    const sym0050 = toYahooSymbol('0050');
+    panel.querySelector('#mcXGXIText').textContent = '拉取 0050 市況資料...';
+    etf0050Candles = await fetchHistory(sym0050, '1y');
+  } catch (err) {
+    console.warn('[xgxi-bt] 0050 拉取失敗:', err.message);
+  }
+  await new Promise(r => setTimeout(r, 300));
+
+  for (let i = 0; i < basket.length; i++) {
+    if (signal.aborted) {
+      panel.querySelector('#mcXGXIText').textContent = '已取消';
+      if (btn) { btn.textContent = '🔬 組合拳驗證'; btn.classList.remove('mc-bt-btn-running'); }
+      _xgxiAbortCtrl = null;
+      return;
+    }
+    const { code, name, type } = basket[i];
+    const pct = Math.round((i + 1) / total * 40);
+    panel.querySelector('#mcXGXIFill').style.width = pct + '%';
+    panel.querySelector('#mcXGXIText').textContent = `拉取 K 線 (${i + 1}/${total})：${name}`;
+    try {
+      const sym = toYahooSymbol(code);
+      const candles = await fetchHistory(sym, '1y');
+      items.push({ code, name, type, candles });
+    } catch {
+      items.push({ code, name, type, candles: null });
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+
+  // 階段 2：跑回測
+  panel.querySelector('#mcXGXIText').textContent = '跑回測中...';
+  let done = 0;
+
+  const result = await runExitBacktest(items, async (d, t) => {
+    done = d;
+    const pct = 40 + Math.round(d / t * 55);
+    panel.querySelector('#mcXGXIFill').style.width = pct + '%';
+    panel.querySelector('#mcXGXIText').textContent = `回測進度 (${d}/${t})...`;
+  }, {
+    sampleStep: 1,
+    signal,
+    entries:   XGXI_ENTRIES,
+    exitRules: CORE_EXIT_RULES,
+    etf0050Candles,
+  });
+
+  panel.querySelector('#mcXGXIFill').style.width = '100%';
+
+  if (signal.aborted || result.aborted) {
+    panel.querySelector('#mcXGXIText').textContent = '已取消';
+    if (btn) { btn.textContent = '🔬 組合拳驗證'; btn.classList.remove('mc-bt-btn-running'); }
+    _xgxiAbortCtrl = null;
+    return;
+  }
+
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  const bestList = findBestExitPerEntry(result.aggregated);
+
+  // ── 渲染結果 ────────────────────────────────────────────────────────
+  // 分三組：對照組葛蘭碧 / 對照組一目 / XG+XI 強化版
+  const GROUPS = [
+    { label: '📊 葛蘭碧 — 原始 vs 強化', ids: ['S20','S21','S22','S23','XG1','XG2','XG3','XG4'] },
+    { label: '☁️ 一目均衡表 — 原始 vs 強化', ids: ['S_ICHI_CLOUD','S_ICHI_TK_CROSS','S_ICHI_3GOOD','XI1','XI4','XI7'] },
+  ];
+
+  // 差異計算工具
+  const _diff = (enhanced, baseline) => {
+    if (!enhanced || !baseline) return '';
+    const d = ((enhanced - baseline) * 100).toFixed(1);
+    return d > 0 ? `<span style="color:#ef5350">+${d}%</span>` : `<span style="color:#26a69a">${d}%</span>`;
+  };
+
+  // 找對照組基準
+  const _baseline = (id) => bestList.find(e => e.id === id);
+
+  let html = `
+    <div class="mc-bt-header" style="margin-top:8px">
+      <span class="mc-bt-title">🔬 XG/XI 組合拳驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）</span>
+    </div>
+    <div style="font-size:11px;color:#8a8f99;padding:4px 8px;margin-bottom:4px">
+      ✦ 強化版 = 原始策略 + 第二條件（window=2~3天），驗證加條件後勝率是否提升<br>
+      ✦ 出場規則：固定20天 / 跌破MA20 / RSI&lt;60 / 追蹤停損5%（取最佳）
+    </div>`;
+
+  for (const group of GROUPS) {
+    html += `<div style="margin:8px 0 4px 8px;font-size:12px;font-weight:600;color:#facc15">${group.label}</div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead>
+        <tr style="color:#8a8f99;border-bottom:1px solid #30363d">
+          <th style="text-align:left;padding:3px 6px">策略</th>
+          <th style="text-align:right;padding:3px 6px">次數</th>
+          <th style="text-align:right;padding:3px 6px">勝率</th>
+          <th style="text-align:right;padding:3px 6px">均報</th>
+          <th style="text-align:right;padding:3px 6px">最佳出場</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    for (const id of group.ids) {
+      const entry = bestList.find(e => e.id === id);
+      if (!entry) continue;
+      const best = entry.bestExit;
+      const c = best?.targets?.['1pct'];
+      const isEnhanced = id.startsWith('XG') || id.startsWith('XI');
+      const rowColor = isEnhanced ? 'rgba(250,204,21,0.05)' : '';
+
+      // 找對應對照組
+      let baselineId = null;
+      if (id === 'XG1') baselineId = 'S20';
+      else if (id === 'XG2') baselineId = 'S21';
+      else if (id === 'XG3') baselineId = 'S22';
+      else if (id === 'XG4') baselineId = 'S23';
+      else if (id === 'XI1') baselineId = 'S_ICHI_CLOUD';
+      else if (id === 'XI4') baselineId = 'S_ICHI_TK_CROSS';
+      else if (id === 'XI7') baselineId = 'S_ICHI_3GOOD';
+
+      const baseEntry = baselineId ? bestList.find(e => e.id === baselineId) : null;
+      const baseC = baseEntry?.bestExit?.targets?.['1pct'];
+
+      const wr = c?.winRate != null ? (c.winRate * 100).toFixed(1) + '%' : '—';
+      const ar = c?.avgReturn != null ? (c.avgReturn * 100).toFixed(1) + '%' : '—';
+      const trades = c?.trades ?? 0;
+
+      const wrDiff = isEnhanced && baseC?.winRate != null && c?.winRate != null
+        ? _diff(c.winRate, baseC.winRate) : '';
+      const arDiff = isEnhanced && baseC?.avgReturn != null && c?.avgReturn != null
+        ? _diff(c.avgReturn, baseC.avgReturn) : '';
+
+      html += `<tr style="border-bottom:1px solid #21262d;background:${rowColor}">
+        <td style="padding:4px 6px;color:${isEnhanced ? '#facc15' : '#e6edf3'}">
+          ${isEnhanced ? '↑ ' : ''}${entry.label}
+          ${isEnhanced ? `<br><span style="color:#8a8f99;font-size:10px">${entry.note}</span>` : ''}
+        </td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99">${trades}</td>
+        <td style="text-align:right;padding:4px 6px">${wr} ${wrDiff}</td>
+        <td style="text-align:right;padding:4px 6px">${ar} ${arDiff}</td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99;font-size:10px">${best?.label ?? '—'}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  html += `<div style="font-size:10px;color:#8a8f99;padding:6px 8px;margin-top:4px">
+    ✦ 差異值（紅=提升 / 綠=下降）= 強化版 − 原始版<br>
+    ✦ 觸發次數少（&lt;5）的結果不可信，請以大樣本為主<br>
+    ✦ 建議搭配「出場驗證」完整版做更深入比較
+  </div>
+  <div style="padding:6px 8px;margin-top:2px">
+    <button id="mcXGXICopyBtn" class="mc-bt-copy-btn" style="font-size:11px">📋 複製結果</button>
+  </div>`;
+
+  panel.querySelector('#mcXGXIList').innerHTML = html;
+  panel.querySelector('#mcXGXIMeta').textContent = `完成 ${items.filter(i=>i.candles).length} 檔，耗時 ${elapsed}s`;
+
+  // 複製按鈕邏輯
+  panel.querySelector('#mcXGXICopyBtn')?.addEventListener('click', () => {
+    const copyBtn = panel.querySelector('#mcXGXICopyBtn');
+    const lines = [
+      `🔬 XG/XI 組合拳驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）`,
+      `v2.9.1 修正版：葛蘭碧強化(XG) + 一目強化(XI) vs 原始對照`,
+      `${'─'.repeat(60)}`,
+      `策略\t次數\t勝率\t均報\t最佳出場\t備註`,
+    ];
+    for (const group of GROUPS) {
+      lines.push('');
+      lines.push(group.label);
+      for (const id of group.ids) {
+        const entry = bestList.find(e => e.id === id);
+        if (!entry) continue;
+        const best = entry.bestExit;
+        const c = best?.targets?.['1pct'];
+        const isEnhanced = id.startsWith('XG') || id.startsWith('XI');
+        const wr  = c?.winRate  != null ? (c.winRate  * 100).toFixed(1) + '%' : '—';
+        const ar  = c?.avgReturn != null ? (c.avgReturn * 100).toFixed(1) + '%' : '—';
+        const trades = c?.trades ?? 0;
+
+        // 對照組基準
+        let baselineId = null;
+        if (id === 'XG1') baselineId = 'S20';
+        else if (id === 'XG2') baselineId = 'S21';
+        else if (id === 'XG3') baselineId = 'S22';
+        else if (id === 'XG4') baselineId = 'S23';
+        else if (id === 'XI1') baselineId = 'S_ICHI_CLOUD';
+        else if (id === 'XI4') baselineId = 'S_ICHI_TK_CROSS';
+        else if (id === 'XI7') baselineId = 'S_ICHI_3GOOD';
+        const baseEntry = baselineId ? bestList.find(e => e.id === baselineId) : null;
+        const baseC = baseEntry?.bestExit?.targets?.['1pct'];
+
+        let diffStr = '';
+        if (isEnhanced && baseC) {
+          const wrD = c?.winRate  != null && baseC.winRate  != null ? ((c.winRate  - baseC.winRate)  * 100).toFixed(1) : null;
+          const arD = c?.avgReturn != null && baseC.avgReturn != null ? ((c.avgReturn - baseC.avgReturn) * 100).toFixed(1) : null;
+          if (wrD != null) diffStr = `勝率${wrD > 0 ? '+' : ''}${wrD}% 均報${arD > 0 ? '+' : ''}${arD}%`;
+        }
+
+        const prefix = isEnhanced ? '↑ ' : '  ';
+        lines.push(`${prefix}${entry.label}\t${trades}\t${wr}\t${ar}\t${best?.label ?? '—'}\t${diffStr || entry.note || ''}`);
+      }
+    }
+    lines.push('');
+    lines.push('✦ 差異值 = 強化版 − 原始版（正值=提升）');
+    lines.push('✦ 觸發次數 < 5 的結果不可信');
+    lines.push(`✦ basket: ${items.filter(i=>i.candles).map(i=>i.name).join('、')}`);
+
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      if (copyBtn) { copyBtn.textContent = '✅ 已複製！'; setTimeout(() => { copyBtn.textContent = '📋 複製結果'; }, 2000); }
+    }).catch(() => {
+      if (copyBtn) copyBtn.textContent = '❌ 複製失敗';
+    });
+  });
+
+  if (btn) { btn.textContent = '🔬 組合拳驗證'; btn.classList.remove('mc-bt-btn-running'); }
+  _xgxiAbortCtrl = null;
+}
+
+// ============================================================================
+// 🧪 X6~X11 純K線特化策略驗證（v2.9，VVVIP 限定）
+// 在正式導入 strategy.js 前先用 MC 回測驗證有效性
+// 對照組：X1/X2/X5 現有實證版本
+// ============================================================================
+async function _runX611Backtest() {
+  if (window.__userTier !== 'vvvip') return;
+
+  const panel = document.getElementById('mcBtPanel');
+  if (!panel) return;
+
+  const { runExitBacktest, getDefaultExitRules, findBestExitPerEntry } = await import('./exit-backtest.js');
+  const { getDefaultBacktestBasket } = await import('./mc-backtest.js');
+  const { fetchHistory, toYahooSymbol } = await import('./api.js');
+
+  const basket    = (_customBasket && _customBasket.length > 0) ? _customBasket : getDefaultBacktestBasket();
+  const exitRules = getDefaultExitRules();
+  const total     = basket.length;
+
+  // 只跑 X6~X11 + 對照組，核心出場規則省時
+  const X611_ENTRIES = [
+    { id: 'X1_ref', ids: ['X1'], label: 'X1 黃金比例（對照）',   window: 1, note: '實證基準' },
+    { id: 'X2_ref', ids: ['X2'], label: 'X2 天黑請閉眼（對照）', window: 1, note: '實證基準' },
+    { id: 'X5_ref', ids: ['X5'], label: 'X5 潛龍勿用（對照）', window: 1, note: '實證基準' },
+    { id: 'X6',  ids: ['X6'],  label: 'X6 跳空缺口突破',     window: 1, note: '跳空≥1.5% + 放量 + MA20上' },
+    { id: 'X7',  ids: ['X7'],  label: 'X7 缺口未回補強勢',   window: 1, note: '近期缺口開放 + RSI>50' },
+    { id: 'X6',  ids: ['X6'],  label: 'X6 見龍在田',          window: 1, note: '5日波動<3%盤整後放量突破，實證達標' },
+    { id: 'X9',  ids: ['X9'],  label: 'X9 量縮後放量突破',   window: 1, note: '連3日縮量後爆量突破前高' },
+    { id: 'X10', ids: ['X10'], label: 'X10 均線多頭排列完成', window: 1, note: 'EMA三線剛完成多頭排列' },
+    { id: 'X11', ids: ['X11'], label: 'X11 強化黃金交叉',    window: 1, note: 'EMA穿越+量+MACD三重確認' },
+  ];
+
+  const CORE_RULES = exitRules.filter(r =>
+    ['fixed-20d', 'break-ma20', 'rsi-below-60', 'trailing-5pct'].includes(r.id)
+  );
+
+  const btn = document.getElementById('mcBtX611');
+  if (btn) { btn.textContent = '✕ 取消驗證'; btn.classList.add('mc-bt-btn-running'); }
+
+  panel.style.display = '';
+  panel.innerHTML = `
+    <div class="mc-bt-header">
+      <div>
+        <span class="mc-bt-title">🧪 X6~X11 純K線特化驗證 — vs X1/X2/X5 對照</span>
+        <span class="mc-bt-meta" id="mcX611Meta">準備中...</span>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#8a8f99;padding:4px 8px 0">
+      ⚠️ 需已覆蓋含新 condId 的 screener.js，否則 X6~X11 觸發次數全為 0
+    </div>
+    <div class="mc-cross-progress">
+      <div class="mc-cross-progress-bar"><div class="mc-cross-progress-fill" id="mcX611Fill" style="width:0%"></div></div>
+      <div class="mc-cross-progress-text" id="mcX611Text">拉取 ${total} 檔 K 線資料...</div>
+    </div>
+    <div class="mc-cross-list" id="mcX611List"></div>
+  `;
+
+  _x611AbortCtrl = new AbortController();
+  const signal = _x611AbortCtrl.signal;
+  const t0 = performance.now();
+
+  // 拉 K 線
+  const items = [];
+  let etf0050Candles = null;
+  try {
+    panel.querySelector('#mcX611Text').textContent = '拉取 0050 市況資料...';
+    etf0050Candles = await fetchHistory(toYahooSymbol('0050'), '1y');
+  } catch (_) {}
+  await new Promise(r => setTimeout(r, 300));
+
+  for (let i = 0; i < basket.length; i++) {
+    if (signal.aborted) {
+      if (btn) { btn.textContent = '🧪 X6~X11驗證'; btn.classList.remove('mc-bt-btn-running'); }
+      _x611AbortCtrl = null;
+      return;
+    }
+    const { code, name, type } = basket[i];
+    panel.querySelector('#mcX611Fill').style.width = Math.round((i + 1) / total * 40) + '%';
+    panel.querySelector('#mcX611Text').textContent = `拉取 K 線 (${i + 1}/${total})：${name}`;
+    try {
+      const candles = await fetchHistory(toYahooSymbol(code), '1y');
+      items.push({ code, name, type, candles });
+    } catch {
+      items.push({ code, name, type, candles: null });
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+
+  panel.querySelector('#mcX611Text').textContent = '跑回測中...';
+
+  const result = await runExitBacktest(items, async (d, t) => {
+    panel.querySelector('#mcX611Fill').style.width = (40 + Math.round(d / t * 55)) + '%';
+    panel.querySelector('#mcX611Text').textContent = `回測進度 (${d}/${t})...`;
+  }, { sampleStep: 1, signal, entries: X611_ENTRIES, exitRules: CORE_RULES, etf0050Candles });
+
+  panel.querySelector('#mcX611Fill').style.width = '100%';
+
+  if (signal.aborted || result.aborted) {
+    if (btn) { btn.textContent = '🧪 X6~X11驗證'; btn.classList.remove('mc-bt-btn-running'); }
+    _x611AbortCtrl = null;
+    return;
+  }
+
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  const bestList = findBestExitPerEntry(result.aggregated);
+
+  // 判斷是否所有 X6~X11 都是 0 次（screener.js 未更新）
+  const x6_11ids = ['X6'];  // 只保留 X6 見龍在田（其餘已移除）
+  const allZero = x6_11ids.every(id => {
+    const e = bestList.find(b => b.id === id);
+    return !e || (e.bestExit?.targets?.['1pct']?.trades ?? 0) === 0;
+  });
+
+  const GROUPS = [
+    { label: '📊 對照組（X1~X5 實證版）', ids: ['X1_ref','X2_ref','X5_ref'] },
+    { label: '🧪 X6~X11 新策略（實驗中）', ids: x6_11ids },
+  ];
+
+  const _fmt = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+  const _diff = (a, refId) => {
+    const refE = bestList.find(e => e.id === refId);
+    const refC = refE?.bestExit?.targets?.['1pct'];
+    const myE  = bestList.find(e => e.id === a);
+    const myC  = myE?.bestExit?.targets?.['1pct'];
+    if (!refC?.winRate || !myC?.winRate) return '';
+    const d = ((myC.winRate - refC.winRate) * 100).toFixed(1);
+    return Number(d) > 0
+      ? `<span style="color:#ef5350">+${d}%</span>`
+      : `<span style="color:#26a69a">${d}%</span>`;
+  };
+
+  let html = `
+    <div class="mc-bt-header" style="margin-top:8px">
+      <span class="mc-bt-title">🧪 X6~X11 驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）</span>
+    </div>`;
+
+  if (allZero) {
+    html += `<div style="padding:12px 8px;color:#f59e0b;font-size:12px;background:rgba(245,158,11,0.1);border-radius:6px;margin:8px">
+      ⚠️ X6~X11 觸發次數全為 0，請先覆蓋含新 condId 的 screener.js 再重跑
+    </div>`;
+  }
+
+  html += `<div style="font-size:11px;color:#8a8f99;padding:4px 8px;margin-bottom:4px">
+    ✦ 差異值 = vs X1 對照（正紅=優於X1，負綠=不如X1）<br>
+    ✦ 觸發次數 &lt; 5 結果不可信｜目標：勝率 ≥ X1 且均報 &gt; 0
+  </div>`;
+
+  const copyLines = [
+    `🧪 X6~X11 純K線特化驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）`,
+    `對照：X1/X2/X5 實證版，目標：勝率≥X1 且均報>0`,
+    '─'.repeat(60),
+    '策略\t次數\t勝率\t均報\t最佳出場\t備註',
+  ];
+
+  for (const group of GROUPS) {
+    html += `<div style="margin:8px 0 4px 8px;font-size:12px;font-weight:600;color:#facc15">${group.label}</div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="color:#8a8f99;border-bottom:1px solid #30363d">
+        <th style="text-align:left;padding:3px 6px">策略</th>
+        <th style="text-align:right;padding:3px 6px">次數</th>
+        <th style="text-align:right;padding:3px 6px">勝率</th>
+        <th style="text-align:right;padding:3px 6px">均報</th>
+        <th style="text-align:right;padding:3px 6px">最佳出場</th>
+      </tr></thead><tbody>`;
+
+    copyLines.push('');
+    copyLines.push(group.label);
+
+    for (const id of group.ids) {
+      const entry = bestList.find(e => e.id === id);
+      if (!entry) continue;
+      const best   = entry.bestExit;
+      const c      = best?.targets?.['1pct'];
+      const isNew  = x6_11ids.includes(id);
+      const wr     = _fmt(c?.winRate);
+      const ar     = _fmt(c?.avgReturn);
+      const trades = c?.trades ?? 0;
+      const diff   = isNew ? _diff(id, 'X1_ref') : '';
+      const verdict = isNew && trades >= 5
+        ? (c?.winRate > 0.34 && c?.avgReturn > 0
+            ? '<span style="color:#ef5350;font-weight:600">✅ 達標</span>'
+            : '<span style="color:#26a69a">❌ 未達標</span>')
+        : '';
+
+      html += `<tr style="border-bottom:1px solid #21262d;background:${isNew ? 'rgba(250,204,21,0.04)' : ''}">
+        <td style="padding:4px 6px;color:${isNew ? '#facc15' : '#e6edf3'}">
+          ${entry.label} ${verdict}
+          ${isNew ? `<br><span style="color:#8a8f99;font-size:10px">${entry.note}</span>` : ''}
+        </td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99">${trades}</td>
+        <td style="text-align:right;padding:4px 6px">${wr} ${diff}</td>
+        <td style="text-align:right;padding:4px 6px">${ar}</td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99;font-size:10px">${best?.label ?? '—'}</td>
+      </tr>`;
+
+      const diffTxt = isNew && bestList.find(e=>e.id==='X1_ref')?.bestExit?.targets?.['1pct']?.winRate != null && c?.winRate != null
+        ? `vs X1 ${((c.winRate - (bestList.find(e=>e.id==='X1_ref').bestExit.targets['1pct'].winRate)) * 100).toFixed(1)}%` : '';
+      copyLines.push(`${isNew ? '↑ ' : '  '}${entry.label}\t${trades}\t${wr}\t${ar}\t${best?.label ?? '—'}\t${diffTxt || entry.note}`);
+    }
+    html += `</tbody></table>`;
+  }
+
+  html += `<div style="font-size:10px;color:#8a8f99;padding:6px 8px;margin-top:4px">
+    ✦ 達標條件：勝率 &gt; X1（~34%）且均報 &gt; 0%<br>
+    ✦ 達標 → 正式覆蓋 strategy.js｜未達標 → 調整條件後再測
+  </div>
+  <div style="padding:6px 8px">
+    <button id="mcX611CopyBtn" class="mc-bt-copy-btn" style="font-size:11px">📋 複製結果</button>
+  </div>`;
+
+  panel.querySelector('#mcX611List').innerHTML = html;
+  panel.querySelector('#mcX611Meta').textContent = `完成 ${items.filter(i=>i.candles).length} 檔，耗時 ${elapsed}s`;
+
+  panel.querySelector('#mcX611CopyBtn')?.addEventListener('click', () => {
+    const copyBtn = panel.querySelector('#mcX611CopyBtn');
+    copyLines.push('');
+    copyLines.push(`✦ basket: ${items.filter(i=>i.candles).map(i=>i.name).join('、')}`);
+    navigator.clipboard.writeText(copyLines.join('\n')).then(() => {
+      if (copyBtn) { copyBtn.textContent = '✅ 已複製！'; setTimeout(() => { copyBtn.textContent = '📋 複製結果'; }, 2000); }
+    }).catch(() => { if (copyBtn) copyBtn.textContent = '❌ 複製失敗'; });
+  });
+
+  if (btn) { btn.textContent = '🧪 X6~X11驗證'; btn.classList.remove('mc-bt-btn-running'); }
+  _x611AbortCtrl = null;
+}
+
+// ============================================================================
+// 🐉 亢龍有悔出場驗證（v2.9，VVVIP 限定）
+// 比較 E8/E9/E10 三種新出場規則 vs 現有 MA20/追蹤停損/固定20天
+// 進場固定用 X2（飆股加速）和 X1+X2（妖股雙確認），聚焦飆股場景
+// ============================================================================
+async function _runKangBacktest() {
+  if (window.__userTier !== 'vvvip') return;
+
+  const panel = document.getElementById('mcBtPanel');
+  if (!panel) return;
+
+  const { runExitBacktest, findBestExitPerEntry } = await import('./exit-backtest.js');
+  const { getDefaultBacktestBasket } = await import('./mc-backtest.js');
+  const { fetchHistory, toYahooSymbol } = await import('./api.js');
+
+  const basket = (_customBasket && _customBasket.length > 0) ? _customBasket : getDefaultBacktestBasket();
+  const total  = basket.length;
+
+  // 進場：X2 單獨 + X1+X2 雙確認（飆股場景）
+  const KANG_ENTRIES = [
+    { id: 'X2_kang',   ids: ['X2'],       label: 'X2 天黑請閉眼',    window: 1, note: '飆股加速進場', isYaogu: true },
+    { id: 'X1X2_kang', ids: ['X1','X2'],  label: 'X1+X2 妖股雙確認', window: 1, note: '最強妖股進場', isYaogu: true },
+    { id: 'X6_kang',   ids: ['X6'],       label: 'X6 見龍在田',       window: 1, note: '盤整噴出進場', isYaogu: true },
+  ];
+
+  // 出場規則：現有 vs 新三種
+  const KANG_EXIT_RULES = [
+    { id: 'fixed-20d',     label: '固定 20 天',             desc: '基準對照' },
+    { id: 'break-ma20',    label: '跌破 MA20',              desc: '現有主力出場' },
+    { id: 'trailing-5pct', label: '追蹤停損 5%',            desc: '現有止損出場' },
+    { id: 'x1-exit',       label: 'X1 消失出場',            desc: '妖股狀態機' },
+    { id: 'w14-exit',      label: '🐉 亢龍有悔（W14）',     desc: 'MACD高位死叉，純K線計算' },
+    { id: 'w14-half-ma20', label: '🐉 分批亢龍（W14+MA20）',desc: 'W14出50%+MA20出50%' },
+    { id: 'vol-fade-exit', label: '🌊 量退潮',               desc: '連2日量縮收黑，最早偵測' },
+    { id: 'x2-exit',       label: '🌑 X2 消失出場',          desc: '飆股加速訊號消失即離場' },
+  ];
+
+  const btn = document.getElementById('mcBtKang');
+  if (btn) { btn.textContent = '✕ 取消驗證'; btn.classList.add('mc-bt-btn-running'); }
+
+  panel.style.display = '';
+  panel.innerHTML = `
+    <div class="mc-bt-header">
+      <div>
+        <span class="mc-bt-title">🐉 亢龍有悔出場驗證 — E8/E9/E10 vs 現有出場規則</span>
+        <span class="mc-bt-meta" id="mcKangMeta">準備中...</span>
+      </div>
+    </div>
+    <div style="font-size:11px;color:#8a8f99;padding:4px 8px 0">
+      進場：X2 飆股加速 / X1+X2 妖股雙確認 / X6 見龍在田<br>
+      出場：固定20天 / MA20 / 追蹤5% / X1消失 / W14即出 / W14+MA20分批 / 量退潮
+    </div>
+    <div class="mc-cross-progress">
+      <div class="mc-cross-progress-bar"><div class="mc-cross-progress-fill" id="mcKangFill" style="width:0%"></div></div>
+      <div class="mc-cross-progress-text" id="mcKangText">拉取 ${total} 檔 K 線資料...</div>
+    </div>
+    <div class="mc-cross-list" id="mcKangList"></div>
+  `;
+
+  _kangAbortCtrl = new AbortController();
+  const signal = _kangAbortCtrl.signal;
+  const t0 = performance.now();
+
+  // 拉 K 線
+  const items = [];
+  let etf0050Candles = null;
+  try {
+    panel.querySelector('#mcKangText').textContent = '拉取 0050 市況資料...';
+    etf0050Candles = await fetchHistory(toYahooSymbol('0050'), '1y');
+  } catch (_) {}
+  await new Promise(r => setTimeout(r, 300));
+
+  for (let i = 0; i < basket.length; i++) {
+    if (signal.aborted) {
+      if (btn) { btn.textContent = '🐉 亢龍有悔'; btn.classList.remove('mc-bt-btn-running'); }
+      _kangAbortCtrl = null;
+      return;
+    }
+    const { code, name, type } = basket[i];
+    panel.querySelector('#mcKangFill').style.width = Math.round((i + 1) / total * 40) + '%';
+    panel.querySelector('#mcKangText').textContent = `拉取 K 線 (${i + 1}/${total})：${name}`;
+    try {
+      const candles = await fetchHistory(toYahooSymbol(code), '1y');
+      items.push({ code, name, type, candles });
+    } catch {
+      items.push({ code, name, type, candles: null });
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+
+  panel.querySelector('#mcKangText').textContent = '跑回測中...';
+
+  const result = await runExitBacktest(items, async (d, t) => {
+    panel.querySelector('#mcKangFill').style.width = (40 + Math.round(d / t * 55)) + '%';
+    panel.querySelector('#mcKangText').textContent = `回測進度 (${d}/${t})...`;
+  }, { sampleStep: 1, signal, entries: KANG_ENTRIES, exitRules: KANG_EXIT_RULES, etf0050Candles });
+
+  panel.querySelector('#mcKangFill').style.width = '100%';
+
+  if (signal.aborted || result.aborted) {
+    if (btn) { btn.textContent = '🐉 亢龍有悔'; btn.classList.remove('mc-bt-btn-running'); }
+    _kangAbortCtrl = null;
+    return;
+  }
+
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  const bestList = findBestExitPerEntry(result.aggregated);
+
+  // 渲染：每個進場策略 × 所有出場規則對照表
+  const NEW_EXITS = ['w14-exit', 'w14-half-ma20', 'vol-fade-exit'];
+  const copyLines = [
+    `🐉 亢龍有悔出場驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）`,
+    '進場：X2 / X1+X2 / X6　出場：7種規則對照',
+    '─'.repeat(70),
+  ];
+
+  let html = `
+    <div class="mc-bt-header" style="margin-top:8px">
+      <span class="mc-bt-title">🐉 亢龍有悔驗證結果（${items.filter(i=>i.candles).length} 檔 × ${elapsed}s）</span>
+    </div>
+    <div style="font-size:11px;color:#8a8f99;padding:4px 8px;margin-bottom:6px">
+      ✦ 新出場（🐉/🌊）= 亢龍有悔系列，紅色框線標示<br>
+      ✦ 目標：新出場均報 &gt; 跌破MA20，且勝率不低於追蹤停損5%
+    </div>`;
+
+  for (const entry of KANG_ENTRIES) {
+    const aggEntry = result.aggregated[entry.id];
+    if (!aggEntry) continue;
+
+    copyLines.push('');
+    copyLines.push(`【進場：${entry.label}】`);
+    copyLines.push('出場規則\t次數\t勝率(1%)\t均報\t平均持有');
+
+    html += `<div style="margin:10px 0 4px 8px;font-size:12px;font-weight:600;color:#e6edf3">
+      進場：${entry.label} <span style="color:#8a8f99;font-weight:400;font-size:11px">${entry.note}</span>
+    </div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px">
+      <thead><tr style="color:#8a8f99;border-bottom:1px solid #30363d">
+        <th style="text-align:left;padding:3px 8px">出場規則</th>
+        <th style="text-align:right;padding:3px 6px">次數</th>
+        <th style="text-align:right;padding:3px 6px">勝率(1%)</th>
+        <th style="text-align:right;padding:3px 6px">均報</th>
+        <th style="text-align:right;padding:3px 6px">平均持有</th>
+      </tr></thead><tbody>`;
+
+    // 找 MA20 基準
+    const baseC = aggEntry.exitRules?.['break-ma20']?.targets?.['1pct'];
+
+    for (const exitRule of KANG_EXIT_RULES) {
+      const ruleData = aggEntry.exitRules?.[exitRule.id]?.targets?.['1pct'];
+      if (!ruleData) continue;
+      const isNew = NEW_EXITS.includes(exitRule.id);
+      const trades = ruleData.trades ?? 0;
+      const wr  = ruleData.winRate   != null ? (ruleData.winRate   * 100).toFixed(1) + '%' : '—';
+      const ar  = ruleData.avgReturn != null ? (ruleData.avgReturn * 100).toFixed(1) + '%' : '—';
+      const hd  = ruleData.avgHoldDays != null ? ruleData.avgHoldDays.toFixed(1) + '天' : '—';
+
+      // vs MA20 差異
+      let diffHtml = '';
+      if (isNew && baseC?.avgReturn != null && ruleData.avgReturn != null) {
+        const d = ((ruleData.avgReturn - baseC.avgReturn) * 100).toFixed(1);
+        diffHtml = Number(d) > 0
+          ? ` <span style="color:#ef5350;font-size:10px">+${d}%↑</span>`
+          : ` <span style="color:#26a69a;font-size:10px">${d}%↓</span>`;
+      }
+
+      const rowStyle = isNew
+        ? 'border-bottom:1px solid #30363d;background:rgba(239,83,80,0.06);border-left:2px solid rgba(239,83,80,0.4)'
+        : 'border-bottom:1px solid #21262d';
+
+      html += `<tr style="${rowStyle}">
+        <td style="padding:4px 8px;color:${isNew ? '#ef5350' : '#8a8f99'}">${exitRule.label}</td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99">${trades}</td>
+        <td style="text-align:right;padding:4px 6px">${wr}</td>
+        <td style="text-align:right;padding:4px 6px">${ar}${diffHtml}</td>
+        <td style="text-align:right;padding:4px 6px;color:#8a8f99">${hd}</td>
+      </tr>`;
+
+      copyLines.push(`${isNew ? '🐉 ' : '  '}${exitRule.label}\t${trades}\t${wr}\t${ar}\t${hd}`);
+    }
+    html += `</tbody></table>`;
+  }
+
+  html += `<div style="font-size:10px;color:#8a8f99;padding:6px 8px;margin-top:4px">
+    ✦ 差異值 = 新出場均報 − MA20出場均報（正紅=優於MA20）<br>
+    ✦ 平均持有天數越短 = 出場越早（量退潮應最短，W14次之）<br>
+    ✦ 達標：均報 &gt; MA20 且 平均持有 &lt; MA20
+  </div>
+  <div style="padding:6px 8px">
+    <button id="mcKangCopyBtn" class="mc-bt-copy-btn" style="font-size:11px">📋 複製結果</button>
+  </div>`;
+
+  panel.querySelector('#mcKangList').innerHTML = html;
+  panel.querySelector('#mcKangMeta').textContent = `完成 ${items.filter(i=>i.candles).length} 檔，耗時 ${elapsed}s`;
+
+  panel.querySelector('#mcKangCopyBtn')?.addEventListener('click', () => {
+    const copyBtn = panel.querySelector('#mcKangCopyBtn');
+    copyLines.push('');
+    copyLines.push(`✦ basket: ${items.filter(i=>i.candles).map(i=>i.name).join('、')}`);
+    navigator.clipboard.writeText(copyLines.join('\n')).then(() => {
+      if (copyBtn) { copyBtn.textContent = '✅ 已複製！'; setTimeout(() => { copyBtn.textContent = '📋 複製結果'; }, 2000); }
+    }).catch(() => { if (copyBtn) copyBtn.textContent = '❌ 複製失敗'; });
+  });
+
+  if (btn) { btn.textContent = '🐉 亢龍有悔'; btn.classList.remove('mc-bt-btn-running'); }
+  _kangAbortCtrl = null;
 }

@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { matchSignals } from './signal-scan.js';
-import { calcMA, calcRSI } from './indicators.js';
+import { calcMA, calcRSI, calcMACD } from './indicators.js';
 import { getPeersOf } from './industry-groups.js';
 
 const HORIZONS_TARGETS = [0.01, 0.02, 0.03];   // 1% / 2% / 3% 標的
@@ -55,12 +55,12 @@ const X_ENTRIES = [
   { id: 'X4',     ids: ['X4'],      label: 'X4 何時輪到我',     window: 1, note: '族群輪動 — 跨股' },
   { id: 'X1↑',    ids: ['X1'],      label: 'X1 + 市況↑',        window: 1, note: '三軸共振 + 大盤多頭', marketFilter: 'ma20up' },
   { id: 'X2↑',    ids: ['X2'],      label: 'X2 + 市況↑',        window: 1, note: '飆股加速 + 大盤多頭', marketFilter: 'ma20up' },
-  // X5 v2.8 候選策略 — 量證明一切（早期介入型）
+  // X5 v2.8 候選策略 — 潛龍勿用（早期介入型）
   // 設計目的：比 X2 早 5-10 天抓到主力開始建倉爆量
   // 使用 10日均量×2.5（近期相對爆量），不用 30日均量×3（容易被前段大量拉高基期）
   // 條件：① vol_surge_short×2.5 ② gain_10d≥10% ③ RSI≥60 ④ 站上MA20 ⑤ MA20連2天上升
   // 實證前為候選策略，不影響五燈獎評分
-  { id: 'X5',     ids: ['X5'],      label: 'X5 量證明一切',     window: 1, note: '早期爆量介入 — 比X2早進場' },
+  { id: 'X5',     ids: ['X5'],      label: 'X5 潛龍勿用',     window: 1, note: '早期爆量介入 — 比X2早進場' },
   { id: 'X5↑',    ids: ['X5'],      label: 'X5 + 市況↑',        window: 1, note: '早期爆量 + 大盤多頭', marketFilter: 'ma20up' },
   // S40 系列驗證 — 紅三兵單獨 + 組合（v2.8 麗正案例啟發）
   // 目的：驗證「紅三兵是否是好的進場訊號」，以及搭配什麼最好
@@ -100,6 +100,64 @@ const YAOGU_ENTRIES = [
   },
 ];
 
+// ─── XG 葛蘭碧強化組合（v2.9 組合拳實驗，VVVIP 限定）──────────────────────
+// 設計：葛蘭碧標準版（S20~S23）+ 強化條件，驗證加條件後勝率是否提升
+// v2.9.1 修正：XG2 改用一目雲層確認（S_STRONG 條件太嚴導致逆效果）
+const XG_ENTRIES = [
+  {
+    id: 'XG1', ids: ['S20', 'S31'], label: 'XG1 葛蘭碧買一+DMI確認', window: 3,
+    note: '均線突破+趨勢強度，過濾假穿越。v2.9實證+30%勝率',
+  },
+  {
+    id: 'XG2', ids: ['S21', 'S_ICHI_CLOUD'], label: 'XG2 均線撐回+雲層上方', window: 3,
+    note: '拉回買點+一目雲層結構確認（同為中線型，避免短線衝突）',
+  },
+  {
+    id: 'XG3', ids: ['S22', 'S1'], label: 'XG3 快速收復+量價齊揚', window: 2,
+    note: '假跌破急彈+量能確認。v2.9實證+18%勝率',
+  },
+  {
+    id: 'XG4', ids: ['S23', 'S30'], label: 'XG4 超跌回均+PSY超賣', window: 3,
+    note: '均值回歸+心理線超賣雙確認（S23樣本少，結果供參考）',
+  },
+];
+
+// ─── XI 一目均衡表強化組合（v2.9 組合拳實驗，VVVIP 限定）────────────────────
+// v2.9.1 修正：改用同屬趨勢型的條件，避免一目（中長線）與量能（短線）時間尺度衝突
+// 原始版加 S1/S31（短線爆發型）導致勝率歸零，改用 EMA/一目系列互補
+const XI_ENTRIES = [
+  {
+    id: 'XI1', ids: ['S_ICHI_CLOUD', 'S33'], label: 'XI1 雲層上行+EMA黃金交叉', window: 3,
+    note: '雲層站上+EMA5穿EMA20，趨勢對趨勢，時間尺度匹配',
+  },
+  {
+    id: 'XI4', ids: ['S_ICHI_TK_CROSS', 'S_ICHI_CLOUD'], label: 'XI4 TK交叉+雲層上方', window: 3,
+    note: '純一目系列雙確認，TK交叉+站上雲層，同系指標互補',
+  },
+  {
+    id: 'XI7', ids: ['S_ICHI_3GOOD', 'S33'], label: 'XI7 三役好轉+EMA確認', window: 3,
+    note: '最強一目多頭+EMA趨勢確認，均為趨勢跟蹤型指標',
+  },
+];
+
+// ─── X6~X11 純K線特化延伸（v2.9 模擬驗證，VVVIP 限定）────────────────────────
+// ⚠️ 需要 screener.js 含新 condId（gap_up / gap_open / ema_bull_array /
+//    tight_consolidation / vol_shrink_n / break_recent_high）才能觸發
+// 對照組：X1~X5 原始版本（在 X_ENTRIES 裡）
+const X6_11_ENTRIES = [
+  // ── 對照組（X1~X5 原始版）──────────────────────────────────────
+  { id: 'X1_ref', ids: ['X1'], label: 'X1 黃金比例（對照）',   window: 1, note: '基準對照' },
+  { id: 'X2_ref', ids: ['X2'], label: 'X2 天黑請閉眼（對照）', window: 1, note: '基準對照' },
+  { id: 'X5_ref', ids: ['X5'], label: 'X5 潛龍勿用（對照）', window: 1, note: '基準對照' },
+  // ── X6~X11 新策略（實驗中）──────────────────────────────────────
+  { id: 'X6',  ids: ['X6'],  label: 'X6 跳空缺口突破',      window: 1, note: '今日跳空≥1.5% + 放量 + 站上MA20' },
+  { id: 'X7',  ids: ['X7'],  label: 'X7 缺口未回補強勢',    window: 1, note: '近期跳空缺口仍開放 + RSI>50 + 站上MA20' },
+  { id: 'X6',  ids: ['X6'],  label: 'X6 見龍在田',           window: 1, note: '5日波動<3%盤整後放量突破，實證達標' },
+  { id: 'X9',  ids: ['X9'],  label: 'X9 量縮後放量突破',    window: 1, note: '連3日縮量後爆量突破近10日高' },
+  { id: 'X10', ids: ['X10'], label: 'X10 均線多頭排列完成',  window: 1, note: 'EMA5>10>20 剛完成多頭排列' },
+  { id: 'X11', ids: ['X11'], label: 'X11 強化黃金交叉',     window: 1, note: 'EMA5穿EMA20 + 量≥1.5倍 + MACD>0' },
+];
+
 // 完整清單
 const ALL_ENTRIES = [
   ...DEFAULT_ENTRIES,
@@ -107,6 +165,9 @@ const ALL_ENTRIES = [
   ...FILTERED_ENTRIES,
   ...X_ENTRIES,
   ...YAOGU_ENTRIES,
+  ...XG_ENTRIES,
+  ...XI_ENTRIES,
+  ...X6_11_ENTRIES,
 ];
 
 // ─── 4 個出場規則 ─────────────────────────────────────────────────
@@ -129,6 +190,22 @@ const DEFAULT_EXIT_RULES = [
   // 理論報酬 ≈ S40報酬×50% + MA20報酬×50%
   // 驗證「保守追高、先取回現金」的避險策略是否最大化獲利
   { id: 's40-half-ma20', label: 'S40出50%+MA20出50%', desc: '分批出場：S40先鎖利一半，MA20再清倉' },
+  // E8 v2.9 — 亢龍有悔（W14 MACD高位死叉出場）
+  // 設計：W14 出現即全出，比 MA20 領先 ~5 天，前兆溯源實證命中率 89%
+  // 適合：飆股主升段結束偵測，避免吃到大回撤
+  { id: 'w14-exit', label: '亢龍有悔（W14出場）', desc: 'MACD高位死叉即出場，比MA20早~5天，前兆命中率89%' },
+  // E9 v2.9 — 分批亢龍（W14出50% + MA20出50%）
+  // 設計：W14 出現先出 50% 鎖利，跌破 MA20 再出剩 50%
+  // 兼顧提早鎖利（W14）和趨勢保護（MA20）
+  { id: 'w14-half-ma20', label: '分批亢龍（W14出50%+MA20出50%）', desc: 'W14先鎖利一半，MA20再清倉' },
+  // E10 v2.9 — 量退潮（最早出場信號）
+  // 設計：主升段放量後，連續2日量縮且收黑 = 主力開始撤退
+  // 比 W14 再早 1~3 天，但假訊號較多
+  { id: 'vol-fade-exit', label: '量退潮（最早出場）', desc: '連2日量縮收黑，主力撤退最早訊號，比W14早1~3天' },
+  // E11 v2.9 — X2 消失出場
+  // 設計：X2「天黑請閉眼」訊號消失即出場，飆股加速結束 = 主升段可能告終
+  // 搭配 X8「見龍在田」進場，驗證「見龍進場，天黑出場」的完整循環
+  { id: 'x2-exit', label: 'X2 消失出場', desc: '飆股加速訊號消失即離場，搭配X6見龍在田使用' },
 ];
 
 export function getDefaultEntries()    { return ALL_ENTRIES.map(e => ({ ...e })); }
@@ -372,7 +449,211 @@ function simulateTrade(candles, entryIdx, ruleId, opts = {}) {
     };
   }
 
+  // E8: 亢龍有悔（W14 MACD 高位死叉出場）
+  if (ruleId === 'w14-exit') {
+    return _simulateW14Exit(candles, entryIdx, opts);
+  }
+
+  // E9: 分批亢龍（W14出50% + MA20出50%）
+  if (ruleId === 'w14-half-ma20') {
+    return _simulateW14HalfMa20(candles, entryIdx, opts);
+  }
+
+  // E10: 量退潮（連2日量縮且收黑）
+  if (ruleId === 'vol-fade-exit') {
+    return _simulateVolFadeExit(candles, entryIdx);
+  }
+
+  // E11: X2 消失出場
+  if (ruleId === 'x2-exit') {
+    return _simulateX2Exit(candles, entryIdx, opts);
+  }
+
   return null;
+}
+
+// ─── E8: 亢龍有悔（W14 MACD 高位死叉出場）─────────────────────────
+// W14 條件：DIF > 0 時出現 MACD 死叉（高位死叉比零軸下死叉更危險）
+// 純 K 線計算，不依賴 signalCache（避免 triggerHistory 採樣缺漏問題）
+function _simulateW14Exit(candles, entryIdx) {
+  const entryClose = candles[entryIdx].close;
+  const maxIdx = Math.min(entryIdx + MAX_HOLD_DAYS, candles.length - 1);
+
+  for (let i = entryIdx + 2; i <= maxIdx; i++) {
+    // 用進場點前的完整歷史算 MACD，切片到 i（不偷看未來）
+    const closes = candles.slice(0, i + 1).map(c => c.close);
+    if (closes.length < 35) continue;  // EMA26 + 暖機需要
+    try {
+      const { dif, dea } = calcMACD(closes);
+      const n = dif.length;
+      if (n < 2) continue;
+      const difNow  = dif[n - 1];
+      const difPrev = dif[n - 2];
+      const deaNow  = dea[n - 1];
+      const deaPrev = dea[n - 2];
+      // W14：DIF > 0（高位）且 DIF 由上往下穿越 DEA（死叉）
+      const highPos   = difNow > 0 || difPrev > 0;  // 死叉發生時 DIF 在零軸以上
+      // 今日 DIF 跌破 DEA（今日<DEA 且 昨日>=DEA）= 剛發生死叉
+      const deadCross = difNow < deaNow && difPrev >= deaNow;
+      if (highPos && deadCross) {
+        return {
+          exitIdx:    i,
+          exitReason: 'W14 MACD高位死叉（亢龍有悔）',
+          returnPct:  (candles[i].close - entryClose) / entryClose,
+          holdDays:   i - entryIdx,
+        };
+      }
+    } catch (_) { continue; }
+  }
+  const exitClose = candles[maxIdx].close;
+  return {
+    exitIdx:    maxIdx,
+    exitReason: '達最大持有 60 天（W14 未出現）',
+    returnPct:  (exitClose - entryClose) / entryClose,
+    holdDays:   maxIdx - entryIdx,
+  };
+}
+
+// ─── E9: 分批亢龍（W14出50% + MA20出50%）───────────────────────────
+function _simulateW14HalfMa20(candles, entryIdx) {
+  const entryClose = candles[entryIdx].close;
+  const maxIdx = Math.min(entryIdx + MAX_HOLD_DAYS, candles.length - 1);
+  let w14Ret = null;
+  let w14Idx = null;
+
+  for (let i = entryIdx + 2; i <= maxIdx; i++) {
+    // 第一批：純K線算 W14（MACD 高位死叉）
+    if (w14Idx === null) {
+      const cl = candles.slice(0, i + 1).map(c => c.close);
+      if (cl.length >= 35) {
+        try {
+          const { dif, dea } = calcMACD(cl);
+          const n = dif.length;
+          if (n >= 2) {
+            const highPos   = dif[n-1] > 0 || dif[n-2] > 0;
+            // 今日 DIF 跌破 DEA 且昨日在 DEA 以上 = 剛發生死叉
+            const deadCross = dif[n-1] < dea[n-1] && dif[n-2] >= dea[n-1];
+            if (highPos && deadCross) {
+              w14Ret = (candles[i].close - entryClose) / entryClose;
+              w14Idx = i;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    // 第二批：跌破 MA20
+    if (i < 19) continue;
+    const closes2  = candles.slice(0, i + 1).map(c => c.close);
+    const ma20Arr = calcMA(closes2, 20);
+    const ma20Now = ma20Arr[ma20Arr.length - 1];
+    if (ma20Now == null) continue;
+
+    if (candles[i].close < ma20Now) {
+      const ma20Ret = (candles[i].close - entryClose) / entryClose;
+      if (w14Idx !== null) {
+        return {
+          exitIdx:    i,
+          exitReason: `W14(${w14Idx - entryIdx}天)+MA20(${i - entryIdx}天)分批`,
+          returnPct:  w14Ret * 0.5 + ma20Ret * 0.5,
+          holdDays:   i - entryIdx,
+        };
+      }
+      return {
+        exitIdx:    i,
+        exitReason: '跌破 MA20（W14未觸發，全倉出）',
+        returnPct:  ma20Ret,
+        holdDays:   i - entryIdx,
+      };
+    }
+  }
+
+  const exitClose = candles[maxIdx].close;
+  const maxRet = (exitClose - entryClose) / entryClose;
+  if (w14Idx !== null) {
+    return {
+      exitIdx:    maxIdx,
+      exitReason: `W14(${w14Idx - entryIdx}天)+到期分批`,
+      returnPct:  w14Ret * 0.5 + maxRet * 0.5,
+      holdDays:   maxIdx - entryIdx,
+    };
+  }
+  return {
+    exitIdx:    maxIdx,
+    exitReason: '達最大持有 60 天',
+    returnPct:  maxRet,
+    holdDays:   maxIdx - entryIdx,
+  };
+}
+
+// ─── E11: X2 消失出場──────────────────────────────────────────────
+// X2「天黑請閉眼」訊號消失 = 飆股加速動能結束
+// 用 signalCache 查 X2，同 E5 模式
+function _simulateX2Exit(candles, entryIdx, opts = {}) {
+  const entryClose = candles[entryIdx].close;
+  const maxIdx = Math.min(entryIdx + MAX_HOLD_DAYS, candles.length - 1);
+  const signalCache = opts?.signalCache;
+
+  for (let i = entryIdx + 1; i <= maxIdx; i++) {
+    const sigSet = signalCache?.get(i);
+    const hasX2 = sigSet ? sigSet.has('X2') : false;
+    if (!hasX2) {
+      return {
+        exitIdx:    i,
+        exitReason: 'X2 天黑消失（飆股動能結束）',
+        returnPct:  (candles[i].close - entryClose) / entryClose,
+        holdDays:   i - entryIdx,
+      };
+    }
+  }
+  const exitClose = candles[maxIdx].close;
+  return {
+    exitIdx:    maxIdx,
+    exitReason: '達最大持有 60 天（X2 持續）',
+    returnPct:  (exitClose - entryClose) / entryClose,
+    holdDays:   maxIdx - entryIdx,
+  };
+}
+
+// ─── E10: 量退潮（連2日量縮且收黑）─────────────────────────────────
+// 純 K 線計算，不依賴 signalCache
+function _simulateVolFadeExit(candles, entryIdx) {
+  const entryClose = candles[entryIdx].close;
+  const maxIdx = Math.min(entryIdx + MAX_HOLD_DAYS, candles.length - 1);
+
+  for (let i = entryIdx + 2; i <= maxIdx; i++) {
+    const c0 = candles[i];     // 今日
+    const c1 = candles[i - 1]; // 昨日
+    const c2 = candles[i - 2]; // 前日（進場後第一個可比較點）
+
+    // 量縮：今日量 < 昨日量 且 昨日量 < 前日量（連2日遞減）
+    const vol0 = c0.volume ?? 0;
+    const vol1 = c1.volume ?? 0;
+    const vol2 = c2.volume ?? 0;
+    const volShrink = vol0 < vol1 && vol1 < vol2;
+
+    // 收黑：今日收 < 今日開（或收 < 昨收）
+    const open0 = c0.open ?? c0.close;
+    const bearish0 = c0.close < open0;
+    const bearish1 = c1.close < (c1.open ?? c1.close);
+
+    if (volShrink && bearish0 && bearish1) {
+      return {
+        exitIdx:    i,
+        exitReason: '量退潮（連2日量縮收黑）',
+        returnPct:  (c0.close - entryClose) / entryClose,
+        holdDays:   i - entryIdx,
+      };
+    }
+  }
+
+  const exitClose = candles[maxIdx].close;
+  return {
+    exitIdx:    maxIdx,
+    exitReason: '達最大持有 60 天（量退潮未觸發）',
+    returnPct:  (exitClose - entryClose) / entryClose,
+    holdDays:   maxIdx - entryIdx,
+  };
 }
 
 // ─── 單檔出場回測 ──────────────────────────────────────────────────
@@ -585,7 +866,9 @@ function runExitBacktestSingle(candles, entries, exitRules, opts = {}) {
         //    E5 在採樣間隔內的 idx 會拿到 undefined（視為 X1 不亮 → 提早出場）
         //    妖股策略預設 sampleStep=1（每天都掃），所以通常沒問題
         //    若 sampleStep > 1 跑妖股策略，E5 結果會偏保守（提早出場）
-        const tradeOpts = (exitRule.id === 'x1-exit' || exitRule.id === 's40-exit' || exitRule.id === 's40-half-ma20')
+        const tradeOpts = (exitRule.id === 'x1-exit' || exitRule.id === 's40-exit' || exitRule.id === 's40-half-ma20'
+          || exitRule.id === 'w14-exit' || exitRule.id === 'w14-half-ma20'
+          || exitRule.id === 'x2-exit')
           ? { signalCache: triggerHistory }
           : undefined;
         const trade = simulateTrade(candles, entryIdx, exitRule.id, tradeOpts);

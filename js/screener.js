@@ -2353,6 +2353,225 @@ export const CONDITION_DEFS = [
     },
   },
 
+  // ══════════════════════════════════════════════
+  // ── X6~X11 系列新增條件（Pure K 線，無需新資料）
+  // ══════════════════════════════════════════════
+
+  /**
+   * gap_up：今日開盤跳空上漲 ≥ value%（跳空缺口突破）
+   * X6「跳空缺口突破」使用，value 預設 1.5
+   * 跳空 = 今日開盤 > 昨日最高
+   */
+  {
+    id:      'gap_up',
+    group:   'price',
+    label:   '跳空缺口 ≥（開盤跳空）',
+    unit:    '%',
+    type:    'number',
+    default: 1.5,
+    phase:   2,
+    calc: candles => {
+      const n = candles.length;
+      if (n < 2) return { gapUpPct: 0, gapHeld: false };
+      const today = candles[n - 1];
+      const prev  = candles[n - 2];
+      const open  = today.open ?? today.close;
+      const prevH = prev.high  ?? prev.close;
+      const pct   = prevH > 0 ? (open - prevH) / prevH * 100 : 0;
+      // 收盤仍守住跳空開盤（未回測填補）= 強勢確認
+      const gapHeld = today.close >= open * 0.99;
+      return { gapUpPct: pct, gapHeld };
+    },
+    match: (indicators, v) => indicators.gapUpPct != null && indicators.gapUpPct >= v && indicators.gapHeld,
+  },
+
+  /**
+   * gap_open：今日跳空缺口仍未回補（缺口維持開放）
+   * X7「缺口未回補強勢」使用
+   * 條件：過去 N 日內有跳空（gap > 1%），且今日收盤 > 那根缺口底部（未回補）
+   */
+  {
+    id:      'gap_open',
+    group:   'price',
+    label:   '跳空缺口未回補（近N日內）',
+    unit:    '日',
+    type:    'number',
+    default: 5,
+    phase:   2,
+    calc: candles => {
+      const n = candles.length;
+      if (n < 3) return { gapOpenFloor: null, gapOpenDaysAgo: null };
+      // 找最近 lookback 根內最後一個跳空點（今日開 > 昨日高，且幅度 ≥ 1%）
+      const lookback = Math.min(10, n - 1);
+      let gapFloor    = null;
+      let gapDaysAgo  = null;
+      for (let i = n - 1; i >= n - lookback; i--) {
+        const open  = candles[i].open  ?? candles[i].close;
+        const prevH = candles[i - 1].high ?? candles[i - 1].close;
+        if (prevH > 0 && (open - prevH) / prevH * 100 >= 1.0) {
+          gapFloor   = prevH;
+          gapDaysAgo = n - 1 - i;  // 0=今日,1=昨日...
+          break;
+        }
+      }
+      // 今日收盤是否仍在缺口底部以上（未回補）
+      const lastClose = candles[n - 1].close;
+      const gapUnfilled = gapFloor != null && lastClose > gapFloor;
+      return { gapOpenFloor: gapFloor, gapOpenDaysAgo: gapDaysAgo, gapUnfilled };
+    },
+    match: (indicators, v) => {
+      const { gapOpenFloor, gapOpenDaysAgo, gapUnfilled } = indicators;
+      if (!gapUnfilled || gapOpenFloor == null) return false;
+      // value = 近幾日內，預設5；缺口必須在 v 天內發生
+      return gapOpenDaysAgo != null && gapOpenDaysAgo <= v;
+    },
+  },
+
+  /**
+   * ema_bull_array：EMA5 > EMA10 > EMA20 且近期剛完成排列（前N日曾亂序）
+   * X10「均線多頭排列完成」使用
+   * 比 ema_bull（只看 EMA5>EMA20）更嚴格：三條線全部有序
+   * 「剛翻多」= 5日前至少有一天不滿足，今日才滿足
+   */
+  {
+    id:      'ema_bull_array',
+    group:   'trend',
+    label:   'EMA5>EMA10>EMA20 多頭排列（剛完成）',
+    unit:    '',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      const closes = candles.map(c => c.close);
+      const n = closes.length;
+      if (n < 25) return { emaBullArray: false, emaBullArrayFresh: false };
+      const ema5  = calcEMA(closes, 5);
+      const ema10 = calcEMA(closes, 10);
+      const ema20 = calcEMA(closes, 20);
+      // 今日三線全部有序
+      const todayOk = ema5[n-1] != null && ema10[n-1] != null && ema20[n-1] != null
+        && ema5[n-1] > ema10[n-1] && ema10[n-1] > ema20[n-1];
+      // 3日前是否曾亂序（「剛翻多」嚴格定義，縮窄觸發率）
+      let wasMixed = false;
+      for (let i = n - 4; i < n - 1; i++) {
+        if (i < 0) continue;
+        if (ema5[i] == null || ema10[i] == null || ema20[i] == null) continue;
+        if (!(ema5[i] > ema10[i] && ema10[i] > ema20[i])) {
+          wasMixed = true;
+          break;
+        }
+      }
+      return {
+        emaBullArray:      todayOk,
+        emaBullArrayFresh: todayOk && wasMixed,
+      };
+    },
+    match: (indicators) => indicators.emaBullArrayFresh === true,
+  },
+
+  /**
+   * tight_consolidation：近N日高低波動 < 阈值%，且今日放量突破
+   * X8「高檔整理後噴出」使用
+   * 定義：近5日（不含今日）收盤最高-最低 < value% × 最低，且今日放量（>均量1.5倍）向上
+   */
+  {
+    id:      'tight_consolidation',
+    group:   'volume',
+    label:   '盤整後放量突破（波動<N%）',
+    unit:    '%',
+    type:    'number',
+    default: 3,
+    phase:   2,
+    calc: candles => {
+      const n = candles.length;
+      if (n < 10) return { tightBreakout: false };
+      const closes  = candles.map(c => c.close);
+      const volumes = candles.map(c => c.volume ?? 0);
+      // 前5日（不含今日）收盤波動
+      const recent  = closes.slice(n - 6, n - 1);
+      const maxC    = Math.max(...recent);
+      const minC    = Math.min(...recent);
+      const rangePct = minC > 0 ? (maxC - minC) / minC * 100 : 999;
+      // 今日量 vs 前10日均量
+      const vol10avg = volumes.slice(n - 11, n - 1).reduce((a, b) => a + b, 0) / 10;
+      const volRatio = vol10avg > 0 ? volumes[n - 1] / vol10avg : 0;
+      // 今日向上（收盤 > 前日收盤）
+      const up = closes[n - 1] > closes[n - 2];
+      return { tightBreakout: false, tightRangePct: rangePct, tightVolRatio: volRatio, tightUp: up };
+    },
+    match: (indicators, v) => {
+      const { tightRangePct, tightVolRatio, tightUp } = indicators;
+      if (tightRangePct == null) return false;
+      return tightRangePct <= v && tightVolRatio >= 1.5 && tightUp;
+    },
+  },
+
+  /**
+   * vol_shrink_n：前N日連續縮量（每日量 < 10日均量的0.8倍）
+   * X9「量縮後放量突破」前段條件
+   * value = 連續縮量天數，預設3
+   */
+  {
+    id:      'vol_shrink_n',
+    group:   'volume',
+    label:   '連續N日縮量',
+    unit:    '日',
+    type:    'number',
+    default: 3,
+    phase:   2,
+    calc: candles => {
+      const n = candles.length;
+      if (n < 15) return { shrinkDays: 0 };
+      const volumes = candles.map(c => c.volume ?? 0);
+      // 10日均量（不含今日）
+      const vol10avg = volumes.slice(n - 11, n - 1).reduce((a, b) => a + b, 0) / 10;
+      if (vol10avg === 0) return { shrinkDays: 0 };
+      // 往回數連續縮量天數（不含今日）
+      let shrinkDays = 0;
+      for (let i = n - 2; i >= Math.max(0, n - 8); i--) {
+        if (volumes[i] < vol10avg * 0.8) shrinkDays++;
+        else break;
+      }
+      return { shrinkDays };
+    },
+    match: (indicators, v) => indicators.shrinkDays != null && indicators.shrinkDays >= v,
+  },
+
+  /**
+   * break_recent_high：今日收盤突破近N日高點且放量
+   * X9「量縮後放量突破」後段條件
+   * value = 近N日，預設10
+   */
+  {
+    id:      'break_recent_high',
+    group:   'price',
+    label:   '放量突破近N日高點',
+    unit:    '日',
+    type:    'number',
+    default: 10,
+    phase:   2,
+    calc: candles => {
+      const n = candles.length;
+      if (n < 15) return { breakHighVol: false, breakHighClose: null, breakHighSeries: null };
+      const closes  = candles.map(c => c.close);
+      const highs   = candles.map(c => c.high ?? c.close);
+      const volumes = candles.map(c => c.volume ?? 0);
+      const vol10avg = volumes.slice(n - 11, n - 1).reduce((a, b) => a + b, 0) / 10;
+      const volOk = vol10avg > 0 && volumes[n - 1] >= vol10avg * 1.5;
+      return {
+        breakHighClose:  closes[n - 1],
+        breakHighSeries: highs.slice(0, n - 1),
+        breakHighVol:    volOk,
+      };
+    },
+    match: (indicators, v) => {
+      const { breakHighClose, breakHighSeries, breakHighVol } = indicators;
+      if (!breakHighSeries || !breakHighVol || breakHighClose == null) return false;
+      const recentHigh = Math.max(...breakHighSeries.slice(-v));
+      return breakHighClose > recentHigh;
+    },
+  },
+
 ];
 
 // ─────────────────────────────────────────────

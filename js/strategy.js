@@ -21,7 +21,7 @@
 //
 // 升版號的副作用:所有使用者下次開 app 自動清快取重掃(無痛)
 // ─────────────────────────────────────────────
-export const STRATEGY_VERSION = 10;  // v2.8 — X1/X2/X5 正式導入評分系統
+export const STRATEGY_VERSION = 14;  // v2.9.3 — XG1/XG3 葛蘭碧強化版正式導入
 
 export const STRATEGIES = [
   // ══════════════════════════════════════════
@@ -184,6 +184,31 @@ export const STRATEGIES = [
       { condId: 'price_far_below_ma20', value: -10 }, // 乖離率 ≤ -10%
       { condId: 'chg_min',              value: 0   }, // 今日未繼續跌（止跌訊號）
       { condId: 'vol_min',              value: 300 },
+    ],
+  },
+
+  // ── 葛蘭碧強化版（XG 組合拳，實證通過）─────────────────────────────
+  // XG1：葛蘭碧買一 + DMI 趨勢確認
+  //   實證：MC exit-backtest 9檔妖股 basket，勝率提升 +30%
+  //   vs S20 原始版（20%勝率/-0.9%均報）→ 強化版（50%勝率/+3.8%均報）
+  // XG3：葛蘭碧買三 + 量價齊揚
+  //   實證：勝率提升 +18%（31.6%→50%），均報 +0.7%
+  {
+    id: 'XG1', tier: 'pro', icon: '①⚡', name: '葛蘭碧買一強化', category: '葛蘭碧',
+    desc: 'MA20 翻揚突破 + DMI趨勢確認（ADX>20），過濾假穿越。實證勝率50%/均報+3.8%',
+    conditions: [
+      { condId: 'ma20_turn_up'        },   // MA20 由跌轉平/上揚
+      { condId: 'price_cross_ma20_up' },   // 股價今日突破 MA20
+      { condId: 'dmi_bull'            },   // +DI > -DI 且 ADX > 20（趨勢強度確認）
+    ],
+  },
+  {
+    id: 'XG3', tier: 'pro', icon: '③⚡', name: '葛蘭碧買三強化', category: '葛蘭碧',
+    desc: '上升趨勢假跌破後快速收回 + 量價齊揚確認。實證勝率50%/均報+0.2%',
+    conditions: [
+      { condId: 'price_reclaim_ma20'  },   // 昨日跌破，今日收回，MA20 仍向上
+      { condId: 'vol_surge_short', value: 1.2 }, // 量能確認（10日均量×1.2）
+      { condId: 'chg_min',         value: 0   }, // 今日收正（強勢收復）
     ],
   },
 
@@ -663,19 +688,34 @@ export const STRATEGIES = [
     ],
   },
   {
-    // X5 v2.8 候選策略 — 量證明一切（早期介入型）
+    // X5 v2.8 候選策略 — 潛龍勿用（早期介入型）
     // 核心差異：X2 用 30日均量×3，容易被前段大量拉高基期
     //           X5 用 10日均量×2.5，近期相對爆量，不受長期基期影響
     // 適合：低基期爆量型（麗正）/ 慢牛爆發型（微星）/ 主升段中繼早期（鴻名5/14）
     // 實證狀態：候選策略，未進 _SCORABLE_IDS，不影響五燈獎
-    id: 'X5', tier: 'pro', icon: '🚀', name: '量證明一切', category: 'X 系列',
-    desc: '主力爆量建倉早期訊號，比天黑早 5-10 天介入',
+    id: 'X5', tier: 'pro', icon: '🌊', name: '潛龍勿用', category: 'X 系列',
+    desc: '主力悄悄爆量建倉，量先於價，比天黑請閉眼早 5-10 天介入',
     conditions: [
       { condId: 'vol_surge_short', value: 2.5 },  // 今日量 ≥ 10日均量×2.5（近期相對爆量）
       { condId: 'gain_10d',        value: 10  },  // 10日漲幅 ≥ 10%（確認趨勢）
       { condId: 'rsi_min',         value: 60  },  // RSI ≥ 60（動能啟動）
       { condId: 'above_ma20'               },  // 站上 MA20
       { condId: 'ma20_rising',     value: 2  },  // MA20 連2天上升（比X1寬鬆）
+    ],
+  },
+
+  // ══════════════════════════════════════════
+  // ══════════════════════════════════════════
+  // X6 見龍在田（原 X8，v2.9.1 實證通過正式導入）
+  // 實證：妖股 basket 9檔，勝率35.1%/均報+1.6%，兩輪穩定達標
+  // 最佳搭配出場：X1消失出場（40.5%/+1.8%）或 X2消失出場（43.2%/+1.5%）
+  // ══════════════════════════════════════════
+  {
+    id: 'X6', tier: 'pro', icon: '🐉', name: '見龍在田', category: 'X 系列',
+    desc: '5日波動<3%盤整後今日放量向上突破，蓄勢完畢啟動。實證勝率35.1%/均報+1.6%',
+    conditions: [
+      { condId: 'tight_consolidation', value: 3 },  // 5日波動 < 3% 且今日放量突破
+      { condId: 'above_ma20'                    },  // 站上 MA20
     ],
   },
 ];
@@ -696,6 +736,30 @@ export function initStrategyPanel() {
   _renderPreFilter();
   _renderStrategyCards();
   _bindLeftTabs();
+  _bindStrategyListEvents();
+}
+
+function _bindStrategyListEvents() {
+  const list = document.getElementById('strategyList');
+  if (!list) return;
+  // 委派事件只綁一次，避免 _renderStrategyCards 重複呼叫時多次綁定
+  list.addEventListener('click', (e) => {
+    // 點卡片 → 套用策略
+    const card = e.target.closest('.sc-strategy-card');
+    if (card) { applyStrategy(card.dataset.strategyId); return; }
+
+    // 點分類標題 → 折疊/展開
+    const header = e.target.closest('.sc-strategy-cat-header');
+    if (header) {
+      const body    = header.nextElementSibling;   // .sc-strategy-cat-body
+      const chevron = header.querySelector('.sc-strategy-cat-chevron');
+      if (!body) return;
+      const isOpen  = body.style.display !== 'none';
+      body.style.display       = isOpen ? 'none' : '';
+      chevron.textContent      = isOpen ? '▸' : '▾';
+      header.dataset.collapsed = isOpen ? '1' : '';
+    }
+  });
 }
 
 /**
@@ -822,23 +886,6 @@ function _renderStrategyCards() {
   }
   list.innerHTML = html;
 
-  // ── 分類折疊事件（委派）──────────────────────────────
-  list.addEventListener('click', (e) => {
-    // 點卡片 → 套用策略
-    const card = e.target.closest('.sc-strategy-card');
-    if (card) { applyStrategy(card.dataset.strategyId); return; }
-
-    // 點分類標題 → 折疊/展開
-    const header = e.target.closest('.sc-strategy-cat-header');
-    if (header) {
-      const body    = header.nextElementSibling;   // .sc-strategy-cat-body
-      const chevron = header.querySelector('.sc-strategy-cat-chevron');
-      const isOpen  = body.style.display !== 'none';
-      body.style.display    = isOpen ? 'none' : '';
-      chevron.textContent   = isOpen ? '▸' : '▾';
-      header.dataset.collapsed = isOpen ? '1' : '';
-    }
-  });
 }
 
 // ── 關鍵字篩選（搜尋時用）──────────────────────────────
@@ -903,6 +950,14 @@ const _COND_MIN_CANDLES = {
   rsi_revival:        25,  // RSI(14) + 過去 5 根判斷 → 20 根 + 緩衝
   ma20_rising:        25,  // MA20 + 連續 3 天比較 → 22 根 + 緩衝
   industry_leading:   20,  // 需要算自己的 RSI,跟 rsi_min 同等級
+  // X6 見龍在田（tight_consolidation）所需最低根數
+  tight_consolidation: 15, // 5日盤整 + 10日均量 + 緩衝
+  // 保留以下（screener.js 仍有定義，其他功能可用）
+  gap_up:              3,
+  gap_open:           12,
+  ema_bull_array:     28,
+  vol_shrink_n:       15,
+  break_recent_high:  15,
 };
 
 // 週期 → 預估交易日根數（台股一年約 248 日）
@@ -1077,6 +1132,7 @@ const _SCORABLE_IDS = new Set([
   'S6','S7','S8','S9',
   'S10','S11','S12',
   'S20','S21','S22','S23',
+  'XG1','XG3',  // 葛蘭碧強化版（實證通過）
   'S13','S14','S15',
   'W1','W2','W3','W4','W5','W6','W7','W8','W9','W10',
   // W11~W20（避險強化，BEARISH_COMPLETE 0522_2340）
@@ -1087,9 +1143,11 @@ const _SCORABLE_IDS = new Set([
   'S37','S38','S40','S42','S45',
   // X 系列 — 黃金獨家策略（v2.8 正式導入）
   'X1','X2',  // 三軸共振 / 天黑請閉眼
-  'X5',       // 量證明一切（妖股先期版）
+  'X5',       // 潛龍勿用（妖股先期版）
               // 實證：固定20天勝率65.5%/+19.4%，60天甜蜜點43.5%
               // X3/X4 尚未通過實證，暫不加入
+  // X6 見龍在田（原 X8，v2.9.1 正式導入）
+  'X6',
 ]);
 
 // 避險訊號 ID 集合（用於分流計算燈號顏色與權重）
@@ -1107,14 +1165,17 @@ const _STRATEGY_SCORE = {
   'S6':7,'S7':7,'S8':8,'S9':7,
   'S10':8,'S11':9,'S12':6,
   'S20':7,'S21':7,'S22':7,'S23':6,
+  'XG1':8,'XG3':8,  // 葛蘭碧強化版：實證達標
   'S13':8,'S14':7,'S15':6,
   'S29':6,'S30':7,'S31':8,'S32':7,'S33':8,'S34':7,'S35':7,'S36':7,
   'S37':7,'S38':7,'S40':7,'S42':8,'S45':8,
   // X 系列（v2.8 正式導入）
   // X1 三軸共振：穩健型，7分
   // X2 天黑請閉眼：飆股加速，8分（60天甜蜜點59.8%）
-  // X5 量證明一切：妖股先期，7分（固定20天勝率65.5%）
+  // X5 潛龍勿用：妖股先期，7分（固定20天勝率65.5%）
   'X1':7,'X2':8,'X5':7,
+  // X6~X11（v2.9 新增，實驗中，初始分數 7）
+  'X6':8,  // 見龍在田：實證通過（勝率35.1%/均報+1.6%）
   // 避險（依 SIGNAL_BEARISH roadmap 表格）
   'W1':6,'W2':8,'W3':8,'W4':8,'W5':5,
   'W6':6,'W7':7,'W8':9,'W9':8,'W10':10,
@@ -1196,7 +1257,7 @@ export function calcSignalLamps(signals, difPos = true) {
   }
 
   // ── v2.8 妖股模式：X2/X5 亮時，W6/W7 降權 ──
-  // X2「天黑請閉眼」或 X5「量證明一切」亮 = 妖股主升段
+  // X2「天黑請閉眼」或 X5「潛龍勿用」亮 = 妖股主升段
   // RSI 高是強勢副作用，W6(RSI>80)/W7(布林超買) 不應扣燈
   if (sigIds.has('X2') || sigIds.has('X5')) {
     warnSignals = warnSignals.filter(s => s.id !== 'W7' && s.id !== 'W6');

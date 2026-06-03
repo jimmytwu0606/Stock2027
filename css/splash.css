@@ -43,8 +43,8 @@
 .ds-flr{right:0;background:linear-gradient(to left,#0e0f11,transparent)}
 
 /* 中心區 */
-#dsCenterWrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:14px;z-index:10}
-#dsDotCanvas{display:block}
+#dsCenterWrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;z-index:10;margin-top:-40px}
+#dsDotCanvas{display:block;width:320px;height:320px}
 #dsBrand{
   font-family:'DM Mono','Courier New',monospace;
   font-size:22px;font-weight:400;letter-spacing:.06em;line-height:1;
@@ -76,7 +76,7 @@
 #dsBubble::before{content:'';position:absolute;left:-5px;bottom:8px;width:8px;height:8px;background:rgba(28,31,36,.92);border-left:1px solid rgba(255,255,255,.1);border-bottom:1px solid rgba(255,255,255,.1);transform:rotate(45deg)}
 
 /* CTA */
-#dsCtaWrap{margin-top:22px;display:flex;flex-direction:column;align-items:center;gap:8px}
+#dsCtaWrap{margin-top:28px;display:flex;flex-direction:column;align-items:center;gap:8px}
 #dsCtaBtn{
   padding:11px 38px;border-radius:100px;border:none;cursor:pointer;
   background:linear-gradient(135deg,#ef5350,#c62828);color:#fff;

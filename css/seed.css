@@ -1,3 +1,126 @@
+/* tab-panel 預設隱藏，active 才顯示（seed.css 統一補齊，不動 main.css） */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+#tabSeed.active { display: flex; flex-direction: column; }
+
+/* ── Toolbar layout ──────────────────────────────────────── */
+.seed-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.seed-tb-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.seed-tb-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.seed-tb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.seed-tb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: rgba(59,130,246,.12);
+  border: 1px solid rgba(59,130,246,.25);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.seed-tb-single {
+  display: flex;
+  align-items: center;
+}
+
+.seed-tb-single-code {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.seed-tb-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.seed-tb-btn:hover { background: var(--bg3); }
+.seed-tb-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.seed-tb-config { color: var(--muted); }
+.seed-tb-scan {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.seed-tb-scan:hover { opacity: .88; background: var(--accent); }
+.seed-tb-scan:disabled { opacity: .4; }
+.seed-tb-abort {
+  border-color: var(--up);
+  color: var(--up);
+}
+.seed-tb-save {
+  border-color: #f7bc2e;
+  color: #f7bc2e;
+}
+
+.seed-tb-summary {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.seed-tb-status {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* 進度條（toolbar 下方） */
+.seed-progress {
+  display: none;
+  height: 3px;
+  background: var(--bg3);
+  flex-shrink: 0;
+}
+.seed-progress-track {
+  height: 100%;
+  width: 100%;
+}
+
+
+/* 結果列表全寬 */
+.seed-result-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
 /* ============================================================
    seed.css — Phase 4 種子選股
    顯隱規則同 Phase 2/3：#tabSeed.active { display:flex }
@@ -16,29 +139,11 @@
 .seed-layout {
   display: flex;
   gap: 0;
-  height: 100%;
+  min-height: calc(100vh - 120px);
   overflow: hidden;
+  align-items: stretch;
 }
 
-.seed-left {
-  width: 320px;
-  min-width: 260px;
-  max-width: 400px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  padding: 14px;
-  gap: 14px;
-}
-
-.seed-right {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
 
 /* ── 區塊標題 ─────────────────────────────────────────────── */
 .seed-section-title {
@@ -402,44 +507,14 @@
   flex-shrink: 0;
 }
 
-.seed-progress-track {
-  height: 3px;
-  background: var(--bg3);
-  border-radius: 2px;
-  overflow: hidden;
-}
 
-.seed-progress-bar {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 2px;
-  width: 0%;
-  transition: width .3s ease;
-}
 
-.seed-progress-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--muted);
-}
 
-/* 彙總 */
-#seedSummary {
-  display: none;
-  padding: 6px 14px;
-  font-size: 11px;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
 
-/* 結果列表 */
-.seed-result-list {
-  flex: 1;
-  overflow-y: auto;
-}
+
+
+
+
 
 .seed-result-empty {
   padding: 40px;
@@ -612,20 +687,7 @@
 
 /* ── 手機響應式 ───────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .seed-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .seed-left {
-    width: 100%;
-    max-width: none;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    overflow-y: visible;
-  }
-
-  .seed-right {
+      .seed-right {
     min-height: 300px;
   }
 
@@ -706,3 +768,180 @@
   transition: background .1s;
 }
 .sr-add-group-item:hover { background: rgba(255,255,255,.06); }
+
+/* ─── 模式切換 toggle ───────────────────────────────────── */
+.seed-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg3, #1c2330);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 16px;
+}
+.seed-mode-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.seed-mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.seed-mode-btn:not(.active):hover { color: var(--text); }
+
+/* ─── 單股模式 radio ────────────────────────────────────── */
+.seed-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.seed-radio-label input[type=radio] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ─── 個股頁「找相似」按鈕 ──────────────────────────────── */
+.sh-similar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(59,130,246,.10);
+  border: 1px solid rgba(59,130,246,.30);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.sh-similar-btn:hover {
+  background: rgba(59,130,246,.20);
+  border-color: var(--accent);
+}
+
+/* ─── 單股 seed chip ────────────────────────────────────── */
+#seedSingleChip .seed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(59,130,246,.12);
+  border: 1px solid rgba(59,130,246,.30);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text);
+}
+#seedSingleChip .seed-chip-del {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 10px;
+}
+#seedSingleChip .seed-chip-del:hover { color: var(--up); }
+
+/* ─── 設定 Modal ────────────────────────────────────────── */
+.seed-modal-bg,
+.seed-save-modal-bg {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.seed-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  width: min(560px, 95vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+
+.seed-save-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 12px;
+  width: min(400px, 92vw);
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+
+.seed-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.seed-modal-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.seed-modal-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.seed-modal-close:hover { color: var(--text); background: var(--bg3); }
+
+.seed-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.seed-modal-section {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.seed-modal-section:last-child { border-bottom: none; }
+
+.seed-modal-footer {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.seed-modal-start {
+  padding: 8px 24px;
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.seed-modal-start:hover { opacity: .88; }
+
+/* #seedSummary 現在在 toolbar，不需要獨立樣式 */
+#seedSummary {
+  font-size: 11px;
+  color: var(--muted);
+}

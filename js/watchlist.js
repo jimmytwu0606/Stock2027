@@ -695,7 +695,7 @@ function _renderStock(stock, groupId) {
   // 走勢圖（同步取快取；未命中 → placeholder + 排隊載入）
   const sparkHtml = _sparkHtmlSync(stock.code, isUp);
 
-  // stockInfo 邊框 class + pill（只有 forward 才顯示）
+  // stockInfo 邊框 class + pill（只有過期才顯示，新鮮資料不干擾 UI）
   const _si = _siInfoCache[stock.code] ?? null;
   let _siBorderCls = '';
   let _siPillHtml  = '';
@@ -704,13 +704,9 @@ function _renderStock(stock, groupId) {
     const daysSince  = _updatedAt
       ? Math.floor((Date.now() - new Date(_updatedAt).getTime()) / 86400000)
       : null;
-    if (daysSince == null || daysSince < 0) {
-      // 無日期
+    if (daysSince == null || daysSince < 30) {
+      // 30天內：只加邊框，不顯示 pill
       _siBorderCls = 'wl-si-fresh';
-      _siPillHtml  = '<span class="wl-si-pill wl-si-pill-ok">正常</span>';
-    } else if (daysSince < 30) {
-      _siBorderCls = 'wl-si-fresh';
-      _siPillHtml  = '<span class="wl-si-pill wl-si-pill-ok">正常</span>';
     } else if (daysSince < 60) {
       _siBorderCls = 'wl-si-warn';
       _siPillHtml  = `<span class="wl-si-pill wl-si-pill-warn">${daysSince}天前更新</span>`;
@@ -729,9 +725,11 @@ function _renderStock(stock, groupId) {
   <div class="wl-item-left">
     <div class="wl-code-row">
       <span class="wl-code">${_esc(stock.code)}</span>
-      <span class="wl-name">${_esc(displayName)}</span>
       ${dupBadge}
       ${_siPillHtml}
+    </div>
+    <div class="wl-name-row" style="font-size:12px;color:#8a8f99;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+      <span class="wl-name">${_esc(displayName)}</span>
     </div>
     <div class="wl-price">${priceStr}</div>
     <div class="wl-chg ${isUp ? 'wl-chg-up' : 'wl-chg-dn'}">${chgStr}</div>

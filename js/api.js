@@ -2040,7 +2040,7 @@ export async function fetchTWSEPrices() {
 //       資料筆數比盤後快取多（1800+ vs ~900），中文名也比較完整
 try {
   const rtData = await fsGetShared('market/realtime/prices');
-  if (rtData && typeof rtData === 'object' && Object.keys(rtData).length > 100) {
+  if (rtData && typeof rtData === 'object' && Object.keys(rtData).length >= 1500) {
     let filled = 0;
     for (const [code, info] of Object.entries(rtData)) {
       if (!info || typeof info !== 'object') continue;

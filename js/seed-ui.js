@@ -17,7 +17,7 @@ import {
   extractSeedFeatures, mergeTemplates, defaultWeights,
   describeTemplate, templateDivergenceWarning,
 } from './seed.js';
-import { runSeedScan, abortSeedScan } from './seed-scan.js';
+import { runSeedScan, abortSeedScan, runSingleSeedScan } from './seed-scan.js';
 import { getGroups, addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { getAllSeedSets, saveSeedSet, deleteSeedSet, getAllSignalsCache } from './db.js';
 import { getChineseName } from './api.js';
@@ -30,23 +30,129 @@ let _srSortAsc = false;
 
 // ─── 初始化 ───────────────────────────────────────────────
 export async function initSeedUI() {
+  _bindModeToggle();
+  _bindModalOpenClose();
   _bindSeedInput();
   _bindFromWatchlist();
   _bindAnalyzeBtn();
   _bindWeightSliders();
   _bindScanConfig();
   _bindScanBtn();
+  _bindSingleScan();
   _bindSavedSets();
   _bindSeedListHeader();
   await _renderSavedSets();
 
-  // 切換到種子 Tab 時更新選股結果計數
   document.querySelectorAll('.main-tab[data-tab="seed"], .tab-item[data-mobile-tab="seed"]')
     .forEach(btn => btn.addEventListener('click', _updateScreenerCount));
+
+  window.__triggerSingleSeed = triggerSingleSeedFromStock;
+  document.getElementById('shFindSimilar')?.addEventListener('click', () => {
+    const code = (window.__stockDashCode ?? '').toString().replace(/\.[A-Z]+$/, '');
+    if (!code) { showToast('請先開啟個股'); return; }
+    triggerSingleSeedFromStock(code);
+  });
+}
+
+// ─── Modal 開關 ───────────────────────────────────────────
+function _bindModalOpenClose() {
+  document.getElementById('seedOpenConfig')?.addEventListener('click', _openModal);
+  document.getElementById('seedModalClose')?.addEventListener('click', _closeModal);
+  document.getElementById('seedModalBg')?.addEventListener('click', e => {
+    if (e.target.id === 'seedModalBg') _closeModal();
+  });
+  // Modal 內「▶ 開始掃描」按鈕 → 關 Modal + 觸發掃描
+  document.getElementById('seedModalStart')?.addEventListener('click', () => {
+    _closeModal();
+    if (_seedMode === 'single') _startSingleScan();
+    else _startScan();
+  });
+  // 儲存 Modal
+  document.getElementById('seedTbSaveBtn')?.addEventListener('click', () => {
+    const bg = document.getElementById('seedSaveModalBg');
+    if (bg) bg.style.display = 'flex';
+  });
+  document.getElementById('seedSaveModalClose')?.addEventListener('click', () => {
+    document.getElementById('seedSaveModalBg').style.display = 'none';
+  });
+  document.getElementById('seedSaveModalBg')?.addEventListener('click', e => {
+    if (e.target.id === 'seedSaveModalBg')
+      document.getElementById('seedSaveModalBg').style.display = 'none';
+  });
+}
+
+function _openModal() {
+  const bg = document.getElementById('seedModalBg');
+  if (bg) bg.style.display = 'flex';
+  // 標題同步模式
+  const title = document.getElementById('seedModalTitle');
+  if (title) title.textContent = _seedMode === 'single' ? '相似股設定' : '種子選股設定';
+}
+
+function _closeModal() {
+  const bg = document.getElementById('seedModalBg');
+  if (bg) bg.style.display = 'none';
+  // 多股模式：modal 關閉後更新 toolbar chips 預覽
+  _updateTbChips();
 }
 
 function _bindSeedListHeader() {
   // header 現在由 _renderResults 動態產生在 table thead，此函式保留為空
+}
+
+// ─── 模式切換 ─────────────────────────────────────────────
+let _seedMode = 'multi';
+
+function _bindModeToggle() {
+  const toggle = document.getElementById('seedModeToggle');
+  if (!toggle) return;
+  toggle.addEventListener('click', e => {
+    const btn = e.target.closest('.seed-mode-btn');
+    if (!btn) return;
+    const mode = btn.dataset.mode;
+    if (mode === _seedMode) return;
+    _seedMode = mode;
+    toggle.querySelectorAll('.seed-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    document.getElementById('seedMultiArea').style.display  = mode === 'multi'  ? '' : 'none';
+    document.getElementById('seedSingleArea').style.display = mode === 'single' ? '' : 'none';
+    document.getElementById('seedTbChips').style.display    = mode === 'multi'  ? '' : 'none';
+    document.getElementById('seedTbSingle').style.display   = mode === 'single' ? '' : 'none';
+    // 掃描按鈕狀態重設
+    const scanBtn = document.getElementById('seedScanBtn');
+    if (scanBtn) scanBtn.disabled = mode === 'multi'
+      ? !(AppState.seed.template)
+      : !_singleSeedCode;
+    // 結果 header 更新
+    const hdr = document.querySelector('#tabSeed .seed-result-list');
+    if (hdr && AppState.seed.scanResults?.length === 0) {
+      hdr.innerHTML = `<div class="seed-empty-state"><p>尚未開始掃描</p><p class="hint">點擊「⚙ 設定」設定種子 → 「▶ 開始掃描」</p></div>`;
+    }
+  });
+}
+
+function _updateTbChips() {
+  const el = document.getElementById('seedTbChips');
+  if (!el) return;
+  const codes = AppState.seed.seedCodes ?? [];
+  if (codes.length === 0) { el.innerHTML = '<span style="color:var(--hint);font-size:12px">尚未設定種子股</span>'; return; }
+  el.innerHTML = codes.map(c => {
+    const n = getChineseName(c) ?? c;
+    return `<span class="seed-tb-chip">${c} <span style="color:var(--muted)">${n}</span></span>`;
+  }).join('');
+}
+
+// 對外橋接：從個股頁「🔍 找相似」觸發單股掃描
+export function triggerSingleSeedFromStock(code) {
+  // 切換到種子 Tab
+  const seedTabBtn = document.querySelector('.main-tab[data-tab="seed"]');
+  if (seedTabBtn) seedTabBtn.click();
+  // 切換到單股模式
+  const singleBtn = document.querySelector('.seed-mode-btn[data-mode="single"]');
+  if (singleBtn && _seedMode !== 'single') singleBtn.click();
+  // 填入代號
+  _setSingleSeedCode(code);
+  // 直接開始掃描（不開 modal，快速觸發）
+  _startSingleScan();
 }
 
 // ─── 種子輸入 ─────────────────────────────────────────────
@@ -72,11 +178,19 @@ function _bindSeedInput() {
 
     input.disabled = true;
     try {
-      const symbol = toYahooSymbol(code);
-      const quote  = await fetchQuote(symbol);
+      // 先試 .TW，失敗再試 .TWO（上櫃股）
+      let symbol = toYahooSymbol(code);
+      let quote  = null;
+      try {
+        quote = await fetchQuote(symbol);
+      } catch (_) {
+        // .TW 找不到 → 試 .TWO
+        symbol = code + '.TWO';
+        quote  = await fetchQuote(symbol);  // 若還是失敗就拋到外層 catch
+      }
       AppState.seed.seedCodes = [...(AppState.seed.seedCodes ?? []), code];
       const chName = getChineseName(code);
-      _renderSeedChips(chName ?? quote.name ?? code);
+      _renderSeedChips(chName ?? quote?.name ?? code);
       input.value = '';
     } catch {
       showToast(`⚠ 找不到代號：${code}`);
@@ -417,13 +531,147 @@ function _updateScreenerCount() {
 }
 
 // ─── 掃描 ────────────────────────────────────────────────
-function _bindScanBtn() {
-  document.getElementById('seedScanBtn')?.addEventListener('click', _startScan);
-  document.getElementById('seedAbortBtn')?.addEventListener('click', () => {
-    abortSeedScan();
-    document.getElementById('seedAbortBtn').style.display = 'none';
+// ─── 單股模式 ─────────────────────────────────────────────
+let _singleSeedCode = null;
+
+function _bindSingleScan() {
+  const addBtn = document.getElementById('seedSingleAddBtn');
+  const inp    = document.getElementById('seedSingleInput');
+  if (!addBtn || !inp) return;
+  addBtn.addEventListener('click', () => {
+    const code = inp.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!code) return;
+    _setSingleSeedCode(code);
   });
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') addBtn.click(); });
+  document.getElementById('seedAbortBtn')?.addEventListener('click', () => { abortSeedScan(); });
 }
+
+function _setSingleSeedCode(code) {
+  _singleSeedCode = code;
+  const name = getChineseName(code) ?? code;
+  // Modal 內 chip
+  const chip = document.getElementById('seedSingleChip');
+  if (chip) {
+    chip.innerHTML = `<span class="seed-chip">${code} ${name}<span class="seed-chip-del" data-code="${code}">✕</span></span>`;
+    chip.querySelector('.seed-chip-del')?.addEventListener('click', () => {
+      _singleSeedCode = null;
+      chip.innerHTML = '';
+      const tb = document.getElementById('seedTbSingleCode');
+      if (tb) tb.textContent = '未設定';
+      document.getElementById('seedScanBtn').disabled = true;
+    });
+  }
+  // Toolbar 顯示
+  const tbCode = document.getElementById('seedTbSingleCode');
+  if (tbCode) tbCode.textContent = `${code} ${name}`;
+  const inp = document.getElementById('seedSingleInput');
+  if (inp) inp.value = '';
+  document.getElementById('seedScanBtn').disabled = false;
+}
+
+async function _startSingleScan() {
+  if (!_singleSeedCode) { showToast('請先設定種子個股（⚙ 設定）'); return; }
+
+  const simMode   = document.querySelector('input[name="seedSimMode"]:checked')?.value   ?? 'technical';
+  const scanScope = document.querySelector('input[name="seedScanScope"]:checked')?.value ?? 'fast';
+  const priceMin  = parseFloat(document.getElementById('seedSinglePriceMin')?.value) || 0;
+  const priceMax  = parseFloat(document.getElementById('seedSinglePriceMax')?.value) || 99999;
+  const threshold = simMode === 'marketcap' ? 0.5 : 0.75;
+
+  AppState.seed.scanResults = [];
+  _renderResults([]);
+  _scanStart();
+
+  let found = 0, scanned = 0;
+  const startTime = Date.now();
+
+  for await (const ev of runSingleSeedScan(_singleSeedCode, { simMode, scanScope, threshold, priceMin, priceMax })) {
+    switch (ev.type) {
+      case 'progress':
+        scanned = ev.done;
+        _scanProgress(ev);
+        break;
+      case 'result':
+        found++;
+        if (found % 3 === 0 || found <= 3) _renderResults(AppState.seed.scanResults);
+        break;
+      case 'done':
+      case 'aborted':
+        _scanEnd(found, scanned, startTime, ev.type === 'aborted');
+        _renderResults(AppState.seed.scanResults);
+        if (AppState.seed.scanResults?.length > 0) {
+          const codes = AppState.seed.scanResults.map(r => r.code);
+          fetchFundamentalsBatch(codes).then(fundMap => {
+            fundMap.forEach((f, c) => { _srFundCache[c] = f ?? null; });
+            _renderResults(AppState.seed.scanResults);
+          }).catch(() => {});
+          _scanYaoguForSeedResults(AppState.seed.scanResults);
+        }
+        break;
+      case 'error':
+        showToast(ev.message);
+        _scanEnd(0, 0, startTime, true);
+        break;
+    }
+  }
+}
+
+function _bindScanBtn() {
+  document.getElementById('seedScanBtn')?.addEventListener('click', () => {
+    if (_seedMode === 'single') _startSingleScan();
+    else _startScan();
+  });
+  document.getElementById('seedAbortBtn')?.addEventListener('click', () => abortSeedScan());
+}
+
+// ─── 掃描進度 toolbar helpers ─────────────────────────────
+function _scanStart() {
+  const scanBtn  = document.getElementById('seedScanBtn');
+  const abortBtn = document.getElementById('seedAbortBtn');
+  const saveBtn  = document.getElementById('seedTbSaveBtn');
+  const progress = document.getElementById('seedProgress');
+  const statusEl = document.getElementById('seedProgressText');
+  const summary  = document.getElementById('seedSummary');
+  if (scanBtn)  { scanBtn.disabled = true; scanBtn.style.display = 'none'; }
+  if (abortBtn) abortBtn.style.display = '';
+  if (saveBtn)  saveBtn.style.display  = 'none';
+  if (progress) progress.style.display = 'block';
+  if (statusEl) { statusEl.textContent = '準備中…'; statusEl.style.display = ''; }
+  if (summary)  summary.textContent = '';
+  const bar = document.getElementById('seedProgressBar');
+  if (bar) bar.style.width = '0%';
+}
+
+function _scanProgress(ev) {
+  const bar      = document.getElementById('seedProgressBar');
+  const statusEl = document.getElementById('seedProgressText');
+  const pct = ev.total > 0 ? (ev.done / ev.total * 100).toFixed(1) + '%' : '0%';
+  const msg = ev.rateLimited
+    ? `⏳ rate limit… (${ev.done}/${ev.total})`
+    : ev.total > 0 ? `掃描中 ${ev.done}/${ev.total}` : (ev.message || '準備中…');
+  if (bar)      bar.style.width       = pct;
+  if (statusEl) statusEl.textContent  = msg;
+}
+
+function _scanEnd(found, scanned, startTime, aborted) {
+  const scanBtn  = document.getElementById('seedScanBtn');
+  const abortBtn = document.getElementById('seedAbortBtn');
+  const saveBtn  = document.getElementById('seedTbSaveBtn');
+  const progress = document.getElementById('seedProgress');
+  const statusEl = document.getElementById('seedProgressText');
+  const summary  = document.getElementById('seedSummary');
+  if (scanBtn)  { scanBtn.disabled = false; scanBtn.style.display = ''; }
+  if (abortBtn) abortBtn.style.display  = 'none';
+  if (progress) progress.style.display  = 'none';
+  if (statusEl) statusEl.style.display  = 'none';
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+  if (summary) summary.textContent = aborted
+    ? `已停止，找到 ${found} 檔`
+    : `找到 ${found} 檔，掃描 ${scanned} 檔，耗時 ${elapsed}s`;
+  if (saveBtn && _seedMode === 'multi' && found > 0) saveBtn.style.display = '';
+}
+
 
 async function _startScan() {
   const template = AppState.seed.template;
@@ -439,21 +687,9 @@ async function _startScan() {
     threshold:          AppState.seed.threshold  ?? 60,
   };
 
-  // 重置結果
   AppState.seed.scanResults = [];
   _renderResults([]);
-
-  const progressWrap = document.getElementById('seedProgress');
-  const progressBar  = document.getElementById('seedProgressBar');
-  const progressText = document.getElementById('seedProgressText');
-  const scanBtn      = document.getElementById('seedScanBtn');
-  const abortBtn     = document.getElementById('seedAbortBtn');
-  const summary      = document.getElementById('seedSummary');
-
-  if (progressWrap) progressWrap.style.display = 'block';
-  if (summary)      summary.style.display = 'none';
-  if (scanBtn)      scanBtn.disabled = true;
-  if (abortBtn)     abortBtn.style.display = '';
+  _scanStart();
 
   let found = 0, scanned = 0;
   const startTime = Date.now();
@@ -462,54 +698,35 @@ async function _startScan() {
     switch (ev.type) {
       case 'progress':
         scanned = ev.done;
-        if (progressBar && ev.total > 0) {
-          progressBar.style.width = (ev.done / ev.total * 100).toFixed(1) + '%';
-        }
-        if (progressText) {
-          progressText.textContent = ev.rateLimited
-            ? `rate limit，等待中… (${ev.done}/${ev.total})`
-            : ev.message || `掃描中 ${ev.done}/${ev.total}`;
-        }
+        _scanProgress(ev);
         break;
-
       case 'result':
         found++;
-        if (found % 10 === 0 || found <= 5) {
-          _renderResults(AppState.seed.scanResults);
-        }
+        if (found % 5 === 0 || found <= 3) _renderResults(AppState.seed.scanResults);
         break;
-
       case 'done':
       case 'aborted':
-        if (progressWrap) progressWrap.style.display = 'none';
-        if (scanBtn)      scanBtn.disabled = false;
-        if (abortBtn)     abortBtn.style.display = 'none';
+        _scanEnd(found, scanned, startTime, ev.type === 'aborted');
         _renderResults(AppState.seed.scanResults);
-        if (summary) {
-          summary.style.display = '';
-          summary.textContent   = `掃描完成：${found} 檔符合，共掃描 ${scanned} 檔，耗時 ${((Date.now() - startTime) / 1000).toFixed(0)}s`;
-        }
         if (AppState.seed.scanResults?.length > 0) {
           const codes = AppState.seed.scanResults.map(r => r.code);
           fetchFundamentalsBatch(codes).then(fundMap => {
-            fundMap.forEach((f, code) => { _srFundCache[code] = f ?? null; });
+            fundMap.forEach((f, c) => { _srFundCache[c] = f ?? null; });
             _renderResults(AppState.seed.scanResults);
           }).catch(() => {});
           _scanYaoguForSeedResults(AppState.seed.scanResults);
         }
         _maybeSavePattern();
         break;
-
       case 'error':
         showToast('⚠ ' + ev.message);
-        if (scanBtn) scanBtn.disabled = false;
-        if (abortBtn) abortBtn.style.display = 'none';
+        _scanEnd(0, 0, startTime, true);
         break;
     }
   }
 }
 
-// ─── 妖股掃描（背景執行）────────────────────────────────────
+
 async function _scanYaoguForSeedResults(results) {
   const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
   const now = Date.now();
@@ -626,12 +843,13 @@ function _renderResults(items) {
     const hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null) : null;
     const yg = _srYaoguMap.get(item.code);
     const chgCls = item.chgPct >= 0 ? 'up' : 'down';
-    const chgStr = (item.chgPct >= 0 ? '+' : '') + item.chgPct.toFixed(2) + '%';
+    const chgStr = (item.chgPct >= 0 ? '+' : '') + (item.chgPct ?? 0).toFixed(2) + '%';
+    const priceVal = typeof item.price === 'number' && isFinite(item.price) ? item.price : 0;
 
     tbody += `<tr class="sr-tbl-row" data-code="${item.code}">
       <td class="sr-tbl-td"><span class="sr-tbl-code">${item.code}</span></td>
       <td class="sr-tbl-td"><span class="sr-tbl-name">${item.name}</span></td>
-      <td class="sr-tbl-td"><span class="sr-tbl-price">${item.price.toFixed(item.price >= 100 ? 0 : 1)}</span></td>
+      <td class="sr-tbl-td"><span class="sr-tbl-price">${priceVal.toFixed(priceVal >= 100 ? 0 : 1)}</span></td>
       <td class="sr-tbl-td"><span class="sr-tbl-chg ${chgCls}">${chgStr}</span></td>
       <td class="sr-tbl-td">${healthBadge(hs, 'hg')}</td>
       <td class="sr-tbl-td">${healthBadge(hl, 'hg')}</td>
@@ -771,6 +989,7 @@ function _bindSavedSets() {
       await _renderSavedSets();
       const nameInput = document.getElementById('seedSaveName');
       if (nameInput) nameInput.value = '';
+      document.getElementById('seedSaveModalBg').style.display = 'none';
       showToast(`✓ 已儲存「${name}」`);
     } catch (e) {
       showToast('⚠ 儲存失敗：' + e.message);

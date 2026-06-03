@@ -143,11 +143,23 @@ function _priceOf(code) {
   return window.__priceCache?.[code]?.price ?? _priceCache[code] ?? null;
 }
 
+/** 確保至少有一個 holding 和一個 watch 清單（在 sync 之後才呼叫）*/
+async function _ensureDefaultLists() {
+  const { listAll: la, createList: cl } = await import('./portfolio.js');
+  if (!la('holding').length) await cl('holding', '主要持股');
+  if (!la('watch').length)   await cl('watch',   '潛力股');
+}
+
+
 export async function initPortfolio() {
   if (_initialized) return;
   _initialized = true;
 
-  await loadLists();
+  // skipDefaults=true：等 syncCloudToLocal 完成後才補建預設清單，
+  // 避免空殼預設清單被 syncLocalToCloud 上傳覆蓋雲端資料
+  await loadLists({ skipDefaults: true });
+  // sync 後若本地仍空，補建預設清單（確保 UI 不報錯）
+  await _ensureDefaultLists();
   _autoSelectFirstList();
   _bindKindTabs();
   _bindToolbar();
@@ -158,7 +170,7 @@ export async function initPortfolio() {
   window.__portfolioAPI = {
     getWatchLists: () => listAll('watch'),
     isInWatch: (code) => listAll('watch').some(l => l.items?.some(it => it.code === code)),
-    reload: async () => { await loadLists(); render(); },
+    reload: async () => { await loadLists({ skipDefaults: true }); await _ensureDefaultLists(); render(); },
   };
 
   document.querySelector('.main-tab[data-tab="portfolio"]')?.addEventListener('click', () => {
@@ -312,6 +324,38 @@ function _bindListSelector() {
     _renderListSelector();
     render();
   });
+
+  // 匯出追蹤清單 JSON
+  document.getElementById('pfListExportBtn')?.addEventListener('click', () => {
+    if (!_activeListId) return;
+    const list = getList(_activeListId);
+    if (!list || list.kind !== 'watch') return;
+
+    const payload = {
+      name:      list.name,
+      kind:      'watch',
+      exportAt:  new Date().toISOString(),
+      items:     list.items.map(it => ({
+        code:     it.code,
+        name:     it.name,
+        refPrice: it.refPrice ?? 0,
+        note:     it.note ?? '',
+      })),
+    };
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    a.href     = url;
+    a.download = `watch_${_esc(list.name)}_${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    document.dispatchEvent(new CustomEvent('showToast', {
+      detail: `✓ 已匯出「${list.name}」${list.items.length} 檔`
+    }));
+  });
 }
 
 function _renderListSelector() {
@@ -348,6 +392,8 @@ function _renderToolbar() {
   if (addBtn) addBtn.textContent = _activeKind === 'holding' ? '＋ 新增持股' : '＋ 新增追蹤';
   const loadBtn = document.getElementById('pfLoadFromWatchlistBtn');
   if (loadBtn) loadBtn.style.display = _activeKind === 'watch' ? '' : 'none';
+  const exportBtn = document.getElementById('pfListExportBtn');
+  if (exportBtn) exportBtn.style.display = _activeKind === 'watch' ? '' : 'none';
 }
 
 function _renderHoldingTable() {

@@ -29,18 +29,21 @@ const STORE = 'portfolio_lists';
 let _lists = null;   // 全部清單 (記憶體快取)
 
 // ─── 載入 / 初始化 ─────────────────────────────────────
-export async function loadLists() {
+export async function loadLists({ skipDefaults = false } = {}) {
   _lists = (await dbGetAll(STORE)) ?? [];
 
   // 從舊版 portfolio store 遷移一次
   await _migrateLegacy();
 
   // 確保至少各有一份預設清單
-  if (!_lists.some(l => l.kind === 'holding')) {
-    await createList('holding', '主要持股');
-  }
-  if (!_lists.some(l => l.kind === 'watch')) {
-    await createList('watch', '潛力股');
+  // skipDefaults=true：由外部（initPortfolio）在雲端 sync 後才建，避免空殼覆蓋雲端
+  if (!skipDefaults) {
+    if (!_lists.some(l => l.kind === 'holding')) {
+      await createList('holding', '主要持股');
+    }
+    if (!_lists.some(l => l.kind === 'watch')) {
+      await createList('watch', '潛力股');
+    }
   }
   return _lists;
 }

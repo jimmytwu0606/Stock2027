@@ -245,6 +245,7 @@
           <span class="sh-name" id="shName">—</span>
           <span class="sh-code" id="shCode"></span>
           <button class="sh-add-btn" id="shAddToWatchlist" title="加入自選清單">＋ 加入自選</button>
+          <button class="sh-similar-btn" id="shFindSimilar" title="找相似股">🔍 找相似</button>
         </div>
         <!-- 價格 + 漲跌 + 五燈（內聯靠右） -->
         <div class="sh-price-row">
@@ -530,6 +531,7 @@
           <button class="pf-icon-btn" id="pfListAddBtn"    title="新增清單">＋</button>
           <button class="pf-icon-btn" id="pfListRenameBtn" title="改名">✏</button>
           <button class="pf-icon-btn" id="pfListDeleteBtn" title="刪除清單">✕</button>
+          <button class="pf-icon-btn" id="pfListExportBtn" title="匯出 JSON" style="display:none">⬇</button>
         </div>
         <!-- 搜尋 Bar -->
         <input type="text" id="pfSearchInput" class="pf-search-input" placeholder="🔍 搜尋代號 / 股名…" />
@@ -1010,152 +1012,218 @@
 
     <!-- ══ Tab：種子選股（Phase 4） ══ -->
     <div class="tab-panel" id="tabSeed">
-      <div class="seed-layout">
 
-        <!-- ── 左側：輸入 & 設定 ── -->
-        <div class="seed-left">
-
-          <!-- 種子輸入 -->
-          <div>
-            <div class="seed-section-title">種子股（2–10 檔）</div>
-            <div class="seed-input-row">
-              <input id="seedInput" type="text" placeholder="輸入代號，如 2330…" maxlength="8" autocomplete="off" />
-              <button id="seedAddBtn">新增</button>
-            </div>
-            <div style="margin-top:6px">
-              <div style="position:relative;display:inline-block">
-                <button class="seed-from-watchlist-btn" id="seedFromWatchlist">從自選群組帶入 ▾</button>
-                <div id="seedGroupDropdown" class="seed-group-dropdown" style="display:none"></div>
-              </div>
-            </div>
-            <div class="seed-chips" id="seedChips" style="margin-top:8px"></div>
+      <!-- ── Toolbar ── -->
+      <div class="seed-toolbar">
+        <div class="seed-tb-left">
+          <div class="seed-mode-toggle" id="seedModeToggle">
+            <button class="seed-mode-btn active" data-mode="multi">多股模式</button>
+            <button class="seed-mode-btn" data-mode="single">單股模式</button>
           </div>
-
-          <!-- 分析種子 -->
-          <button class="seed-analyze-btn" id="seedAnalyzeBtn" disabled>分析種子 →</button>
-
-          <!-- 模板預覽 -->
-          <div id="seedTemplatePreview" style="display:none;flex-direction:column;gap:10px">
-            <div class="seed-section-title">種子模板預覽</div>
-            <div class="seed-preview-canvas-wrap">
-              <canvas id="seedPreviewCanvas" height="72"></canvas>
-            </div>
-            <span class="seed-sector-badge" id="seedSectorBadge">—</span>
-            <div class="seed-indicator-profile" id="seedIndicatorProfile"></div>
-            <div class="seed-divergence-warning" id="seedDivergenceWarning"></div>
+          <div class="seed-tb-chips" id="seedTbChips"></div>
+          <div class="seed-tb-single" id="seedTbSingle" style="display:none">
+            <span class="seed-tb-single-code" id="seedTbSingleCode">未設定</span>
           </div>
+        </div>
+        <div class="seed-tb-right">
+          <span class="seed-tb-summary" id="seedSummary"></span>
+          <span class="seed-tb-status" id="seedProgressText" style="display:none"></span>
+          <button class="seed-tb-btn seed-tb-config" id="seedOpenConfig">⚙ 設定</button>
+          <button class="seed-tb-btn seed-tb-scan" id="seedScanBtn" disabled>▶ 開始掃描</button>
+          <button class="seed-tb-btn seed-tb-abort" id="seedAbortBtn" style="display:none">■ 停止</button>
+          <button class="seed-tb-btn seed-tb-save" id="seedTbSaveBtn" style="display:none">💾 儲存</button>
+        </div>
+      </div>
 
-          <!-- 評分權重 -->
-          <div>
-            <div class="seed-section-title">評分權重</div>
-            <div class="seed-weight-group">
-              <div class="seed-weight-row">
-                <span class="wr-label">產業</span>
-                <input type="range" id="seedWeightSector" min="5" max="90" value="25" step="1">
-                <span class="wr-val" id="seedWeightSectorLabel">25%</span>
-              </div>
-              <div class="seed-weight-row">
-                <span class="wr-label">線型</span>
-                <input type="range" id="seedWeightPattern" min="5" max="90" value="50" step="1">
-                <span class="wr-val" id="seedWeightPatternLabel">50%</span>
-              </div>
-              <div class="seed-weight-row">
-                <span class="wr-label">指標</span>
-                <input type="range" id="seedWeightIndicator" min="5" max="90" value="25" step="1">
-                <span class="wr-val" id="seedWeightIndicatorLabel">25%</span>
-              </div>
-            </div>
-          </div>
+      <!-- 進度條（全寬細線） -->
+      <div class="seed-progress" id="seedProgress">
+        <div class="seed-progress-track">
+          <div class="seed-progress-bar" id="seedProgressBar"></div>
+        </div>
+      </div>
 
-          <!-- 掃描範圍 -->
-          <div>
-            <div class="seed-section-title">縮小掃描範圍</div>
-            <div class="seed-filter-section">
-              <div class="seed-filter-row">
-                <span>股價（元）</span>
-                <div class="seed-range-inputs">
-                  <input type="number" id="seedPriceMin" placeholder="最低" min="0" step="1">
-                  <span class="seed-range-sep">—</span>
-                  <input type="number" id="seedPriceMax" placeholder="最高" min="0" step="1">
+      <!-- 結果列表（全寬） -->
+      <div class="seed-result-list" id="seedResultList">
+        <div class="seed-empty-state">
+          <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+            <circle cx="22" cy="22" r="14" stroke="var(--border2)" stroke-width="1.5"/>
+            <path d="M22 14 Q26 18 22 22 Q18 26 22 30" stroke="var(--hint)"
+                  stroke-width="1.5" stroke-linecap="round" fill="none"/>
+            <circle cx="22" cy="32" r="1.5" fill="var(--hint)"/>
+          </svg>
+          <p>尚未開始掃描</p>
+          <p class="hint">點擊「⚙ 設定」設定種子 → 「▶ 開始掃描」</p>
+        </div>
+      </div>
+
+    </div><!-- /tabSeed -->
+
+    <!-- ══ 種子選股設定 Modal ══ -->
+    <div class="seed-modal-bg" id="seedModalBg" style="display:none">
+      <div class="seed-modal" id="seedModal">
+        <div class="seed-modal-header">
+          <span class="seed-modal-title" id="seedModalTitle">種子選股設定</span>
+          <button class="seed-modal-close" id="seedModalClose">✕</button>
+        </div>
+        <div class="seed-modal-body">
+
+          <!-- 多股模式 -->
+          <div id="seedMultiArea">
+            <div class="seed-modal-section">
+              <div class="seed-section-title">種子股（2–10 檔）</div>
+              <div class="seed-input-row">
+                <input id="seedInput" type="text" placeholder="輸入代號，如 2330…" maxlength="8" autocomplete="off" />
+                <button id="seedAddBtn">新增</button>
+              </div>
+              <div style="margin-top:6px">
+                <div style="position:relative;display:inline-block">
+                  <button class="seed-from-watchlist-btn" id="seedFromWatchlist">從自選群組帶入 ▾</button>
+                  <div id="seedGroupDropdown" class="seed-group-dropdown" style="display:none"></div>
                 </div>
               </div>
-              <div class="seed-filter-row">
-                <span>成交量（張）≥</span>
-                <input type="number" id="seedVolumeMin" placeholder="不限" min="0" step="100">
+              <div class="seed-chips" id="seedChips" style="margin-top:8px"></div>
+            </div>
+
+            <div class="seed-modal-section">
+              <button class="seed-analyze-btn" id="seedAnalyzeBtn" disabled>分析種子 →</button>
+              <div id="seedTemplatePreview" style="display:none;flex-direction:column;gap:10px;margin-top:10px">
+                <div class="seed-preview-canvas-wrap">
+                  <canvas id="seedPreviewCanvas" height="72"></canvas>
+                </div>
+                <span class="seed-sector-badge" id="seedSectorBadge">—</span>
+                <div class="seed-indicator-profile" id="seedIndicatorProfile"></div>
+                <div class="seed-divergence-warning" id="seedDivergenceWarning"></div>
               </div>
-              <div class="seed-filter-row">
-                <label class="seed-checkbox-label">
-                  <input type="checkbox" id="seedFromScreener">
-                  <span>從「選股結果」掃描</span>
-                </label>
-                <span class="seed-screener-count" id="seedScreenerCount"></span>
+            </div>
+
+            <div class="seed-modal-section">
+              <div class="seed-section-title">評分權重</div>
+              <div class="seed-weight-group">
+                <div class="seed-weight-row">
+                  <span class="wr-label">產業</span>
+                  <input type="range" id="seedWeightSector" min="5" max="90" value="25" step="1">
+                  <span class="wr-val" id="seedWeightSectorLabel">25%</span>
+                </div>
+                <div class="seed-weight-row">
+                  <span class="wr-label">線型</span>
+                  <input type="range" id="seedWeightPattern" min="5" max="90" value="50" step="1">
+                  <span class="wr-val" id="seedWeightPatternLabel">50%</span>
+                </div>
+                <div class="seed-weight-row">
+                  <span class="wr-label">指標</span>
+                  <input type="range" id="seedWeightIndicator" min="5" max="90" value="25" step="1">
+                  <span class="wr-val" id="seedWeightIndicatorLabel">25%</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="seed-modal-section">
+              <div class="seed-section-title">掃描範圍</div>
+              <div class="seed-filter-section">
+                <div class="seed-filter-row">
+                  <span>股價（元）</span>
+                  <div class="seed-range-inputs">
+                    <input type="number" id="seedPriceMin" placeholder="最低" min="0" step="1">
+                    <span class="seed-range-sep">—</span>
+                    <input type="number" id="seedPriceMax" placeholder="最高" min="0" step="1">
+                  </div>
+                </div>
+                <div class="seed-filter-row">
+                  <span>成交量（張）≥</span>
+                  <input type="number" id="seedVolumeMin" placeholder="不限" min="0" step="100">
+                </div>
+                <div class="seed-filter-row">
+                  <label class="seed-checkbox-label">
+                    <input type="checkbox" id="seedFromScreener">
+                    <span>從「選股結果」掃描</span>
+                  </label>
+                  <span class="seed-screener-count" id="seedScreenerCount"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="seed-modal-section">
+              <div class="seed-section-title">已儲存的組合</div>
+              <div id="seedSavedSets">
+                <div class="seed-saved-empty">尚無儲存的組合</div>
               </div>
             </div>
           </div>
 
-          <!-- 掃描按鈕 -->
-          <div class="seed-scan-btns">
-            <button class="seed-scan-btn" id="seedScanBtn" disabled>開始掃描全市場</button>
-            <button class="seed-abort-btn" id="seedAbortBtn">停止</button>
-          </div>
+          <!-- 單股模式 -->
+          <div id="seedSingleArea" style="display:none">
+            <div class="seed-modal-section">
+              <div class="seed-section-title">以單一個股為種子</div>
+              <div class="seed-input-row">
+                <input id="seedSingleInput" type="text" placeholder="輸入代號，如 2330…" maxlength="8" autocomplete="off" />
+                <button id="seedSingleAddBtn">設定</button>
+              </div>
+              <div id="seedSingleChip" style="margin-top:8px"></div>
+            </div>
 
-          <!-- 儲存組合 -->
-          <div id="seedSaveArea">
-            <div class="seed-section-title">儲存種子組合</div>
-            <div class="seed-save-row">
-              <input type="text" id="seedSaveName" placeholder="組合名稱…" maxlength="20">
-              <button id="seedSaveBtn">儲存</button>
+            <div class="seed-modal-section">
+              <div class="seed-section-title">相似標準</div>
+              <div class="seed-filter-section">
+                <div class="seed-filter-row">
+                  <label class="seed-radio-label"><input type="radio" name="seedSimMode" value="technical" checked> 技術面（K線走勢）</label>
+                </div>
+                <div class="seed-filter-row">
+                  <label class="seed-radio-label"><input type="radio" name="seedSimMode" value="marketcap"> 市值相近（±50%）</label>
+                </div>
+                <div class="seed-filter-row">
+                  <label class="seed-radio-label"><input type="radio" name="seedSimMode" value="mixed"> 混合（技術 70% + 市值 30%）</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="seed-modal-section">
+              <div class="seed-section-title">掃描範圍</div>
+              <div class="seed-filter-section">
+                <div class="seed-filter-row">
+                  <label class="seed-radio-label"><input type="radio" name="seedScanScope" value="fast" checked> 快掃（已快取代號，~2000 檔）</label>
+                </div>
+                <div class="seed-filter-row">
+                  <label class="seed-radio-label"><input type="radio" name="seedScanScope" value="full"> 精掃（全市場，~2100+ 檔）</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="seed-modal-section">
+              <div class="seed-section-title">股價篩選（元）</div>
+              <div class="seed-filter-section">
+                <div class="seed-filter-row">
+                  <span>範圍</span>
+                  <div class="seed-range-inputs">
+                    <input type="number" id="seedSinglePriceMin" placeholder="最低" min="0" step="1">
+                    <span class="seed-range-sep">—</span>
+                    <input type="number" id="seedSinglePriceMax" placeholder="最高" min="0" step="1">
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- 已儲存組合 -->
-          <div>
-            <div class="seed-section-title">已儲存的組合</div>
-            <div id="seedSavedSets">
-              <div class="seed-saved-empty">尚無儲存的組合</div>
-            </div>
-          </div>
+        </div><!-- /seed-modal-body -->
+        <div class="seed-modal-footer">
+          <button class="seed-modal-start" id="seedModalStart">▶ 開始掃描</button>
+        </div>
+      </div>
+    </div><!-- /seed-modal-bg -->
 
-        </div><!-- /seed-left -->
-
-        <!-- ── 右側：掃描結果 ── -->
-        <div class="seed-right">
-          <div class="seed-result-header">
-            <span>比對結果（依綜合分數排序）</span>
-          </div>
-
-          <!-- 進度 -->
-          <div class="seed-progress" id="seedProgress">
-            <div class="seed-progress-track">
-              <div class="seed-progress-bar" id="seedProgressBar"></div>
-            </div>
-            <div class="seed-progress-meta">
-              <span id="seedProgressText">準備中…</span>
-              <button class="seed-abort-btn" id="seedAbortBtn2" style="display:none">停止</button>
-            </div>
-          </div>
-
-          <!-- 彙總 -->
-          <div id="seedSummary"></div>
-
-          <!-- 結果列表標題 -->
-          <!-- 結果列表（thead 由 JS 動態產生）-->
-          <div class="seed-result-list" id="seedResultList">
-            <div class="seed-empty-state">
-              <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-                <circle cx="22" cy="22" r="14" stroke="var(--border2)" stroke-width="1.5"/>
-                <path d="M22 14 Q26 18 22 22 Q18 26 22 30" stroke="var(--hint)"
-                      stroke-width="1.5" stroke-linecap="round" fill="none"/>
-                <circle cx="22" cy="32" r="1.5" fill="var(--hint)"/>
-              </svg>
-              <p>尚未開始掃描</p>
-              <p class="hint">輸入種子股 → 分析模板 → 開始掃描</p>
-            </div>
-          </div>
-        </div><!-- /seed-right -->
-
-      </div><!-- /seed-layout -->
-    </div><!-- /tabSeed -->
+    <!-- 儲存組合 Modal -->
+    <div class="seed-save-modal-bg" id="seedSaveModalBg" style="display:none">
+      <div class="seed-save-modal">
+        <div class="seed-modal-header">
+          <span class="seed-modal-title">儲存種子組合</span>
+          <button class="seed-modal-close" id="seedSaveModalClose">✕</button>
+        </div>
+        <div style="padding:16px;display:flex;gap:8px">
+          <input type="text" id="seedSaveName" placeholder="組合名稱…" maxlength="20"
+                 style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px">
+          <button id="seedSaveBtn" class="seed-modal-start">儲存</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ══ Tab：強勢族群 ══ -->
     <div class="tab-panel" id="tabHotgroup">

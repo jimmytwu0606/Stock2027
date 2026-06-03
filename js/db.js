@@ -808,7 +808,7 @@ export async function syncCloudToLocal() {
     { fs: 'screener_results',  idb: 'screenerResults',  check: rs => rs.length > 0 },
     { fs: 'seed_sets',         idb: 'seedSets',         check: rs => rs.length > 0 },
     { fs: 'annotations',       idb: 'annotations',      check: rs => rs.length > 0 },
-    { fs: 'portfolio_lists',   idb: 'portfolio_lists',  check: rs => rs.some(l => l.items?.length > 0) },
+    { fs: 'portfolio_lists',   idb: 'portfolio_lists',  check: rs => rs.some(l => l.items?.length > 0) && rs.length > 2 },
     { fs: 'yaogu',             idb: 'yaogu_tracker',    check: rs => rs.length > 0 },
     { fs: 'user_themes',       idb: 'userThemes',       check: rs => rs.length > 0 },
   ];
@@ -817,17 +817,39 @@ export async function syncCloudToLocal() {
   for (const { fs, idb, check } of stores) {
     try {
       const local = await dbGetAll(idb);
-      if (check(local)) {
-        console.log(`[db] syncCloudToLocal: ${idb} 本地有資料，跳過`);
+      const rows  = await fsGetAll(uid, fs);
+      if (!rows.length) {
+        console.log(`[db] syncCloudToLocal: ${idb} 雲端無資料，跳過`);
         continue;
       }
-      const rows = await fsGetAll(uid, fs);
-      if (!rows.length) continue;
-      for (const row of rows) {
-        await dbPut(idb, row);
+
+      if (check(local)) {
+        // 本地有資料 → merge：以雲端為主，用 updatedAt 決定誰較新
+        const localMap = new Map(local.map(r => [r.id ?? r.code, r]));
+        let merged = 0;
+        for (const row of rows) {
+          const key   = row.id ?? row.code;
+          const local = localMap.get(key);
+          // 雲端較新（或本地沒有）才覆蓋
+          if (!local || (row.updatedAt ?? 0) >= (local.updatedAt ?? 0)) {
+            await dbPut(idb, row);
+            merged++;
+          }
+        }
+        if (merged > 0) {
+          pulledCount += merged;
+          console.log(`[db] syncCloudToLocal: ${idb} merge ${merged} 筆（本地有資料，以較新者為準）`);
+        } else {
+          console.log(`[db] syncCloudToLocal: ${idb} 本地全部較新，跳過`);
+        }
+      } else {
+        // 本地空 → 全量拉回
+        for (const row of rows) {
+          await dbPut(idb, row);
+        }
+        pulledCount += rows.length;
+        console.log(`[db] syncCloudToLocal: ${idb} 全量拉回 ${rows.length} 筆`);
       }
-      pulledCount += rows.length;
-      console.log(`[db] syncCloudToLocal: ${idb} 拉回 ${rows.length} 筆`);
     } catch (err) {
       console.warn(`[db] syncCloudToLocal failed (${fs}):`, err);
     }

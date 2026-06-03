@@ -79,7 +79,7 @@ import { initFullscreenAnalysis, destroyFullscreenAnalysis, refreshFullscreenAna
 import './analysis-perspective.js';  // 觀點 Tab — 自動 registerAnalysisModule
 
 // ── 資料庫 / 設定 ──
-import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices, deleteKlineCache } from './db.js';
+import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices, deleteKlineCache, syncCloudToLocal, syncLocalToCloud } from './db.js';
 import { loadConfig }    from './config.js';
 import { initWatchlist, reloadWatchlist, addStockToGroup, getDefaultGroupId, updateStockPrices, createGroup } from './watchlist.js';
 import * as PriceHub from './price-hub.js';
@@ -1650,12 +1650,25 @@ function _initFullscreen() {
     applyTierGate(tier);
     refreshStrategyCards();  // tier 確認後補刷策略卡片（避免 Pro 策略因時序問題不顯示）
 
+    if (e.detail?.user) {
+      // ── 雲端 ↔ 本地同步（登入時才跑）──
+      // 順序：先拉雲端（merge），再上傳本地
+      // ⚠️ 必須在 reloadWatchlist / portfolioAPI.reload 之前完成
+      await syncCloudToLocal().catch(err => console.warn('[main] syncCloudToLocal failed:', err));
+      syncLocalToCloud().catch(err => console.warn('[main] syncLocalToCloud failed:', err));
+    }
+
     // 自選清單重繪（雲端同步完成後）
     // 用 reloadWatchlist 而非 initWatchlist，避免工具列按鈕被重複綁定
     await reloadWatchlist();
     const groups = AppState.watchlistGroups ?? [];
     const first  = groups[0]?.stocks?.[0];
     if (first && !AppState.activeCode) loadStock(first.code);
+
+    // portfolio 重載（sync 完成後更新 UI）
+    if (e.detail?.user) {
+      window.__portfolioAPI?.reload?.().catch(() => {});
+    }
   });
   // ─────────────────────────────────────────────────────────────────────
 
