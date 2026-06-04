@@ -16,7 +16,7 @@ import { fetchHistoryCached, toYahooSymbol, getChineseName } from './api.js';
 import { CONDITION_DEFS } from './screener.js';
 import { STRATEGIES } from './strategy.js';
 import { dengToast }       from './loading-deng.js';
-import { getIndustryCache, setIndustryCache } from './db.js';
+import { getIndustryCache, setIndustryCache, getHeatmapMeta, saveHeatmapMeta, listIndustryCacheKeys } from './db.js';
 
 // ── 股名/代號反查 ─────────────────────────────────────────────────────────
 // 輸入可能是 "2330"、"台積電"、"台積"，回傳標準代號
@@ -76,6 +76,9 @@ export async function initStrategyLab() {
   _bindIndModal();
   _applyTierUI();
   _switchSub('single');  // 初始顯示單股回測
+
+  // 預載 heatMap（讓設定面板 badge 在重開頁面後仍可顯示）
+  _preloadHeatMap();
 
   // 監聽 tier 變更（登入/登出）
   window.addEventListener('authReady', () => _applyTierUI());
@@ -456,6 +459,9 @@ function _bindIndustryRun() {
     document.getElementById('labRunIndustry').style.display  = '';
   });
 
+  // ── 讀取 Firebase meta，顯示「上次結果」banner ────────────────────
+  _loadHeatmapBanner();
+
   // 設定按鈕
   const settingBtn   = document.getElementById('labIndSettingBtn');
   const settingPanel = document.getElementById('labIndSettingPanel');
@@ -473,6 +479,10 @@ function _bindIndustryRun() {
     if (!isOpen) {
       // 每次開啟都重新渲染，確保熱度資料是最新的
       checksEl.innerHTML = '<span style="color:var(--muted);font-size:11px">載入中...</span>';
+      // 確保 heatMap 已從 Firebase 載入（preload 是 async，可能還沒跑完）
+      if (!_cachedHeatMap && !_lastIndustryResult?.length) {
+        await _preloadHeatMap();
+      }
       await _populateSectorChecks(checksEl, countEl);
     }
   });
@@ -516,37 +526,99 @@ function _updateSectorCount(countEl, checksEl) {
 }
 
 // 計算近30日各族群熱度（來自上次回測結果）
-function _getSectorHeatMap() {
-  if (!_lastIndustryResult?.length) return {};
-  const heatMap = {};
-  const now = Date.now();
-  const MS30 = 30 * 86400000;
+// 近30日熱度快取（從 Firebase meta 讀回，頁面重載後仍有效）
+let _cachedHeatMap = null;
 
-  _lastIndustryResult.forEach(({ ind, stocks }) => {
-    let recentCnt = 0, vrSum = 0, vrCnt = 0;
-    Object.values(stocks).forEach(data => {
-      data.sigs.forEach(sig => {
-        const d = new Date(sig.date?.replace(/\//g, '-'));
-        if (now - d.getTime() <= MS30) {
-          recentCnt++;
-          if (sig.volRatio != null) { vrSum += sig.volRatio; vrCnt++; }
-        }
+function _getSectorHeatMap() {
+  // 完整回測結果（有真實 stocks.sigs）才從記憶體計算
+  if (_lastIndustryResult?.length) {
+    // 檢查是否有真實訊號資料（非空 stocks）
+    const hasSigs = _lastIndustryResult.some(({ stocks }) =>
+      Object.values(stocks ?? {}).some(d => (d.sigs ?? []).length > 0)
+    );
+    if (hasSigs) {
+      const heatMap = {};
+      const now = Date.now();
+      const MS30 = 30 * 86400000;
+      _lastIndustryResult.forEach(({ ind, stocks }) => {
+        let recentCnt = 0, vrSum = 0, vrCnt = 0;
+        Object.values(stocks ?? {}).forEach(data => {
+          (data.sigs ?? []).forEach(sig => {
+            const d = new Date((sig.date ?? '').replace(/\//g, '-'));
+            if (now - d.getTime() <= MS30) {
+              recentCnt++;
+              if (sig.volRatio != null) { vrSum += sig.volRatio; vrCnt++; }
+            }
+          });
+        });
+        const avgVr = vrCnt > 0 ? vrSum / vrCnt : 1;
+        const heat  = recentCnt * Math.min(avgVr, 5);
+        if (heat > 0) heatMap[ind] = { heat: +heat.toFixed(1), cnt: recentCnt, avgVr: +avgVr.toFixed(2) };
       });
-    });
-    const avgVr = vrCnt > 0 ? vrSum / vrCnt : 1;
-    const heat  = recentCnt * Math.min(avgVr, 5);
-    if (heat > 0) heatMap[ind] = { heat: +heat.toFixed(1), cnt: recentCnt, avgVr: +avgVr.toFixed(2) };
-  });
-  return heatMap;
+      return heatMap;
+    }
+  }
+  // fallback：使用 Firebase/IDB meta 中儲存的 heatMap（跨裝置重開頁面仍有 badge）
+  return _cachedHeatMap ?? {};
+}
+
+// 初始化時從 Firebase 預載 heatMap
+// 若 Firebase meta 沒有 heatMap（舊版資料），fallback 到 IDB 完整快取重算
+async function _preloadHeatMap() {
+  try {
+    const meta = await getHeatmapMeta();
+    if (meta?.heatMap) {
+      _cachedHeatMap = meta.heatMap;
+      return;
+    }
+  } catch (_) {}
+
+  // fallback：從 IDB 找任意一筆完整族群快取，重算 heatMap 並回補存入 Firebase
+  try {
+    const keys = await listIndustryCacheKeys();
+    if (!keys.length) return;
+    // 找今天的快取（key 不帶日期，但 rec.date 有）
+    const today = new Date().toISOString().slice(0, 10);
+    for (const k of keys) {
+      const rec = await getIndustryCache(k);   // getIndustryCache 已有日期過濾（同天才回傳）
+      if (!rec?.length) continue;
+      // 找到有效的完整 indStats，重算並儲存
+      _lastIndustryResult = rec;
+      await saveHeatmapMeta(rec, k);
+      break;
+    }
+    // 再讀一次
+    const meta2 = await getHeatmapMeta();
+    if (meta2?.heatMap) _cachedHeatMap = meta2.heatMap;
+  } catch (e) {
+    console.warn('[lab] _preloadHeatMap fallback failed:', e.message);
+  }
 }
 
 function _heatBadge(heatInfo) {
-  if (!heatInfo) return '';
+  if (!heatInfo) return '<span style="font-size:11px;color:rgba(100,116,139,.5);margin-left:5px">—</span>';
   const { heat, cnt, avgVr } = heatInfo;
-  const col = heat >= 10 ? '#991b1b' : heat >= 6 ? '#c2410c' : heat >= 3 ? '#ca8a04' : '#166534';
-  const bg  = heat >= 10 ? 'rgba(153,27,27,.15)' : heat >= 6 ? 'rgba(194,65,12,.15)' : heat >= 3 ? 'rgba(202,138,4,.12)' : 'rgba(22,101,52,.12)';
-  const label = heat >= 10 ? '🔥 熱' : heat >= 6 ? '↑ 升溫' : heat >= 3 ? '○ 微溫' : '— 冷';
-  return `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:${bg};color:${col};margin-left:3px" title="近30日訊號${cnt}筆，均量比${avgVr}x">${label}</span>`;
+  let col, bg, label;
+  if (heat >= 10) {
+    // 爆熱：亮紅
+    col = '#fca5a5'; bg = 'rgba(239,68,68,.28)'; label = '🔥';
+  } else if (heat >= 6) {
+    // 升溫：橙
+    col = '#fdba74'; bg = 'rgba(251,146,60,.25)'; label = '↑';
+  } else if (heat >= 3) {
+    // 微溫：黃
+    col = '#fde68a'; bg = 'rgba(234,179,8,.22)'; label = '○';
+  } else if (heat >= 1) {
+    // 中性偏冷：灰
+    col = '#94a3b8'; bg = 'rgba(148,163,184,.15)'; label = '·';
+  } else if (heat > 0) {
+    // 冷：淺藍（有訊號但極少）
+    col = '#93c5fd'; bg = 'rgba(59,130,246,.18)'; label = '↓';
+  } else {
+    // 最冷（近30日 cnt=0）：深藍 + 雪花
+    col = '#60a5fa'; bg = 'rgba(37,99,235,.22)'; label = '❄';
+  }
+  return `<span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;background:${bg};color:${col};margin-left:5px;flex-shrink:0" title="近30日訊號${cnt}筆，均量比${avgVr}x">${label}</span>`;
 }
 
 async function _populateSectorChecks(checksEl, countEl) {
@@ -568,7 +640,7 @@ async function _populateSectorChecks(checksEl, countEl) {
       ? inGroup.reduce((s, sec) => s + (heatMap[sec]?.heat ?? 0), 0) / inGroup.length : 0;
     const dotCol = avgHeat >= 6 ? '#ef5350' : avgHeat >= 3 ? '#f0b429' : 'var(--muted)';
     return `<button class="lab-copy-btn sector-group-btn" data-group="${g}"
-      style="font-size:12px;padding:3px 10px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap">
+      style="font-size:13px;padding:3px 10px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:var(--text)">
       <span style="width:7px;height:7px;border-radius:50%;background:${dotCol};flex-shrink:0"></span>${g}
     </button>`;
   }).join('');
@@ -579,7 +651,7 @@ async function _populateSectorChecks(checksEl, countEl) {
 
   const checkboxes = sortedSectors.map(s => {
     const badge = hasHeat ? _heatBadge(heatMap[s]) : '';
-    return `<label style="display:flex;align-items:center;gap:5px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap;padding:2px 0">
+    return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer;padding:2px 0">
       <input type="checkbox" value="${s}" checked style="accent-color:#ef5350;width:14px;height:14px">${s}${badge}
     </label>`;
   }).join('');
@@ -587,7 +659,7 @@ async function _populateSectorChecks(checksEl, countEl) {
   const warningBanner = !hasHeat ? `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(240,180,41,.08);border:0.5px solid rgba(240,180,41,.3);border-radius:6px;margin-bottom:10px">
       <span style="font-size:16px">⚠️</span>
-      <span style="font-size:12px;color:#f0b429">先跑一次<b>全市場掃描</b>，即可顯示各族群近期熱度，協助快速篩選</span>
+      <span style="font-size:13px;color:#f0b429">先跑一次<b>全市場掃描</b>，即可顯示各族群近期熱度，協助快速篩選</span>
     </div>` : '';
 
   checksEl.innerHTML = `
@@ -595,9 +667,20 @@ async function _populateSectorChecks(checksEl, countEl) {
       ${groupBtns}
     </div>
     ${warningBanner}
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px 10px">
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px 8px">
       ${checkboxes}
-    </div>`;
+    </div>
+    ${hasHeat ? `<div style="margin-top:10px;padding:6px 10px;background:rgba(255,255,255,.03);border-radius:6px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span style="color:var(--text);font-size:13px">熱</span>
+      <span style="color:#fca5a5;font-size:14px">🔥</span><span style="opacity:.4">&gt;</span>
+      <span style="color:#fdba74;font-size:13px;font-weight:700">↑</span><span style="opacity:.4">&gt;</span>
+      <span style="color:#fde68a;font-size:13px;font-weight:700">○</span><span style="opacity:.4">&gt;</span>
+      <span style="color:#94a3b8;font-size:13px;font-weight:700">·</span><span style="opacity:.4">&gt;</span>
+      <span style="color:#93c5fd;font-size:13px;font-weight:700">↓</span><span style="opacity:.4">&gt;</span>
+      <span style="color:#60a5fa;font-size:14px">❄</span>
+      <span style="color:var(--text);font-size:13px">冷</span>
+      <span style="margin-left:6px;font-size:13px;opacity:.45">近30日訊號密度 × 均量比</span>
+    </div>` : ''}`;
 
   // 分類按鈕點擊 → 勾選該分類
   checksEl.querySelectorAll('.sector-group-btn').forEach(btn => {
@@ -618,6 +701,57 @@ async function _populateSectorChecks(checksEl, countEl) {
   });
 
   _updateSectorCount(countEl, checksEl);
+}
+
+// ── 上次結果 banner（從 Firebase meta 讀取，跨裝置顯示）─────────────────────
+async function _loadHeatmapBanner() {
+  const emptyEl = document.getElementById('labIndustryEmpty');
+  if (!emptyEl) return;
+  try {
+    const meta = await getHeatmapMeta();
+    if (!meta?.indStatsMeta?.length) return;
+
+    const d = new Date(meta.savedAt);
+    const dateStr = `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+    const top3 = meta.indStatsMeta
+      .slice().sort((a, b) => b.wr - a.wr).slice(0, 3)
+      .map(s => `<span style="color:var(--up)">${s.ind}</span> ${s.wr}%`).join('　');
+
+    // 在 empty state 插入 banner（不取代原按鈕提示）
+    const banner = document.createElement('div');
+    banner.id = 'labHeatmapBanner';
+    banner.style.cssText = `
+      margin-top:14px;padding:10px 14px;
+      border:1px solid rgba(239,83,80,.2);border-radius:7px;
+      background:rgba(239,83,80,.05);text-align:left;
+      max-width:360px;width:100%
+    `;
+    banner.innerHTML = `
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px">📋 上次族群回測記錄</div>
+      <div style="font-size:12px;color:var(--text);margin-bottom:3px">掃描時間：<span style="color:var(--accent)">${dateStr}</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:7px">族群數 ${meta.indStatsMeta.length}　前三：${top3}</div>
+      <button id="labLoadLastMeta" style="
+        padding:4px 12px;font-size:11px;border-radius:5px;cursor:pointer;
+        background:transparent;border:1px solid rgba(239,83,80,.35);color:var(--up)
+      ">載入上次排行榜</button>
+      <span style="font-size:10px;color:var(--muted);margin-left:8px">（只含統計摘要，不含熱力圖月份格子）</span>
+    `;
+    emptyEl.appendChild(banner);
+
+    document.getElementById('labLoadLastMeta')?.addEventListener('click', () => {
+      const resultEl = document.getElementById('labIndustryResult');
+      if (!resultEl) return;
+      // 不覆寫 _lastIndustryResult，讓 _getSectorHeatMap() 繼續用 _cachedHeatMap
+      // 只把 meta 輕量版傳給 _renderIndustryResult 顯示排行榜
+      const displayStats = meta.indStatsMeta.map(s => ({ ...s, stocks: {} }));
+      emptyEl.style.display = 'none';
+      _renderIndustryResult(resultEl, { indStats: displayStats });
+      resultEl.style.display = '';
+      dengToast('✓ 已載入上次排行榜摘要（重新掃描可取得完整熱力圖）');
+    });
+  } catch (e) {
+    // 靜默失敗
+  }
 }
 
 async function _startIndustryBacktest() {
@@ -792,8 +926,15 @@ async function _startIndustryBacktest() {
       return { ind, wr, ret, cnt: allSigs.length, stockCount: stockList.length, avgVolRatio, avgVol, stocks: data.stocks };
     }).filter(Boolean).sort((a, b) => b.wr - a.wr);
 
-    // ── 存入 IndexedDB 快取 ────────────────────────────────────────────
+    // ── 存入 IndexedDB 快取 + Firebase meta ──────────────────────────
     await setIndustryCache(indStats, cacheKey);
+    // 只有這次族群數 ≥ 上次 meta 才更新（防止單族群小測試蓋掉全市場大結果）
+    getHeatmapMeta().then(prevMeta => {
+      const prevCount = prevMeta?.indStatsMeta?.length ?? 0;
+      if (indStats.length >= prevCount) {
+        saveHeatmapMeta(indStats, cacheKey).catch(() => {});
+      }
+    }).catch(() => saveHeatmapMeta(indStats, cacheKey).catch(() => {}));
 
     _lastIndustryResult = indStats;
     _renderIndustryResult(resultEl, { indStats });
@@ -830,17 +971,24 @@ function _renderIndustryResult(el, { indStats }) {
   }
 
   // ── 熱力圖工具函式 ──────────────────────────────────────────────────
+  // 色階：冷=深色底→暖→橙→紅（台股慣例：熱=紅）
   function _heatColor(heat) {
-    if (!heat) return 'transparent';
-    if (heat < 1)  return '#1e3a2f';
-    if (heat < 3)  return '#166534';
-    if (heat < 6)  return '#ca8a04';
-    if (heat < 10) return '#c2410c';
-    return '#991b1b';
+    if (!heat) return 'rgba(255,255,255,.03)';
+    if (heat < 2)  return 'rgba(22,101,52,.55)';    // 深綠（冷）
+    if (heat < 5)  return 'rgba(161,98,7,.65)';     // 深黃（微溫）
+    if (heat < 10) return 'rgba(194,65,12,.80)';    // 橙（升溫）
+    if (heat < 18) return 'rgba(185,28,28,.85)';    // 紅（熱）
+    return 'rgba(220,38,38,.95)';                   // 亮紅（爆熱）
   }
   function _heatTextColor(heat) {
-    if (!heat) return 'transparent';
-    return heat < 3 ? '#9ca3af' : '#fff';
+    if (!heat) return 'rgba(156,163,175,.4)';
+    if (heat < 2) return '#86efac';    // 低熱：亮綠字
+    if (heat < 5) return '#fde68a';    // 微溫：亮黃字
+    return '#fff';                     // 熱以上：白字
+  }
+  // 熱度標準化為 0~1（供漸層計算，保留舊 _heatColor 分段）
+  function _heatOpacity(heat) {
+    return Math.min(heat / 20, 1);
   }
 
   // 從 indStats 建立月份 × 族群的熱力矩陣
@@ -966,31 +1114,34 @@ function _renderIndustryResult(el, { indStats }) {
       .sort((a, b) => (matrix[b.ind]?.[lastMonth]?.heat ?? 0) - (matrix[a.ind]?.[lastMonth]?.heat ?? 0))
       .map(s => s.ind);
 
-    let html = `<div style="overflow-x:auto;overflow-y:auto;max-height:calc(100vh - 200px)">
-      <table style="border-collapse:separate;border-spacing:3px;font-size:11px;white-space:nowrap">
-        <thead><tr>
-          <th style="text-align:right;padding-right:8px;color:var(--muted);font-weight:400;min-width:90px;position:sticky;left:0;background:var(--bg2);z-index:2">族群</th>`;
+    let html = `<div style="overflow-x:auto;max-height:calc(100vh - 240px);overflow-y:auto;border:1px solid var(--border);border-radius:7px">` +
+      `<table style="border-collapse:separate;border-spacing:2px;font-size:11px;white-space:nowrap;padding:6px">` +
+      `<thead><tr>` +
+      `<th style="text-align:right;padding:4px 10px 4px 4px;color:var(--muted);font-weight:400;min-width:88px;position:sticky;left:0;top:0;background:var(--bg2);z-index:3;border-bottom:1px solid var(--border)">族群</th>`;
     months.forEach(m => {
-      html += `<th style="text-align:center;color:var(--muted);font-weight:400;min-width:52px;padding:3px 2px">${m.slice(2)}</th>`;
+      const isLast = m === lastMonth;
+      html += `<th style="text-align:center;color:${isLast ? 'var(--up)' : 'var(--muted)'};font-weight:${isLast ? '600' : '400'};min-width:56px;padding:4px 2px;position:sticky;top:0;background:var(--bg2);z-index:2;border-bottom:1px solid var(--border)">${m.slice(0,7)}</th>`;
     });
     html += `</tr></thead><tbody>`;
 
-    sortedInds.forEach(ind => {
-      html += `<tr><td style="text-align:right;padding-right:8px;color:var(--text);font-size:11px;position:sticky;left:0;background:var(--bg2);z-index:1;white-space:nowrap">${ind}</td>`;
+    sortedInds.forEach((ind, ri) => {
+      const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      html += `<tr><td style="text-align:right;padding:2px 10px 2px 4px;color:var(--text);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;white-space:nowrap">${ind}</td>`;
       months.forEach(m => {
         const cell = matrix[ind]?.[m];
         if (!cell) {
-          html += `<td style="width:52px;height:30px;border-radius:3px;border:0.5px dashed rgba(255,255,255,.08)"></td>`;
+          html += `<td style="width:56px;height:32px;border-radius:4px;border:1px dashed rgba(255,255,255,.06)"></td>`;
         } else {
           const bg = _heatColor(cell.heat);
           const tc = _heatTextColor(cell.heat);
           const vr = cell.avgVolRatio;
-          html += `<td style="width:52px;height:30px;border-radius:3px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle"
-            title="${ind} ${m}&#10;訊號 ${cell.cnt} 筆｜均量比 ${vr}x&#10;點擊查看個股"
-            data-hm-ind="${ind}" data-hm-month="${m}">
-            <div style="color:${tc};font-size:11px;font-weight:600;line-height:1">${cell.cnt}</div>
-            <div style="color:${tc};font-size:10px;opacity:.85">${vr}x</div>
-          </td>`;
+          const pulse = cell.heat >= 10 ? 'outline:1px solid rgba(239,83,80,.45);' : '';
+          html += `<td class="hm-cell" style="width:56px;height:32px;border-radius:4px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle;${pulse}"` +
+            ` title="${ind} ${m}\n訊號 ${cell.cnt} 筆｜均量比 ${vr}x\n點擊查看個股"` +
+            ` data-hm-ind="${ind}" data-hm-month="${m}">` +
+            `<div style="color:${tc};font-size:11px;font-weight:700;line-height:1.3">${cell.cnt}</div>` +
+            `<div style="color:${tc};font-size:10px;opacity:.85;line-height:1.1">${vr}x</div>` +
+            `</td>`;
         }
       });
       html += `</tr>`;
@@ -998,16 +1149,20 @@ function _renderIndustryResult(el, { indStats }) {
 
     html += `</tbody></table></div>`;
 
-    // 圖例
-    html += `<div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--muted)">
-      <span>冷</span>
-      <div style="display:flex;gap:2px">
-        ${['#1e3a2f','#166534','#ca8a04','#c2410c','#991b1b'].map(c =>
-          `<div style="width:18px;height:8px;border-radius:2px;background:${c}"></div>`).join('')}
-      </div>
-      <span>熱</span>
-      <span style="margin-left:8px">格子 = 訊號數（上）× 均量比（下）；熱度 = 訊號數 × min(量比,5)</span>
-    </div>`;
+    const legendColors = [
+      'rgba(22,101,52,.55)', 'rgba(161,98,7,.65)', 'rgba(194,65,12,.80)',
+      'rgba(185,28,28,.85)', 'rgba(220,38,38,.95)',
+    ];
+    const legendLabels = ['< 2','2-5','5-10','10-18','≥18'];
+    html += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);flex-wrap:wrap">` +
+      `<span>冷</span><div style="display:flex;gap:2px;align-items:center">` +
+      legendColors.map((c, i) =>
+        `<div style="width:22px;height:10px;border-radius:2px;background:${c}${i===4?';outline:1px solid rgba(239,83,80,.4)':''}" title="${legendLabels[i]}"></div>`
+      ).join('') +
+      `</div><span>熱</span>` +
+      `<span style="margin-left:4px;opacity:.6">格子：訊號數 / 均量比　熱度 = 訊號 × min(量比,5)　</span>` +
+      `<span style="color:var(--up)">▌ 最新月</span>` +
+      `</div>`;
 
     return html;
   }
@@ -1239,55 +1394,66 @@ function _openIndModal(ind) {
       (stockMap[b.code]?.[lastMonth]?.heat ?? 0) - (stockMap[a.code]?.[lastMonth]?.heat ?? 0));
 
     function hc(heat) {
-      if (!heat) return 'transparent';
-      if (heat < 1) return '#1e3a2f';
-      if (heat < 3) return '#166534';
-      if (heat < 6) return '#ca8a04';
-      if (heat < 10) return '#c2410c';
-      return '#991b1b';
+      if (!heat) return 'rgba(255,255,255,.03)';
+      if (heat < 2)  return 'rgba(22,101,52,.55)';
+      if (heat < 5)  return 'rgba(161,98,7,.65)';
+      if (heat < 10) return 'rgba(194,65,12,.80)';
+      if (heat < 18) return 'rgba(185,28,28,.85)';
+      return 'rgba(220,38,38,.95)';
     }
-    function htc(heat) { return (!heat || heat < 3) ? '#9ca3af' : '#fff'; }
+    function htc(heat) {
+      if (!heat) return 'rgba(156,163,175,.4)';
+      if (heat < 2) return '#86efac';
+      if (heat < 5) return '#fde68a';
+      return '#fff';
+    }
 
-    let html = `<div style="overflow-x:auto">
-      <table style="border-collapse:separate;border-spacing:3px;font-size:11px;white-space:nowrap">
-        <thead><tr>
-          <th style="text-align:right;padding-right:8px;color:var(--muted);font-weight:400;min-width:70px;position:sticky;left:0;background:#1c2128;z-index:2">個股</th>`;
+    const lastMonthM = months[months.length - 1];
+    let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:7px">` +
+      `<table style="border-collapse:separate;border-spacing:2px;font-size:11px;white-space:nowrap;padding:6px">` +
+      `<thead><tr>` +
+      `<th style="text-align:right;padding:4px 10px 4px 4px;color:var(--muted);font-weight:400;min-width:90px;position:sticky;left:0;top:0;background:var(--bg2);z-index:3;border-bottom:1px solid var(--border)">個股</th>`;
     months.forEach(m => {
-      html += `<th style="text-align:center;color:var(--muted);font-weight:400;min-width:52px;padding:3px 2px">${m.slice(2)}</th>`;
+      const isLast = m === lastMonthM;
+      html += `<th style="text-align:center;color:${isLast ? 'var(--up)' : 'var(--muted)'};font-weight:${isLast ? '600' : '400'};min-width:56px;padding:4px 2px;position:sticky;top:0;background:var(--bg2);z-index:2;border-bottom:1px solid var(--border)">${m.slice(0,7)}</th>`;
     });
     html += `</tr></thead><tbody>`;
 
-    sortedStocks.forEach(s => {
-      html += `<tr>
-        <td style="text-align:right;padding-right:8px;color:var(--accent);font-size:11px;position:sticky;left:0;background:#1c2128;z-index:1;cursor:pointer"
-          onclick="openLabWithCode('${s.code}','single')">${s.code} ${s.name}</td>`;
+    sortedStocks.forEach((s, ri) => {
+      const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      html += `<tr>` +
+        `<td style="text-align:right;padding:2px 10px 2px 4px;color:var(--accent);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;cursor:pointer;white-space:nowrap"` +
+        ` onclick="openLabWithCode('${s.code}','single')">${s.code} ${s.name}</td>`;
       months.forEach(m => {
         const cell = stockMap[s.code]?.[m];
         if (!cell) {
-          html += `<td style="width:52px;height:30px;border-radius:3px;border:0.5px dashed rgba(255,255,255,.08)"></td>`;
+          html += `<td style="width:56px;height:32px;border-radius:4px;border:1px dashed rgba(255,255,255,.06)"></td>`;
         } else {
           const bg = hc(cell.heat);
           const tc = htc(cell.heat);
-          html += `<td style="width:52px;height:30px;border-radius:3px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle"
-            title="${s.code} ${s.name} ${m}&#10;訊號 ${cell.cnt} 筆｜量比 ${cell.avgVolRatio}x"
-            onclick="openLabWithCode('${s.code}','single')">
-            <div style="color:${tc};font-size:11px;font-weight:600;line-height:1">${cell.cnt}</div>
-            <div style="color:${tc};font-size:10px;opacity:.85">${cell.avgVolRatio}x</div>
-          </td>`;
+          const pulse = cell.heat >= 10 ? 'outline:1px solid rgba(239,83,80,.45);' : '';
+          html += `<td class="hm-cell" style="width:56px;height:32px;border-radius:4px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle;${pulse}"` +
+            ` title="${s.code} ${s.name} ${m}\n訊號 ${cell.cnt} 筆｜量比 ${cell.avgVolRatio}x"` +
+            ` onclick="openLabWithCode('${s.code}','single')">` +
+            `<div style="color:${tc};font-size:11px;font-weight:700;line-height:1.3">${cell.cnt}</div>` +
+            `<div style="color:${tc};font-size:10px;opacity:.85;line-height:1.1">${cell.avgVolRatio}x</div>` +
+            `</td>`;
         }
       });
       html += `</tr>`;
     });
 
-    html += `</tbody></table></div>
-    <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--muted)">
-      <span>冷</span>
-      <div style="display:flex;gap:2px">
-        ${['#1e3a2f','#166534','#ca8a04','#c2410c','#991b1b'].map(c =>
-          `<div style="width:18px;height:8px;border-radius:2px;background:${c}"></div>`).join('')}
-      </div>
-      <span>熱</span>
-    </div>`;
+    const legendColors2 = [
+      'rgba(22,101,52,.55)', 'rgba(161,98,7,.65)', 'rgba(194,65,12,.80)',
+      'rgba(185,28,28,.85)', 'rgba(220,38,38,.95)',
+    ];
+    html += `</tbody></table></div>` +
+      `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted)">` +
+      `<span>冷</span><div style="display:flex;gap:2px">` +
+      legendColors2.map((c, i) =>
+        `<div style="width:22px;height:10px;border-radius:2px;background:${c}${i===4?';outline:1px solid rgba(239,83,80,.4)':''}" ></div>`
+      ).join('') +
+      `</div><span>熱</span><span style="color:var(--up);margin-left:4px">▌ 最新月</span></div>`;
     return html;
   }
 

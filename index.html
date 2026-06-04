@@ -942,14 +942,14 @@
           <button class="lab-abort-btn" id="labAbortIndustry" style="display:none">■ 停止</button>
         </div>
         <!-- 族群回測設定 Panel -->
-        <div id="labIndSettingPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:780px;max-width:92vw;box-shadow:0 12px 48px rgba(0,0,0,.85)">
+        <div id="labIndSettingPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:960px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,.85)">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <span style="font-size:13px;font-weight:500;color:var(--text)">回測設定</span>
             <button id="labIndSettingClose" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
           </div>
           <!-- 持有天數 -->
           <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-            <div style="font-size:12px;color:var(--muted);margin-bottom:8px">持有天數</div>
+            <div style="font-size:13px;color:var(--text);opacity:.7;margin-bottom:8px">持有天數</div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap" id="labIndHoldChecks">
               <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="5"  checked style="accent-color:#ef5350">5日</label>
               <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="10" checked style="accent-color:#ef5350">10日</label>
@@ -963,11 +963,11 @@
           <div>
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
               <span style="font-size:13px;font-weight:500;color:var(--text)">族群篩選</span>
-              <button id="labIndSelectAll"  class="lab-copy-btn" style="font-size:12px;padding:3px 10px">全選</button>
-              <button id="labIndSelectNone" class="lab-copy-btn" style="font-size:12px;padding:3px 10px">取消全選</button>
-              <span id="labIndSelectedCount" style="font-size:12px;color:var(--muted)"></span>
+              <button id="labIndSelectAll"  class="lab-copy-btn" style="font-size:13px;padding:3px 10px">全選</button>
+              <button id="labIndSelectNone" class="lab-copy-btn" style="font-size:13px;padding:3px 10px">取消全選</button>
+              <span id="labIndSelectedCount" style="font-size:13px;color:var(--text);opacity:.7"></span>
             </div>
-            <div id="labIndSectorChecks" style="max-height:300px;overflow-y:auto">
+            <div id="labIndSectorChecks" style="max-height:360px;overflow-y:auto">
               <span style="color:var(--muted);font-size:12px">載入族群中...</span>
             </div>
           </div>
