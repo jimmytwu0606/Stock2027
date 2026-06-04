@@ -4,78 +4,17 @@
    ================================================================ */
 
 /* ─── Tab Panel 顯隱 ───────────────────────────────────────── */
-#tabPattern {
-  display: none;
-  flex-direction: column;
-  gap: 0;
-  height: 100%;
-  overflow: hidden;
-}
-#tabPattern.active {
-  display: flex;
-}
+/* tab-panel 顯隱規則（全站統一） */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+#tabPattern.active { display: flex; flex-direction: column; }
 
-/* ─── 整體版型 ─────────────────────────────────────────────── */
-.pattern-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 0;
-  height: 100%;
-  overflow: hidden;
-}
-
-@media (max-width: 768px) {
-  .pattern-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-    overflow: auto;
-  }
-}
-
-/* ─── 左側：型態輸入面板 ────────────────────────────────────── */
-.pattern-input-panel {
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.pattern-input-panel-header {
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-/* ─── 右側：結果面板 ───────────────────────────────────────── */
-.pattern-result-panel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* 結果面板內容區（進度+回測+列表合體滑軌容器）*/
-#patternResultPanel {
+/* ─── 全寬結果容器 ──────────────────────────────────────────── */
+.pr-fullresult {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-}
-
-.pattern-result-header {
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  flex-shrink: 0;
 }
 
 /* ─── pd- : 型態繪製面板元件 ───────────────────────────────── */
@@ -454,39 +393,65 @@
   white-space: nowrap;
 }
 
-/* 結果列表 header */
-.pr-list-header {
-  display: grid;
-  grid-template-columns: 1fr 56px 70px 70px 110px;
-  padding: 6px 16px;
-  font-size: 10px;
-  color: var(--hint);
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border);
+/* 結果列表（table 結構，對齊 seed-ui）*/
+#prListHeader {
   flex-shrink: 0;
 }
+
+.pr-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pr-th {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  text-align: left;
+}
+
 .pr-sort-col {
-  cursor: pointer; user-select: none; transition: color .15s;
+  cursor: pointer;
+  user-select: none;
+  transition: color .15s;
 }
 .pr-sort-col:hover, .pr-sort-col.active { color: var(--text); }
 
-/* 結果列 */
-.pr-list {
-  flex: 1;
-  min-height: 0;
-}
+.pr-list { flex: 1; min-height: 0; }
 
 .pr-row {
-  display: grid;
-  grid-template-columns: 1fr 56px 70px 70px 110px;
-  align-items: center;
-  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background .12s;
 }
 .pr-row:hover { background: var(--bg3); }
+
+.pr-td {
+  padding: 7px 10px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pr-td-score {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pr-row-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pr-row-chg { font-size: 12px; font-weight: 600; }
+.pr-row-chg.up   { color: var(--up); }
+.pr-row-chg.down { color: var(--down); }
 
 /* 妖股 pill（與 theme-ui 同風格）*/
 .pr-yaogu-cell {
@@ -517,22 +482,19 @@
 .pr-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
 .pr-health-empty { color: var(--hint); font-size: 11px; }
 
-.pr-row-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 .pr-row-code {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: monospace;
 }
 
 .pr-row-name {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pr-row-score {
@@ -673,7 +635,8 @@
   }
 
   .pr-list-header span:last-child { display: none; }
-  .pr-row { grid-template-columns: 1fr 56px 60px; }
+  .pr-td:nth-child(n+6) { display: none; }
+  .pr-row-price  { display: none; }
   .pr-row-health { display: none; }
   .pr-yaogu-cell { display: none; }
   .pr-mini-chart { display: none; }
@@ -718,3 +681,32 @@
   transition: color .15s;
 }
 .pr-yaogu-alert-close:hover { color: var(--text); }
+
+/* ── th-yaogu-pill 別名（pattern-ui.js 複用 theme-ui 的 class 名稱）── */
+.th-yaogu-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: .04em;
+}
+.th-yaogu-pill--x2 { background: rgba(239,83,80,.2);  color: #ef5350; border: 1px solid rgba(239,83,80,.35); }
+.th-yaogu-pill--x1 { background: rgba(245,158,11,.2); color: #f59e0b; border: 1px solid rgba(245,158,11,.35); }
+.th-yaogu-pill--x5 { background: rgba(139,92,246,.2); color: #8b5cf6; border: 1px solid rgba(139,92,246,.35); }
+.th-yaogu-pill--x6 { background: rgba(59,130,246,.2); color: #3b82f6;  border: 1px solid rgba(59,130,246,.35); }
+
+/* ── Toolbar 搜尋欄 ─────────────────────────────────────── */
+.seed-tb-search {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border2);
+  background: var(--bg3);
+  color: var(--text);
+  font-size: 12px;
+  width: 160px;
+  outline: none;
+  transition: border-color .15s;
+}
+.seed-tb-search:focus { border-color: var(--accent); }
+.seed-tb-search::placeholder { color: var(--hint); }

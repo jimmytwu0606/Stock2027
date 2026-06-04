@@ -17,6 +17,7 @@ import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 let _scFundCache = {};
 import { calcHealth, calcHealthFast, calcHealthLong, healthBadgeDual } from './health.js';
 import { Config } from './config.js';
+import { getKlineCache } from './db.js';
 
 // 目前使用中的條件列
 let _conditions = [];
@@ -84,11 +85,17 @@ function _bindStrategyEvents() {
 // 條件區渲染
 // ─────────────────────────────────────────────
 function _renderConditionArea() {
-  const wrap = document.getElementById('screenerConditions');
+  // 同時更新 modal 內的條件列和主畫面的條件摘要
+  _renderCondIntoEl('screenerConditionsModal');
+  _renderCondSummary();
+}
+
+function _renderCondIntoEl(wrapperId) {
+  const wrap = document.getElementById(wrapperId);
   if (!wrap) return;
 
   if (!_conditions.length) {
-    wrap.innerHTML = `<div class="sc-empty-conds">尚未新增任何條件<br>點擊「＋ 新增條件」開始</div>`;
+    wrap.innerHTML = `<div class="sc-empty-conds">尚未新增任何條件<br>點擊「＋ 新增條件」</div>`;
     return;
   }
 
@@ -113,6 +120,21 @@ function _renderConditionArea() {
       _renderConditionArea();
     });
   });
+}
+
+// 主畫面條件摘要列（顯示 tag）
+function _renderCondSummary() {
+  const summary = document.getElementById('screenerCondSummary');
+  const tagsEl  = document.getElementById('screenerCondTags');
+  if (!summary || !tagsEl) return;
+  if (!_conditions.length) {
+    summary.style.display = 'none';
+    return;
+  }
+  summary.style.display = '';
+  tagsEl.innerHTML = _conditions.map(c =>
+    `<span class="sc-cond-tag-pill">${_escHtml(c.def.label)}</span>`
+  ).join('');
 }
 
 function _renderCondRow(c, i) {
@@ -160,13 +182,15 @@ function _renderCondRow(c, i) {
 // Toolbar 事件
 // ─────────────────────────────────────────────
 function _bindToolbarEvents() {
-  document.getElementById('screenerAddCond')?.addEventListener('click', () => {
+  // Modal 內「＋ 新增條件」
+  document.getElementById('screenerAddCondModal')?.addEventListener('click', () => {
     const def = CONDITION_DEFS[0];
     _conditions.push({ id: def.id, def, value: def.default });
     _renderConditionArea();
   });
 
-  document.getElementById('screenerClearConds')?.addEventListener('click', () => {
+  // Modal 內「清除全部」
+  document.getElementById('screenerModalClear')?.addEventListener('click', () => {
     _conditions = [];
     _currentStrategyName = null;
     _renderConditionArea();
@@ -175,9 +199,14 @@ function _bindToolbarEvents() {
     _updateStatus('');
   });
 
-  document.getElementById('screenerRun')?.addEventListener('click', _runScreener);
+  // Modal 內「開始篩選」→ 關 modal 後執行篩選
+  document.getElementById('screenerModalRun')?.addEventListener('click', () => {
+    _closeScreenerModal();
+    requestAnimationFrame(() => _runScreener());
+  });
 
-  document.getElementById('screenerSave')?.addEventListener('click', async () => {
+  // Modal 內「儲存組合」
+  document.getElementById('screenerModalSave')?.addEventListener('click', async () => {
     if (!_conditions.length) return;
     const name = prompt('輸入篩選組合名稱：', `自訂篩選 ${new Date().toLocaleDateString('zh-TW')}`);
     if (!name?.trim()) return;
@@ -186,13 +215,38 @@ function _bindToolbarEvents() {
     _showMsg('篩選組合已儲存');
   });
 
-  // toolbar 靜態「儲存結果」按鈕（篩選完成後才顯示）
-  document.getElementById('screenerSaveResultBtn')?.addEventListener('click', _toggleSaveNameArea);
+  // Modal tab 切換（strategy.js 也會綁 .sc-left-tab，這裡只需確保 panel 切換正確）
+  // strategy.js 的 _switchToCustomTab 已處理 scPanelCustom/scPanelStrategy 的顯隱
+  // 所以這裡不需要重複綁
 
-  // toolbar「全部加入追蹤」按鈕
-  document.getElementById('screenerAddAllToWlBtn')?.addEventListener('click', (e) => {
+  // Modal 開關
+  document.getElementById('screenerModalClose')?.addEventListener('click', _closeScreenerModal);
+  document.getElementById('screenerModalBg')?.addEventListener('click', e => {
+    if (e.target.id === 'screenerModalBg') _closeScreenerModal();
+  });
+
+  // 主畫面「編輯條件」btn → 開 modal
+  document.getElementById('screenerCondEditBtn')?.addEventListener('click', openScreenerModal);
+
+  // 舊版相容：toolbar 靜態「儲存結果」按鈕
+  document.getElementById('screenerSaveResultBtn')?.addEventListener('click', _toggleSaveNameArea);
+  // 舊版相容：toolbar「全部加入追蹤」按鈕
+  document.getElementById('screenerAddAllToWlBtn')?.addEventListener('click', () => {
     _openAddAllWlPopover(document.getElementById('screenerAddAllToWlBtn'));
   });
+}
+
+// ── 個篩 Modal 開關 ───────────────────────────────────────
+export function openScreenerModal() {
+  const bg = document.getElementById('screenerModalBg');
+  if (bg) bg.style.display = 'flex';
+  _renderConditionArea();
+  _renderSavedSets();
+}
+
+function _closeScreenerModal() {
+  const bg = document.getElementById('screenerModalBg');
+  if (bg) bg.style.display = 'none';
 }
 
 // ─────────────────────────────────────────────
@@ -205,20 +259,26 @@ async function _runScreener() {
     return;
   }
 
-  // 等 fetchTWSEPrices 完成（__twsePricesReady），確保 __priceCache 有資料
-  // 若已完成（Promise 已 resolve）則立即繼續
+  // overlay 和 running 狀態先設（在任何 await 之前，讓使用者馬上看到）
+  _isRunning           = true;
+  _results             = [];
+  _currentCondLabels   = _conditions.map(c => c.def.label);
+  _hideSaveResultBtn();
+  _setRunBtnState(true);
+
+  const el = document.getElementById('screenerResults');
+  if (el) {
+    el.innerHTML = `<div id="scScanningOverlay" style="padding:60px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;box-sizing:border-box;">
+      <div id="scScanningStatus" style="font-size:13px;color:var(--text)">正在取得全市場資料…</div>
+      <div id="scScanningCount" style="font-size:24px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums;letter-spacing:.02em"></div>
+    </div>`;
+  }
+
+  // 等 fetchTWSEPrices 完成（overlay 已顯示，使用者看得到進度）
   if (window.__twsePricesReady) {
     _updateStatus('等待市場資料載入…');
     try { await window.__twsePricesReady; } catch (_) {}
   }
-
-  _isRunning           = true;
-  _results             = [];
-  _currentCondLabels   = _conditions.map(c => c.def.label);
-  _renderResults([]);
-  _hideSaveResultBtn();
-  _setRunBtnState(true);
-  _updateStatus('正在取得全市場資料…');
 
   const progressEl = document.getElementById('screenerProgress');
   if (progressEl) progressEl.style.display = '';
@@ -318,58 +378,58 @@ function _renderResults(rows) {
   if (!el) return;
 
   if (!rows.length) {
-    el.innerHTML = `<div class="sc-results-empty">
-      ${_isRunning ? '篩選中…' : '目前沒有符合條件的股票'}
-    </div>`;
+    if (_isRunning) {
+      // 不清空 loading overlay，由 _updateStatus/_updateProgress 控制
+      return;
+    }
+    el.innerHTML = `<div class="sc-results-empty">目前沒有符合條件的股票</div>`;
     return;
   }
 
   const sorted = _sortedRows(rows);
 
-  // 欄位定義：[key, label]
   const cols = [
-    { key: null,       label: '代號／名稱' },
-    { key: 'price',    label: '收盤價' },
-    { key: 'chgPct',   label: '漲跌幅' },
-    { key: 'volume',   label: '成交量' },
-    { key: 'health',   label: '健康度' },
-    { key: null,       label: '符合指標' },
+    { key: null,     label: '代號',     noSort: true },
+    { key: null,     label: '名稱',     noSort: true },
+    { key: 'price',  label: '收盤價',   align: 'right' },
+    { key: 'chgPct', label: '漲跌幅',   align: 'right' },
+    { key: 'volume', label: '成交量',   align: 'right' },
+    { key: 'health', label: '健康度' },
+    { key: null,     label: '走勢',     noSort: true },
+    { key: null,     label: '符合指標', noSort: true },
+    { key: null,     label: '',         noSort: true },
   ];
 
-  const headerHtml = cols.map(c => {
-    if (!c.key) return `<span>${c.label}</span>`;
-    const isActive = _sortKey === c.key;
-    const arrow    = isActive ? (_sortAsc ? ' ↑' : ' ↓') : ' ⇅';
-    return `<span class="sc-sort-col${isActive ? ' active' : ''}" data-sort="${c.key}" style="cursor:pointer;user-select:none">${c.label}<span style="opacity:${isActive?1:0.35};font-size:11px">${arrow}</span></span>`;
-  }).join('');
+  let thead = '<tr>';
+  cols.forEach(col => {
+    const alignCls = col.align === 'right' ? ' sc-tbl-num' : '';
+    if (col.noSort) {
+      thead += `<th class="sc-tbl-th no-sort${alignCls}">${col.label}</th>`;
+      return;
+    }
+    const isSorted = _sortKey === col.key;
+    const arrow = isSorted ? (_sortAsc ? ' ▲' : ' ▼') : '';
+    thead += `<th class="sc-tbl-th${isSorted ? ' sorted' : ''}${alignCls}" data-sort="${col.key}">${col.label}${arrow}</th>`;
+  });
+  thead += '</tr>';
 
-  el.innerHTML = `
-    <div class="sc-results-header">${headerHtml}<span></span></div>
-    <div class="sc-results-body">
-      ${sorted.map(r => _renderResultRow(r)).join('')}
-    </div>`;
+  const tbody = sorted.map(r => _renderResultRow(r)).join('');
+  el.innerHTML = `<div class="sc-tbl-wrap"><table class="sc-tbl"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
 
-  // 點欄位標題 → 排序
-  el.querySelectorAll('.sc-sort-col').forEach(col => {
-    col.addEventListener('click', () => {
-      const key = col.dataset.sort;
-      if (_sortKey === key) {
-        _sortAsc = !_sortAsc;
-      } else {
-        _sortKey = key;
-        _sortAsc = false;  // 新欄位預設降冪
-      }
+  el.querySelectorAll('.sc-tbl-th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (_sortKey === key) _sortAsc = !_sortAsc;
+      else { _sortKey = key; _sortAsc = false; }
       _renderResults(_results);
     });
   });
 
-  // 點個股列 → 跳看盤，帶 matchedConds 讓個股頁顯示篩選條件標籤
   el.querySelectorAll('.sc-result-row').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.sc-add-wl-btn')) return;
       const code = row.dataset.code;
       if (!code) return;
-      // 找到對應的篩選結果，取 matchedConds
       const result = _results.find(r => r.code === code);
       const matchedConds = result?.matchedConds ?? [];
       document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
@@ -385,7 +445,7 @@ function _renderResults(rows) {
       }));
     });
   });
-  // 點「＋」→ 開群組 popover
+
   el.querySelectorAll('.sc-add-wl-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -393,14 +453,7 @@ function _renderResults(rows) {
     });
   });
 
-  // 點「＋」→ 開群組 popover
-  el.querySelectorAll('.sc-add-wl-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      _openAddWlPopover(btn, btn.dataset.code, btn.dataset.name);
-    });
-  });
-
+  _enqueueScSparklines(el, sorted);
 }
 
 function _renderResultRow(r) {
@@ -414,9 +467,10 @@ function _renderResultRow(r) {
   const chgStr = r.chgPct != null
     ? `${r.chgPct >= 0 ? '+' : ''}${r.chgPct.toFixed(2)}%`
     : '—';
-  const tags = r.matchedConds.slice(0, 4).map(
-    label => `<span class="sc-tag">${label}</span>`
-  ).join('');
+  // 符合指標欄：只顯示策略名稱（自訂條件不顯示）
+  const tags = _currentStrategyName
+    ? `<span class="sc-tag sc-tag-strategy">${_currentStrategyName}</span>`
+    : '';
 
   // 短線：固定取最後 65 根（≈3mo），沒有 candles 才 fallback 快估
   const _sc = r.candles?.length > 65 ? r.candles.slice(-65) : r.candles;
@@ -431,18 +485,19 @@ function _renderResultRow(r) {
   const triggerChip = _renderTriggerChip(r.triggerHistory);
 
   return `
-    <div class="sc-result-row" data-code="${r.code}">
-      <div class="sc-result-id">
-        <span class="sc-code">${r.code}</span>
-        <span class="sc-name">${r.name}</span>
-      </div>
-      <div class="sc-result-price">${fmt(r.price)}</div>
-      <div class="sc-result-chg ${chgCls}">${chgStr}</div>
-      <div class="sc-result-vol">${fmtVol(r.volume)}</div>
-      <div class="sc-result-health">${healthBadgeDual(healthShort, healthLong, 'sc')}</div>
-      <div class="sc-result-tags">${tags}${triggerChip}</div>
-      <button class="sc-add-wl-btn" data-code="${r.code}" data-name="${_escHtml(r.name ?? r.code)}" title="加入追蹤清單" >＋</button>
-    </div>`;
+    <tr class="sc-result-row" data-code="${r.code}">
+      <td class="sc-tbl-td"><span class="sc-tbl-code">${r.code}</span></td>
+      <td class="sc-tbl-td"><span class="sc-tbl-name">${r.name}</span></td>
+      <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-price">${fmt(r.price)}</span></td>
+      <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-chg ${chgCls}">${chgStr}</span></td>
+      <td class="sc-tbl-td sc-tbl-num">${fmtVol(r.volume)}</td>
+      <td class="sc-tbl-td">${healthBadgeDual(healthShort, healthLong, 'sc')}</td>
+      <td class="sc-tbl-td"><canvas class="sc-sparkline" data-code="${r.code}" width="80" height="32"></canvas></td>
+      <td class="sc-tbl-td sc-tbl-tags">${tags}${tags && triggerChip ? '<span style="display:inline-block;width:6px"></span>' : ''}${triggerChip}</td>
+      <td class="sc-tbl-td">
+        <button class="sc-add-wl-btn" data-code="${r.code}" data-name="${_escHtml(r.name ?? r.code)}" title="加入追蹤清單">＋</button>
+      </td>
+    </tr>`;
 }
 
 /**
@@ -508,7 +563,7 @@ function _renderTriggerChip(th) {
 // 已儲存的篩選組合
 // ─────────────────────────────────────────────
 async function _renderSavedSets() {
-  const el = document.getElementById('screenerSavedSets');
+  const el = document.getElementById('screenerSavedSetsModal') ?? document.getElementById('screenerSavedSets');
   if (!el) return;
 
   const sets = await loadSavedSets();
@@ -728,6 +783,9 @@ function _loadResultEntry(id, all) {
 function _updateStatus(msg) {
   const el = document.getElementById('screenerStatus');
   if (el) el.textContent = msg;
+  // 同步更新 loading overlay
+  const ov = document.getElementById('scScanningStatus');
+  if (ov) ov.textContent = msg;
 }
 
 function _showMsg(msg) {
@@ -737,17 +795,18 @@ function _showMsg(msg) {
 function _updateProgress(done, total) {
   const bar = document.getElementById('screenerProgressBar');
   const txt = document.getElementById('screenerProgressText');
-  if (!bar || !txt) return;
-  const pct = total > 0 ? Math.round(done / total * 100) : 0;
-  bar.style.width = `${pct}%`;
-  txt.textContent = `${done} / ${total}`;
+  if (bar) bar.style.width = `${total > 0 ? Math.round(done / total * 100) : 0}%`;
+  if (txt) txt.textContent = `${done} / ${total}`;
+  // 同步更新 loading overlay 計數
+  const cnt = document.getElementById('scScanningCount');
+  if (cnt && total > 0) cnt.textContent = `${done.toLocaleString()} / ${total.toLocaleString()} 檔`;
 }
 
 function _setRunBtnState(running) {
-  const btn = document.getElementById('screenerRun');
+  const btn = document.getElementById('screenerModalRun');
   if (!btn) return;
   btn.disabled    = running;
-  btn.textContent = running ? '篩選中…' : '開始篩選';
+  btn.textContent = running ? '篩選中…' : '▶ 開始篩選';
 }
 
 function _escHtml(str) {
@@ -1018,4 +1077,110 @@ function _openAddWlPopover(anchor, code, name) {
   });
 
   _bindOutsideClose(pop, anchor);
+}
+
+// ─── Screener Sparkline ────────────────────────────────────
+let _scSparklineQueue = [];
+let _scSparklineTimer = null;
+
+function _enqueueScSparklines(container, rows) {
+  _scSparklineQueue = [];
+  clearTimeout(_scSparklineTimer);
+  rows.forEach(r => {
+    const canvas = container.querySelector(`.sc-sparkline[data-code="${r.code}"]`);
+    if (canvas) _scSparklineQueue.push({ canvas, code: r.code });
+  });
+  _drainScSparklineQueue();
+}
+
+function _drainScSparklineQueue() {
+  if (!_scSparklineQueue.length) return;
+  const { canvas, code } = _scSparklineQueue.shift();
+  if (!document.contains(canvas)) {
+    _scSparklineTimer = setTimeout(_drainScSparklineQueue, 0);
+    return;
+  }
+  _drawScSparkline(canvas, code).finally(() => {
+    _scSparklineTimer = setTimeout(_drainScSparklineQueue, 30);
+  });
+}
+
+async function _drawScSparkline(canvas, code) {
+  const symbol = code.length <= 4 ? `${code}.TW` : `${code}.TWO`;
+  let cached = await getKlineCache(symbol, '1y');
+  if (!cached?.candles?.length) {
+    const sym2 = code.length <= 4 ? `${code}.TWO` : `${code}.TW`;
+    cached = await getKlineCache(sym2, '1y');
+  }
+  if (!cached?.candles?.length) { _drawScNoData(canvas); return; }
+
+  const raw    = cached.candles.slice(-40);
+  const closes = raw.map(c => c.close ?? c[4] ?? null).filter(v => v != null);
+  if (closes.length < 5) { _drawScNoData(canvas); return; }
+
+  const W = canvas.width, H = canvas.height;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const PL = 4, PR = 4, PT = 6, PB = 6;
+  const dW = W - PL - PR, dH = H - PT - PB;
+  const minV = Math.min(...closes), maxV = Math.max(...closes);
+  const range = maxV - minV || 1;
+  const xOf = i => PL + (i / (closes.length - 1)) * dW;
+  const yOf = v => PT + (1 - (v - minV) / range) * dH;
+
+  // 格線
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75].forEach(r => {
+    const y = PT + r * dH;
+    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(W - PR, y); ctx.stroke();
+  });
+
+  // MA20
+  if (closes.length >= 20) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+    ctx.lineWidth = 1;
+    for (let i = 19; i < closes.length; i++) {
+      const ma = closes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20;
+      const x = xOf(i), y = yOf(ma);
+      if (i === 19) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  const isUp = closes[closes.length - 1] >= closes[0];
+  const lineColor = isUp ? '#ef5350' : '#26a69a';
+  const fillColor = isUp ? 'rgba(239,83,80,0.10)' : 'rgba(38,166,154,0.12)';
+
+  ctx.beginPath();
+  closes.forEach((v, i) => { const x = xOf(i), y = yOf(v); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+  ctx.lineTo(xOf(closes.length - 1), H - PB);
+  ctx.lineTo(PL, H - PB);
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  closes.forEach((v, i) => { const x = xOf(i), y = yOf(v); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+  ctx.stroke();
+
+  const lx = xOf(closes.length - 1), ly = yOf(closes[closes.length - 1]);
+  ctx.beginPath();
+  ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor;
+  ctx.fill();
+}
+
+function _drawScNoData(canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(100,116,139,0.3)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('—', canvas.width / 2, canvas.height / 2 + 3);
 }

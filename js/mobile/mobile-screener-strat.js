@@ -11,6 +11,7 @@
 
 import { STRATEGIES } from '../strategy.js';
 import { saveResult, loadAllResults } from '../screener-result-store.js';
+import { watchAddCode, createList as pfCreateList } from '../portfolio.js';
 
 const _GRP_ICONS = {
   '強勢續漲':'📈','超跌反彈':'🔄','轉折訊號':'⚡',
@@ -47,7 +48,17 @@ export function renderResult(body, deps) {
     </div>`;
 
   body.querySelectorAll('.m-rc').forEach((el, i) => {
-    el.addEventListener('click', () => window.__loadStock?.(results[i]?.code || el.dataset.code));
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.m-rc-add-btn')) return;
+      window.__loadStock?.(results[i]?.code || el.dataset.code);
+    });
+  });
+
+  body.querySelectorAll('.m-rc-add-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _openAddWlPopover(btn, btn.dataset.code, btn.dataset.name);
+    });
   });
 
   body.querySelector('#mStratSaveBtn')?.addEventListener('click', () => {
@@ -393,8 +404,127 @@ function _resultCardHTML(r, opts = {}) {
     <div class="m-rc-r">
       <div class="m-rc-price" style="color:${clr}">${r.price ? Number(r.price).toFixed(2) : '—'}</div>
       ${r.chgPct != null ? `<div class="m-rc-pct ${up ? 'm-up-bg' : 'm-dn-bg'}">${up ? '+' : ''}${Number(r.chgPct).toFixed(2)}%</div>` : ''}
+      <button class="m-rc-add-btn" data-code="${r.code}" data-name="${_escAttr(r.name ?? r.code)}" title="加入追蹤清單"
+        style="margin-top:4px;width:26px;height:26px;border-radius:7px;border:0.5px solid rgba(88,166,255,0.35);background:rgba(88,166,255,0.08);color:#58a6ff;font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;">＋</button>
     </div>
   </div>`;
+}
+
+function _escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── 「＋追蹤清單」popover ─────────────────────────────────────────────────
+function _openAddWlPopover(anchor, code, name) {
+  document.getElementById('mStratAddPop')?.remove();
+
+  const api    = window.__portfolioAPI;
+  const lists  = api ? api.getWatchLists() : [];
+  const px     = window.__priceCache?.[code]?.price ?? 0;
+
+  const pop = document.createElement('div');
+  pop.id = 'mStratAddPop';
+  pop.style.cssText = [
+    'position:fixed;z-index:30000;min-width:180px;max-width:260px',
+    'background:#161b22;border:0.5px solid #30363d;border-radius:12px',
+    'box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden',
+  ].join(';');
+
+  const rows = lists.map(l => {
+    const already = l.items?.some(it => it.code === code);
+    return `<div class="mStratAddRow" data-id="${l.id}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:${already?'default':'pointer'};opacity:${already?'0.45':'1'}">
+      <span style="font-size:13px;color:#e6edf3">${l.name}</span>
+      ${already ? '<span style="font-size:11px;color:#3d444d">✓</span>' : ''}
+    </div>`;
+  }).join('<div style="height:0.5px;background:#21262d;margin:0 10px"></div>');
+
+  pop.innerHTML = `
+    <div style="padding:10px 14px 8px;font-size:11px;color:#8b949e;border-bottom:0.5px solid #21262d">加入追蹤清單</div>
+    ${rows || '<div style="padding:10px 14px;font-size:12px;color:#3d444d">尚無追蹤清單</div>'}
+    <div style="height:0.5px;background:#21262d"></div>
+    <div id="mStratAddNew" style="padding:10px 14px;font-size:13px;color:#58a6ff;cursor:pointer">＋ 新建追蹤清單</div>`;
+
+  document.body.appendChild(pop);
+
+  // 定位
+  const rect = anchor.getBoundingClientRect();
+  const top  = rect.bottom + 6;
+  const left = Math.min(rect.right - 180, window.innerWidth - 270);
+  pop.style.top  = `${Math.max(top, 10)}px`;
+  pop.style.left = `${Math.max(left, 8)}px`;
+
+  // 點清單加入
+  pop.querySelectorAll('.mStratAddRow').forEach(row => {
+    const listId = row.dataset.id;
+    const already = lists.find(l => l.id === listId)?.items?.some(it => it.code === code);
+    if (already) return;
+    row.addEventListener('click', async () => {
+      try {
+        await watchAddCode(listId, code, name, px, '');
+        pop.remove();
+        _showMiniToast(`已加入「${lists.find(l=>l.id===listId)?.name}」`);
+      } catch(e) {
+        _showMiniToast('加入失敗：' + e.message);
+      }
+    });
+  });
+
+  // 新建清單
+  pop.querySelector('#mStratAddNew')?.addEventListener('click', () => {
+    pop.remove();
+    _openNewListDialog(code, name, px);
+  });
+
+  // 點外部關閉
+  const _outside = (e) => {
+    if (!pop.contains(e.target) && e.target !== anchor) {
+      pop.remove();
+      document.removeEventListener('pointerdown', _outside, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', _outside, true), 0);
+}
+
+function _openNewListDialog(code, name, px) {
+  document.getElementById('mStratNewListDlg')?.remove();
+  const dlg = document.createElement('div');
+  dlg.id = 'mStratNewListDlg';
+  dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:30001;display:flex;align-items:center;justify-content:center;padding:20px;';
+  dlg.innerHTML = `
+    <div style="background:#161b22;border:0.5px solid #30363d;border-radius:14px;padding:20px;width:100%;max-width:320px;">
+      <div style="font-size:15px;font-weight:600;color:#e6edf3;margin-bottom:14px">新建追蹤清單</div>
+      <input id="mStratNewListName" type="text" placeholder="清單名稱"
+        style="width:100%;padding:9px 12px;background:#0d1117;border:0.5px solid #30363d;border-radius:9px;color:#e6edf3;font-size:14px;box-sizing:border-box;margin-bottom:14px">
+      <div style="display:flex;gap:10px">
+        <button id="mStratNewListCancel" style="flex:1;padding:9px;border-radius:9px;border:0.5px solid #30363d;background:transparent;color:#8b949e;font-size:14px;cursor:pointer">取消</button>
+        <button id="mStratNewListConfirm" style="flex:1;padding:9px;border-radius:9px;border:none;background:#58a6ff;color:#0d1117;font-size:14px;font-weight:600;cursor:pointer">建立並加入</button>
+      </div>
+    </div>`;
+  document.body.appendChild(dlg);
+
+  dlg.querySelector('#mStratNewListCancel').addEventListener('click', () => dlg.remove());
+  dlg.addEventListener('click', e => { if (e.target === dlg) dlg.remove(); });
+  dlg.querySelector('#mStratNewListConfirm').addEventListener('click', async () => {
+    const n = dlg.querySelector('#mStratNewListName').value.trim();
+    if (!n) return;
+    try {
+      const list = await pfCreateList('watch', n);
+      await watchAddCode(list.id, code, name, px, '');
+      dlg.remove();
+      _showMiniToast(`已建立「${n}」並加入`);
+    } catch(e) {
+      _showMiniToast('失敗：' + e.message);
+    }
+  });
+  setTimeout(() => dlg.querySelector('#mStratNewListName')?.focus(), 100);
+}
+
+function _showMiniToast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#21262d;color:#e6edf3;font-size:13px;padding:8px 16px;border-radius:20px;z-index:40000;pointer-events:none;white-space:nowrap;';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
 }
 
 function _emptyHTML(icon, title, desc) {

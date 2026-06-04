@@ -62,13 +62,12 @@ import {
 } from './ui.js';
 import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
-import { initScreener } from './screener-ui.js';
 import { initStrategyPanel, getSignalPeriod, refreshStrategyCards, calcSignalLamps, STRATEGIES } from './strategy.js';
 import { initStrategyModal, renderStrategyGrid } from './modal-strategy.js';
 import { initPortfolio } from './portfolio-ui.js';
 import { initPatternDraw, updateScreenerCount } from './pattern-draw.js';
-import { initPatternUI }   from './pattern-ui.js';
-import { initSeedUI }      from './seed-ui.js';
+import { initScreenerHub } from './screener-hub.js';
+import { initStrategyLab } from './strategy-lab.js';
 import { initMarketMini } from './market-mini.js';
 import { initHotgroup }  from './market.js';
 import { initTheme, reloadThemes } from './theme.js';
@@ -363,8 +362,11 @@ function initMainTabs() {
       document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById(`tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`)
-        ?.classList.add('active');
+      const activePanel = document.getElementById(`tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`);
+      if (activePanel) {
+        activePanel.style.display = '';  // 清除 inline style，讓 CSS class 生效
+        activePanel.classList.add('active');
+      }
       // 強勢族群 Tab 懶載入（等 panel display 後再 init，避免 canvas 尺寸 0）
       if (tab === 'hotgroup') requestAnimationFrame(() => initHotgroup());
       // AI 圓桌 Tab：動態渲染（VVVIP 限定，personas-panel.js）
@@ -379,6 +381,14 @@ function initMainTabs() {
       // 庫存 Tab：每次切入也重讀（同步時序保護）
       if (tab === 'portfolio') {
         requestAnimationFrame(() => window.__portfolioAPI?.reload?.());
+      }
+      // 選股篩選 Hub（個股篩選 / 型態比對 / 種子選股）
+      if (tab === 'hub') {
+        requestAnimationFrame(() => window.__screenerHubSwitch?.());
+      }
+      // 策略實驗室（lazy init）
+      if (tab === 'lab') {
+        requestAnimationFrame(() => initStrategyLab().catch(e => console.error('[main] initStrategyLab:', e)));
       }
     });
   });
@@ -1567,8 +1577,8 @@ function _initFullscreen() {
 
   // 6.5 大盤總覽（市場資料）
 
-  // 7. 選股篩選（Phase 2）
-  initScreener();
+  // 7. 選股篩選 Hub（個股篩選 / 型態比對 / 種子選股 統一入口）
+  initScreenerHub();
   initStrategyPanel();
   initTheme();  // 預載題材資料（IndexedDB + Firestore），不阻塞 UI
   initPortfolio();
@@ -1609,18 +1619,10 @@ function _initFullscreen() {
 
   // 8. 篩選結果儲存：UI 邏輯已整合進 screener-ui.js，initScreener() 內部自動處理
 
-  // 9. 型態比對（Phase 3）
+  // 9. 型態比對 / 種子選股 → 由 screener-hub.js lazy init（切到 hub tab 才觸發）
   initPatternDraw();
-  initPatternUI();
-
-  document.querySelectorAll('.main-tab[data-tab="pattern"], .tab-item[data-mobile-tab="pattern"]')
-    .forEach(btn => btn.addEventListener('click', () => updateScreenerCount()));
-
   initPatternSelectOnChart();
   _listenPatternHighlight();
-
-  // 10. 種子選股（Phase 4）
-  initSeedUI();
   document.addEventListener('stockSelect', e => {
     const { code, matchedConds, fromScreener } = e.detail ?? {};
     // 篩選器來的：存篩選條件到 AppState，讓 stock-tabs 渲染篩選標籤

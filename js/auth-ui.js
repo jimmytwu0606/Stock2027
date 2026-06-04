@@ -18,8 +18,8 @@ import { syncLocalToCloud, syncCloudToLocal,
          dbPut, dbClear }                             from './db.js';
 import { showToast }                                  from './ui.js';
 import { initWatchlist }                              from './watchlist.js';
-import { loadUserTier, resetTier, activateKey,
-         currentTier, formatKey }                     from './auth-tier.js';
+import { loadUserTier, resetTier,
+         currentTier }                                from './auth-tier.js';
 import { applyTierGate, loadFeatureGates, saveFeatureGates,
          getFeatureGates, DEFAULT_GATES, GATE_LABELS }  from './auth-gate.js';
 
@@ -289,17 +289,9 @@ function _showKeyModal() {
   overlay.className = 'sync-modal-overlay';
   overlay.innerHTML = `
     <div class="sync-modal auth-key-modal" style="max-width:480px">
-      <h3>🔑 會員序號</h3>
+      <h3>🔑 會員等級</h3>
       <p>目前等級：<strong>${_tierLabel[currentTier] ?? 'Free'}</strong></p>
-      ${currentTier !== 'vvvip' ? `
-        <div class="auth-key-input-row">
-          <input id="keyInput" class="auth-key-input" type="text"
-            placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" />
-          <button class="auth-key-submit" id="keySubmitBtn">啟用</button>
-        </div>
-        <div class="auth-key-status" id="keyStatus"></div>
-        <p class="auth-key-hint">序號由管理員提供，與您的 Google 帳號 Email 綁定。</p>
-      ` : '<p class="auth-key-hint">您已是最高等級 👑</p>'}
+      <p class="auth-key-hint">如需升級請聯絡管理員。</p>
       ${_featTable}
       ${isVvvip ? `<button class="setting-btn" id="adminPanelBtn" style="margin-top:12px">🔧 管理後台</button>` : ''}
       <button class="sync-btn-cancel" id="keyCancelBtn" style="margin-top:8px">關閉</button>
@@ -310,35 +302,6 @@ function _showKeyModal() {
   const _close = () => overlay.remove();
   document.getElementById('keyCancelBtn')?.addEventListener('click', _close);
   overlay.addEventListener('click', e => { if (e.target === overlay) _close(); });
-
-  // 序號自動格式化
-  const keyInput = document.getElementById('keyInput');
-  keyInput?.addEventListener('input', () => {
-    let v = keyInput.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8);
-    if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4);
-    keyInput.value = v;
-  });
-
-  document.getElementById('keySubmitBtn')?.addEventListener('click', async () => {
-    const status = document.getElementById('keyStatus');
-    const code   = keyInput?.value ?? '';
-    if (!code) return;
-    document.getElementById('keySubmitBtn').disabled = true;
-    if (status) status.textContent = '驗證中…';
-    try {
-      const newTier = await activateKey(code);
-      if (status) status.textContent = `✅ 升級成功！等級：${newTier}`;
-      applyTierGate(newTier);
-      _render(currentUser);
-      showToast(`🎉 已升級至 ${newTier.toUpperCase()}`);
-      // 通知 main.js / watchlist 等模組 tier 已變更
-      window.dispatchEvent(new CustomEvent('authReady', { detail: { user: currentUser, tier: newTier } }));
-      setTimeout(_close, 1500);
-    } catch (err) {
-      if (status) status.textContent = `❌ ${err.message}`;
-      document.getElementById('keySubmitBtn').disabled = false;
-    }
-  });
 
   document.getElementById('adminPanelBtn')?.addEventListener('click', () => {
     _close();
@@ -368,14 +331,14 @@ async function _showAdminPanel() {
       <!-- 會員管理 Tab -->
       <div class="admin-tab-panel active" id="adminTabMembers">
         <div class="admin-section">
-          <div class="admin-section-title">新增會員序號</div>
+          <div class="admin-section-title">升級會員</div>
           <div class="admin-add-row">
             <input id="adminEmail" class="auth-key-input" type="email" placeholder="會員 Email" style="flex:2"/>
             <select id="adminTier" class="auth-key-input" style="flex:1">
               <option value="pro">Pro</option>
               <option value="vvvip">VVVIP</option>
             </select>
-            <button class="auth-key-submit" id="adminGenBtn">生成</button>
+            <button class="auth-key-submit" id="adminUpgradeBtn">升級</button>
           </div>
           <div class="admin-key-result" id="adminKeyResult"></div>
         </div>
@@ -424,35 +387,24 @@ async function _showAdminPanel() {
     });
   });
 
-  document.getElementById('adminGenBtn')?.addEventListener('click', async () => {
-    const email  = document.getElementById('adminEmail')?.value?.trim();
+  document.getElementById('adminUpgradeBtn')?.addEventListener('click', async () => {
+    const email  = document.getElementById('adminEmail')?.value?.trim().toLowerCase();
     const tier   = document.getElementById('adminTier')?.value;
     const result = document.getElementById('adminKeyResult');
     if (!email) { if (result) result.textContent = '請輸入 Email'; return; }
-
-    const { generateKey } = await import('./auth-tier.js');
-    const { fsSetShared } = await import('./firebase.js');
-
-    const key   = generateKey();
-    const clean = key.replace(/-/g, '');
+    const { fsGetShared, fsSetShared } = await import('./firebase.js');
     try {
-      await fsSetShared(`member_keys/${clean}`, {
-        email, tier,
-        createdAt: Date.now(),
-        createdBy: 'admin',
-        isActive: true,
-        activatedAt: null,
-        activatedUid: null,
-      });
+      // 寫入 pending_upgrades，用戶下次登入自動生效
+      const pending = await fsGetShared('admin/pending_upgrades') ?? {};
+      pending[email] = { tier, createdAt: Date.now() };
+      await fsSetShared('admin/pending_upgrades', pending);
       if (result) result.innerHTML =
-        `✅ 已建立<br>` +
-        `序號：<strong style="font-size:18px;letter-spacing:2px">${key}</strong><br>` +
-        `Email：${email}　等級：${tier}<br>` +
-        `<span style="color:var(--muted);font-size:11px">請手動複製序號發給會員</span>`;
+        `✅ 已加入待升級<br>Email：${email}　等級：<strong>${tier}</strong><br>` +
+        `<span style="color:var(--muted);font-size:11px">用戶下次登入自動生效</span>`;
       document.getElementById('adminEmail').value = '';
       _loadAdminList();
     } catch (err) {
-      if (result) result.textContent = `❌ 建立失敗：${err.message}`;
+      if (result) result.textContent = `❌ 失敗：${err.message}`;
     }
   });
 }
@@ -462,71 +414,94 @@ async function _loadAdminList() {
   if (!listEl) return;
   listEl.textContent = '載入中…';
   try {
-    const { fsGetAllShared } = await import('./firebase.js');
-    const keys = await fsGetAllShared('member_keys');
-    if (!keys || keys.length === 0) {
-      listEl.innerHTML = '<div style="color:var(--muted)">尚無序號</div>';
+    const { fsGetShared, fsSetShared, fsGet, fsSet } = await import('./firebase.js');
+    const membersMap = await fsGetShared('admin/members') ?? {};
+    const pending    = await fsGetShared('admin/pending_upgrades') ?? {};
+    const uids = Object.keys(membersMap);
+
+    // 批次讀 profile
+    const activated = await Promise.all(uids.map(async uid => {
+      const p = await fsGet(uid, 'meta', 'profile');
+      return { uid, email: membersMap[uid].email ?? p?.email ?? uid, tier: p?.tier ?? 'free' };
+    }));
+
+    // 找出還在 pending（尚未登入）的 email
+    const activatedEmails = new Set(activated.map(m => m.email.toLowerCase()));
+    const pendingList = Object.entries(pending)
+      .filter(([email]) => !activatedEmails.has(email.toLowerCase()));
+
+    const hasData = activated.length > 0 || pendingList.length > 0;
+    if (!hasData) {
+      listEl.innerHTML = '<div style="color:var(--muted)">尚無會員紀錄</div>';
       return;
     }
-    listEl.innerHTML = keys.map(item => {
-      const key  = item._id ?? item.id ?? '?';
-      const used = !!item.activatedUid;
-      return `
-        <div class="admin-list-row">
-          <span class="admin-key-code">${formatKey(key)}</span>
-          <span class="admin-key-email" title="${item.email}">${item.email}</span>
-          <select class="admin-tier-sel auth-key-input" data-key="${key}" data-uid="${item.activatedUid ?? ''}" style="width:68px;font-size:11px;padding:2px 4px">
-            <option value="free"  ${item.tier === 'free'  ? 'selected' : ''}>Free</option>
-            <option value="pro"   ${item.tier === 'pro'   ? 'selected' : ''}>Pro</option>
-            <option value="vvvip" ${item.tier === 'vvvip' ? 'selected' : ''}>VVVIP</option>
-          </select>
-          <span class="admin-key-used">${used ? '✅已啟用' : '⬜未啟用'}</span>
-          <button class="admin-toggle-btn" data-key="${key}" data-active="${item.isActive}">
-            ${item.isActive ? '停用' : '啟用'}
-          </button>
-        </div>`;
-    }).join('');
 
-    // tier 下拉變更：更新序號 doc，如已啟用也同步更新 profile
+    let html = '';
+
+    // 已登入會員
+    if (activated.length > 0) {
+      html += activated.map(m => `
+        <div class="admin-list-row">
+          <span class="admin-key-email" title="${m.email}">${m.email}</span>
+          <select class="admin-tier-sel auth-key-input" data-uid="${m.uid}" style="width:68px;font-size:11px;padding:2px 4px">
+            <option value="free"  ${m.tier==='free'  ? 'selected':''}>Free</option>
+            <option value="pro"   ${m.tier==='pro'   ? 'selected':''}>Pro</option>
+            <option value="vvvip" ${m.tier==='vvvip' ? 'selected':''}>VVVIP</option>
+          </select>
+          <button class="admin-delete-btn" data-uid="${m.uid}" data-email="${m.email}">🗑</button>
+        </div>`).join('');
+    }
+
+    // 待升級（尚未登入）
+    if (pendingList.length > 0) {
+      html += `<div style="font-size:11px;color:var(--muted);margin:8px 0 4px">待登入升級</div>`;
+      html += pendingList.map(([email, info]) => `
+        <div class="admin-list-row">
+          <span class="admin-key-email" style="color:var(--muted)">${email}</span>
+          <span style="font-size:11px;color:var(--muted);flex:1">${info.tier} · 待登入</span>
+          <button class="admin-pending-del-btn" data-email="${email}">🗑</button>
+        </div>`).join('');
+    }
+
+    listEl.innerHTML = html;
+
+    // tier 下拉變更
     listEl.querySelectorAll('.admin-tier-sel').forEach(sel => {
       sel.addEventListener('change', async () => {
-        const k       = sel.dataset.key.replace(/-/g,'');
-        const newTier = sel.value;
-        const uid     = sel.dataset.uid;
-        const { fsSetShared, fsGetShared, fsSet } = await import('./firebase.js');
+        const uid = sel.dataset.uid; const newTier = sel.value;
         try {
-          const data = await fsGetShared(`member_keys/${k}`);
-          await fsSetShared(`member_keys/${k}`, { ...data, tier: newTier });
-          if (uid) {
-            // 已啟用：直接同步更新該用戶 profile，下次登入馬上生效
-            await fsSet(uid, 'meta', 'profile', { tier: newTier }, true);
-            showToast(`✓ 等級已改為 ${newTier}（序號 + profile 同步完成）`);
-          } else {
-            // 未啟用：只改序號 doc，用戶啟用時才會寫入 profile
-            showToast(`✓ 序號等級已改為 ${newTier}（用戶啟用後生效）`);
-          }
-        } catch (err) {
-          showToast(`❌ 變更失敗：${err.message}`);
-          _loadAdminList(); // 還原顯示
-        }
+          await fsSet(uid, 'meta', 'profile', { tier: newTier }, true);
+          showToast(`✓ 等級已改為 ${newTier}`);
+        } catch (err) { showToast(`❌ 變更失敗：${err.message}`); _loadAdminList(); }
       });
     });
 
-    listEl.querySelectorAll('.admin-toggle-btn').forEach(btn => {
+    // 已登入降回 free
+    listEl.querySelectorAll('.admin-delete-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const k        = btn.dataset.key.replace(/-/g,'');
-        const nowActive = btn.dataset.active === 'true';
-        const { fsSetShared, fsGetShared } = await import('./firebase.js');
+        const uid = btn.dataset.uid; const email = btn.dataset.email;
+        if (!confirm(`確定將 ${email} 降回 Free？`)) return;
         try {
-          const data = await fsGetShared(`member_keys/${k}`);
-          await fsSetShared(`member_keys/${k}`, { ...data, isActive: !nowActive });
-          showToast(`✓ 序號已${nowActive ? '停用' : '啟用'}`);
-          _loadAdminList();
-        } catch (err) {
-          showToast(`❌ 操作失敗：${err.message}`);
-        }
+          await fsSet(uid, 'meta', 'profile', { tier: 'free', upgradedAt: null }, true);
+          showToast(`✓ ${email} 已降回 Free`); _loadAdminList();
+        } catch (err) { showToast(`❌ 失敗：${err.message}`); }
       });
     });
+
+    // 刪除待升級
+    listEl.querySelectorAll('.admin-pending-del-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const email = btn.dataset.email;
+        if (!confirm(`確定移除待升級 ${email}？`)) return;
+        try {
+          const p = await fsGetShared('admin/pending_upgrades') ?? {};
+          delete p[email];
+          await fsSetShared('admin/pending_upgrades', p);
+          showToast(`✓ 已移除`); _loadAdminList();
+        } catch (err) { showToast(`❌ 失敗：${err.message}`); }
+      });
+    });
+
   } catch (err) {
     listEl.textContent = `載入失敗：${err.message}`;
   }

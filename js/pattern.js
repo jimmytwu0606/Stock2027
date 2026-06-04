@@ -166,13 +166,13 @@ export function calcSimilarity(templateCandles, targetCandles, mode = 'simple') 
  * @param {number}  [tolerance=5]    視窗長度容忍（±N根）
  * @returns {{ score: number, startIdx: number, endIdx: number }}
  */
-export function findBestMatch(templateCandles, allCandles, tolerance = 5) {
+export function findBestMatch(templateCandles, allCandles, tolerance = 5, mode = 'simple') {
   const tLen = templateCandles.length;
   const totalLen = allCandles.length;
 
   if (totalLen < tLen) {
     // 目標太短，直接比對全段
-    const score = calcSimilarity(templateCandles, allCandles);
+    const score = calcSimilarity(templateCandles, allCandles, mode);
     return { score, startIdx: 0, endIdx: allCandles.length - 1 };
   }
 
@@ -184,7 +184,7 @@ export function findBestMatch(templateCandles, allCandles, tolerance = 5) {
 
   for (let i = scanFrom; i <= totalLen - tLen; i++) {
     const segment = allCandles.slice(i, i + tLen);
-    const score = calcSimilarity(templateCandles, segment);
+    const score = calcSimilarity(templateCandles, segment, mode);
     if (score > bestScore) {
       bestScore = score;
       bestStart = i;

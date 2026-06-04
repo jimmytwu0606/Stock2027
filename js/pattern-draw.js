@@ -154,6 +154,8 @@ function _onDrawEnd(canvas) {
     const desc = describePattern(template);
     meta.textContent = `手繪 ${template.length} 根・${desc.label}`;
   }
+  // 通知 toolbar 有新範本
+  document.dispatchEvent(new CustomEvent('patternTemplateReady'));
 }
 
 // ─── 座標工具 ──────────────────────────────────────────────
@@ -269,16 +271,15 @@ function _updatePreview(candles) {
   `;
 }
 
-// ─── 確認按鈕 ──────────────────────────────────────────────
+// ─── 確認按鈕（新架構：只更新 chip，不直接觸發掃描） ────
 function _bindConfirmBtn() {
-  document.getElementById('pdConfirmBtn')?.addEventListener('click', () => {
-    const template = AppState.pattern.template;
-    if (!template || template.length < 5) return;
-    AppState.pattern.similarity  = parseInt(document.getElementById('pdSimilarity')?.value  ?? 75);
-    AppState.pattern.windowSize  = parseInt(document.getElementById('pdWindow')?.value       ?? 20);
-    AppState.pattern.featureMode = document.getElementById('pdFeatureMode')?.value ?? 'simple';
-    document.dispatchEvent(new CustomEvent('patternScanStart', { detail: { template } }));
-  });
+  // pdConfirmBtn 已移除（新架構用 pdModalStart / pdScanBtn）
+  // 保留此函式避免呼叫端報錯
+}
+
+// 對外暴露：型態確認後通知 toolbar 更新
+export function notifyTemplateReady() {
+  document.dispatchEvent(new CustomEvent('patternTemplateReady'));
 }
 
 // ─── 相似度滑桿 ────────────────────────────────────────────

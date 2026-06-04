@@ -192,7 +192,7 @@ async function _scanOne(code, template, opts) {
 
       if (!candles || candles.length < windowSize + 30) return null;
 
-      const recent = candles.slice(-windowSize);
+      const recent = candles.slice(-Math.max(windowSize, 240));
 
       // ── 三維評分 ──
       let sectorScore = null;
@@ -431,7 +431,7 @@ async function _scanOneSimilar(code, opts) {
       patternScore:   Math.round(techScore  * 100),
       sectorScore:    simMode !== 'technical' ? Math.round(mcapScore * 100) : 0,
       indicatorScore: 0,
-      miniCandles:    candles.slice(-20),
+      miniCandles:    candles.slice(-240),
       _pearson:       pearson,
     };
   } catch (err) {

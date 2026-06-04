@@ -48,9 +48,9 @@ const dbBakup  = getFirestore(appBakup);
 export let currentUser = null;
 
 /** 登入狀態變化時更新 currentUser，並通知全站 */
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
   currentUser = user;
-  // 派發自訂事件，讓 auth-ui.js / main.js 等模組監聽
+  if (user) await _ensureProfile(user);
   window.dispatchEvent(new CustomEvent('authStateChanged', { detail: { user } }));
 });
 
@@ -73,7 +73,7 @@ export async function signOutUser() {
   await signOut(auth);
 }
 
-/** 首次登入時建立 profile doc（已存在則略過） */
+/** 登入時建立或更新 profile doc，並檢查 pending_upgrades 自動升級 */
 async function _ensureProfile(user) {
   const ref  = doc(db, 'users', user.uid, 'meta', 'profile');
   const snap = await getDoc(ref);
@@ -82,8 +82,29 @@ async function _ensureProfile(user) {
       email:       user.email,
       displayName: user.displayName,
       photoURL:    user.photoURL,
+      tier:        'free',
       createdAt:   serverTimestamp(),
     });
+  }
+  // 每次登入都檢查 pending_upgrades，有對應 email 就自動升級
+  try {
+    const pendingRef  = doc(db, 'shared', 'admin--pending_upgrades');
+    const pendingSnap = await getDoc(pendingRef);
+    if (pendingSnap.exists()) {
+      const pending = JSON.parse(pendingSnap.data().data ?? '{}');
+      const email   = user.email.toLowerCase();
+      const match   = Object.keys(pending).find(k => k.toLowerCase() === email);
+      if (match) {
+        const { tier } = pending[match];
+        await setDoc(ref, { tier, upgradedAt: serverTimestamp() }, { merge: true });
+        // 從 pending 移除
+        delete pending[match];
+        await setDoc(pendingRef, { data: JSON.stringify(pending), updatedAt: serverTimestamp() }, { merge: true });
+        console.log(`[firebase] pending 升級完成：${email} → ${tier}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[firebase] pending_upgrades 檢查失敗', e.message);
   }
 }
 
@@ -177,6 +198,15 @@ export async function fsSetShared(docPath, data) {
     _path: docPath,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * 刪除 shared collection 的單一 doc
+ * @param {string} docPath  e.g. 'member_keys/ABCD1234'
+ */
+export async function fsDeleteShared(docPath) {
+  const safeKey = docPath.replace(/\//g, '--');
+  await deleteDoc(doc(db, 'shared', safeKey));
 }
 
 /**

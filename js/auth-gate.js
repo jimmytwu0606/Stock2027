@@ -24,6 +24,7 @@ export const DEFAULT_GATES = {
   tab_screener:     'pro',
   tab_pattern:      'pro',
   tab_seed:         'pro',
+  tab_lab:          'pro',   // 策略實驗室（pro 小窗口 / vvvip 完整）
 
   // 個股內頁 Tab
   stocktab_personas:   'vvvip',  // AI 圓桌
@@ -63,6 +64,7 @@ export const GATE_LABELS = {
   tab_screener:     { label: '個股篩選 Tab',      group: '主 Tab' },
   tab_pattern:      { label: '型態比對 Tab',      group: '主 Tab' },
   tab_seed:         { label: '種子選股 Tab',      group: '主 Tab' },
+  tab_lab:          { label: '🔬 策略實驗室 Tab', group: '主 Tab' },
 
   // 個股內頁
   stocktab_personas:    { label: 'AI 圓桌',    group: '個股內頁' },
@@ -136,9 +138,13 @@ export function applyTierGate(tier) {
   // ── 主 Tab Bar（桌面）────────────────────────────────
   _showTab('theme',     canAccess('tab_theme'));
   _showTab('portfolio', canAccess('tab_portfolio'));
-  _showTab('screener',  canAccess('tab_screener'));
+  _showTab('hub',       canAccess('tab_screener'));  // 選股篩選 data-tab="hub"
   _showTab('pattern',   canAccess('tab_pattern'));
   _showTab('seed',      canAccess('tab_seed'));
+
+  // ── 策略實驗室主 Tab（主 Tab Bar，用 id 控制）────────
+  const labTabBtn = document.getElementById('mainTabLab');
+  if (labTabBtn) labTabBtn.style.display = canAccess('tab_lab') ? '' : 'none';
 
   // ── 手機底部 Tab Bar ──────────────────────────────────
   _showMobileTab('screener', canAccess('tab_screener'));
@@ -156,7 +162,7 @@ export function applyTierGate(tier) {
   _showStockTab('stockinfo',    canAccess('stocktab_stockinfo'));
 
   // ── 特定元素 ──────────────────────────────────────────
-  _showEl('btnMonteCarlo',     canAccess('el_btnMonteCarlo'));
+  // btnMonteCarlo 已由策略實驗室取代，永久隱藏
   _showEl('btnStockBacktest',  canAccess('el_btnStockBacktest'));
   _showEl('msStrategyTab',     canAccess('el_msStrategyTab'));
   _showEl('themeYaoguScanBtn', canAccess('el_yaoguQuery'));

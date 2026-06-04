@@ -745,7 +745,7 @@ async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap, 
       _repaintPrices(container);
     }).catch(() => {});
 
-    // 從 signals_cache 撈 X1/X2/X5
+    // 從 signals_cache 撈 X1/X2/X3/X5/X6
     _yaoguMap = new Map();
     const allSig = await getAllSignalsCache();
     allSig.forEach(row => {
@@ -753,10 +753,12 @@ async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap, 
       const sigs = row.signals ?? [];
       const x1 = sigs.some(s => s.id === 'X1');
       const x2 = sigs.some(s => s.id === 'X2');
+      const x3 = sigs.some(s => s.id === 'X3');
       const x5 = sigs.some(s => s.id === 'X5');
-      if (x1 || x2 || x5) {
-        const strongest = x2 ? 'X2' : x1 ? 'X1' : 'X5';
-        _yaoguMap.set(row.code, { x1, x2, x5, strongest });
+      const x6 = sigs.some(s => s.id === 'X6');
+      if (x1 || x2 || x3 || x5 || x6) {
+        const strongest = x2 ? 'X2' : x1 ? 'X1' : x6 ? 'X6' : x5 ? 'X5' : 'X3';
+        _yaoguMap.set(row.code, { x1, x2, x3, x5, x6, strongest });
       }
     });
 
@@ -880,8 +882,10 @@ async function _refreshStockData(theme, themeIdx, themes, stockThemeMap) {
     const sigs = row.signals ?? [];
     const x1 = sigs.some(s => s.id === 'X1');
     const x2 = sigs.some(s => s.id === 'X2');
+    const x3 = sigs.some(s => s.id === 'X3');
     const x5 = sigs.some(s => s.id === 'X5');
-    if (x1 || x2 || x5) _yaoguMap.set(row.code, { x1, x2, x5, strongest: x2?'X2':x1?'X1':'X5' });
+    const x6 = sigs.some(s => s.id === 'X6');
+    if (x1 || x2 || x3 || x5 || x6) _yaoguMap.set(row.code, { x1, x2, x3, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':x5?'X5':'X3' });
   });
   _renderStockBody(theme, themeIdx, themes, stockThemeMap);
 
@@ -963,7 +967,7 @@ function _renderCompact(body, stocks, theme, themeIdx, themes, stockThemeMap) {
       </div>
       <div class="th-compact-health">
         ${healthBadgeDual(hs, hl, 'hg')}
-        ${yg ? `<span class="th-yaogu-pill th-yaogu-pill--${yg.strongest.toLowerCase()}">${yg.strongest}</span>` : ''}
+        ${yg ? ['X2','X1','X6','X5','X3'].filter(id => yg[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}
         ${_hotToday.has(s.code) ? '<span class="th-hot-pill th-hot-pill--today">🔥今日</span>' : _hotSet.has(s.code) ? `<span class="th-hot-pill">${_hotDate?.slice(5) ?? '前日'}</span>` : ''}
       </div>
       <canvas class="th-sparkline" data-code="${s.code}" width="220" height="56"></canvas>
@@ -1003,7 +1007,7 @@ function _renderDetail(body, stocks, theme, themeIdx, themes, stockThemeMap) {
       <div class="theme-stock-reason">${s.reason || ''}</div>
       <div class="th-compact-health">
         ${healthBadgeDual(hs, hl, 'hg')}
-        ${yg2 ? `<span class="th-yaogu-pill th-yaogu-pill--${yg2.strongest.toLowerCase()}">${yg2.strongest}</span>` : ''}
+        ${yg2 ? ['X2','X1','X6','X5','X3'].filter(id => yg2[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}
         ${_hotToday.has(s.code) ? '<span class="th-hot-pill th-hot-pill--today">🔥今日</span>' : _hotSet.has(s.code) ? `<span class="th-hot-pill">${_hotDate?.slice(5) ?? '前日'}</span>` : ''}
       </div>
       ${crossTags ? `<div class="theme-cross-tags">${crossTags}</div>` : ''}
@@ -1049,7 +1053,7 @@ function _renderTable(body, stocks, theme, themeIdx, themes, stockThemeMap) {
       <td class="th-tbl-td">${_chgHtml(s.code)}</td>
       <td class="th-tbl-td">${healthBadge(hs, 'hg')}</td>
       <td class="th-tbl-td">${healthBadge(hl, 'hg')}</td>
-      <td class="th-tbl-td">${(() => { const yg3=_yaoguMap.get(s.code); return yg3?`<span class="th-yaogu-pill th-yaogu-pill--${yg3.strongest.toLowerCase()}">${yg3.strongest}</span>`:''; })()}</td>
+      <td class="th-tbl-td">${(() => { const yg3=_yaoguMap.get(s.code); return yg3?['X2','X1','X6','X5','X3'].filter(id=>yg3[id.toLowerCase()]).map(id=>`<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join(''):''; })()}</td>
       <td class="th-tbl-td">${_hotToday.has(s.code)?'<span class="th-hot-pill th-hot-pill--today">🔥今日</span>':_hotSet.has(s.code)?`<span class="th-hot-pill">${_hotDate?.slice(5)??'前日'}</span>`:''}</td>
       <td class="th-tbl-td th-tbl-reason">${s.reason || ''}</td>
       <td class="th-tbl-td"><button class="theme-stock-del" data-orig="${s._orig}" title="移除">✕</button></td>
@@ -1935,9 +1939,11 @@ function _openYaoguScanModal() {
 
         const x1 = sigs.some(sg => sg.id === 'X1');
         const x2 = sigs.some(sg => sg.id === 'X2');
+        const x3 = sigs.some(sg => sg.id === 'X3');
         const x5 = sigs.some(sg => sg.id === 'X5');
-        if (x1 || x2 || x5) {
-          s._sigs = { x1, x2, x5, strongest: x2?'X2':x1?'X1':'X5' };
+        const x6 = sigs.some(sg => sg.id === 'X6');
+        if (x1 || x2 || x3 || x5 || x6) {
+          s._sigs = { x1, x2, x3, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':x5?'X5':'X3' };
           _yaoguMap.set(s.code, s._sigs);
           xTagged++;
         }
@@ -2001,11 +2007,7 @@ function _openYaoguScanModal() {
         ? `<span class="theme-stock-price ${chg >= 0 ? 'up' : 'down'}">${chg >= 0 ? '+' : ''}${Number(chg).toFixed(2)}%</span>`
         : '';
       const sg = s._sigs;
-      const xPills = sg ? [
-        sg.x2 ? '<span class="th-yaogu-pill th-yaogu-pill--x2">X2</span>' : '',
-        sg.x1 ? '<span class="th-yaogu-pill th-yaogu-pill--x1">X1</span>' : '',
-        sg.x5 ? '<span class="th-yaogu-pill th-yaogu-pill--x5">X5</span>' : '',
-      ].join('') : '';
+      const xPills = sg ? ['X2','X1','X6','X5','X3'].filter(id => sg[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : '';
       return `
         <div class="ys-preview-card ys-preview-card--${_scanType}">
           <div class="ys-card-rank">${i + 1}</div>

@@ -1084,6 +1084,16 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(234,179,8,0);   border-color: #eab308; }
   50%       { box-shadow: 0 0 10px 3px rgba(234,179,8,0.45); border-color: #eab308; }
 }
+/* X6 見龍在田 — 琥珀呼吸燈 */
+@keyframes thBreathX6 {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251,146,60,0);   border-color: #fb923c; }
+  50%       { box-shadow: 0 0 10px 3px rgba(251,146,60,0.45); border-color: #fb923c; }
+}
+/* X3 炒底王 — 藍色呼吸燈 */
+@keyframes thBreathX3 {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0);   border-color: #3b82f6; }
+  50%       { box-shadow: 0 0 10px 3px rgba(59,130,246,0.4); border-color: #3b82f6; }
+}
 
 .theme-card--yaogu {
   animation-duration: 2s;
@@ -1092,7 +1102,9 @@
 }
 .theme-card--yaogu-x2 { animation-name: thBreathX2; }
 .theme-card--yaogu-x1 { animation-name: thBreathX1; }
+.theme-card--yaogu-x6 { animation-name: thBreathX6; }
 .theme-card--yaogu-x5 { animation-name: thBreathX5; }
+.theme-card--yaogu-x3 { animation-name: thBreathX3; }
 
 /* ── 訊號 Pill ─────────────────────────────────────────────── */
 .th-yaogu-pill {
@@ -1116,10 +1128,20 @@
   color: #fdba74;
   border-color: rgba(249,115,22,0.5);
 }
+.th-yaogu-pill--x6 {
+  background: rgba(251,146,60,0.15);
+  color: #fed7aa;
+  border-color: rgba(251,146,60,0.5);
+}
 .th-yaogu-pill--x5 {
   background: rgba(234,179,8,0.15);
   color: #fde047;
   border-color: rgba(234,179,8,0.5);
+}
+.th-yaogu-pill--x3 {
+  background: rgba(59,130,246,0.15);
+  color: #93c5fd;
+  border-color: rgba(59,130,246,0.5);
 }
 
 /* ════════════════════════════════════════════════════════════

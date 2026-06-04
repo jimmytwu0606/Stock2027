@@ -123,8 +123,11 @@ export async function runScan(opts, deps) {
     const features = [];
     for (const code of opts.codes) {
       try {
-        const symbol = code + '.TW';
-        const candles = await fetchHistoryCached(symbol, '3mo');
+        let candles = null;
+        try { candles = await fetchHistoryCached(code + '.TW',  '3mo'); } catch(_) {}
+        if (!candles?.length) {
+          try { candles = await fetchHistoryCached(code + '.TWO', '3mo'); } catch(_) {}
+        }
         if (candles?.length > 20) {
           const f = extractSeedFeatures(candles, { code });
           if (f) features.push(f);
@@ -135,11 +138,21 @@ export async function runScan(opts, deps) {
     const template = mergeTemplates(features);
     if (!template) { deps.showToast?.('無法建立種子模板'); return; }
 
+    // 等 __twsePricesReady（同 strat 做法）
+    // __priceCache 有資料時，seed-scan Phase A 直接用快取，不重打 TWSE
+    if (window.__twsePricesReady) {
+      updateProgress?.(0, 0, '等待市場資料…');
+      try { await window.__twsePricesReady; } catch(_) {}
+    }
+
     const gen = runSeedScan(template, { weights: opts.weights, threshold: opts.threshold });
     for await (const evt of gen) {
-      if (evt.type==='progress') updateProgress?.(evt.done, evt.total, evt.message);
-      if (evt.type==='result')   { onResult?.(evt.item); }
-      if (evt.type==='done')     break;
+      if (evt.type === 'progress') updateProgress?.(evt.done, evt.total, evt.message);
+      if (evt.type === 'result')   { onResult?.(evt.item); }
+      if (evt.type === 'warning')  deps.showToast?.(evt.message ?? '');
+      if (evt.type === 'error')    { deps.showToast?.('⚠ ' + (evt.message ?? '')); break; }
+      if (evt.type === 'aborted')  break;
+      if (evt.type === 'done')     break;
     }
     onDone?.('seed');
   } catch(e) {

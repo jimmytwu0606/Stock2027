@@ -13,28 +13,104 @@ import { runBacktest, calcReturnDistribution } from './backtest.js';
 import { AppState } from './state.js';
 import { normalizeSeries } from './pattern.js';
 import { getChineseName, fetchFundamentalsBatch } from './api.js';
+import { addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { initPatternImageUI } from './pattern-image-ui.js';
 import { getAllSignalsCache } from './db.js';
+import { listAll, createList, watchAddCode } from './portfolio.js';
 import { scanOneCode } from './signal-scan.js';
 
 // fund 快取
 let _prFundCache = {};
 // 妖股快取（掃描結果存這裡，重繪時用）
 let _prYaoguMap = new Map();
-import { calcHealth, calcHealthLong, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
 
 // 排序狀態
 let _prSortKey = 'score';
 let _prSortAsc = false;
 let _prResults = [];
+// health cache：掃描時預算，排序時直接讀
+let _prHealthCache = new Map();  // code → { hs, hl }
 
 // ─── 初始化 ────────────────────────────────────────────────
 export function initPatternUI() {
   _buildResultPanel();
+  _bindModal();
   _listenScanStart();
   _listenAbort();
   _initImageMode();
-  // Tab 切換（draw ↔ image）統一由 pattern-draw.js 的 _bindModeSwitch 管理
+  _bindSearchAndWatch();
+}
+
+// ─── Modal 開關 ────────────────────────────────────────────
+function _bindModal() {
+  document.getElementById('pdOpenConfig')?.addEventListener('click', _openModal);
+  document.getElementById('pdModalClose')?.addEventListener('click', _closeModal);
+  document.getElementById('pdModalBg')?.addEventListener('click', e => {
+    if (e.target.id === 'pdModalBg') _closeModal();
+  });
+  // Modal 內「▶ 開始掃描」
+  document.getElementById('pdModalStart')?.addEventListener('click', () => {
+    _closeModal();
+    _triggerScan();
+  });
+  // toolbar「▶ 開始掃描」
+  document.getElementById('pdScanBtn')?.addEventListener('click', _triggerScan);
+  // 收到範本就緒通知 → 更新 chip
+  document.addEventListener('patternTemplateReady', _updateTbChip);
+  // 相似度滑桿
+  document.getElementById('pdSimilarity')?.addEventListener('input', e => {
+    const v = document.getElementById('pdSimilarityVal');
+    if (v) v.textContent = e.target.value + '%';
+  });
+}
+
+function _openModal() {
+  const bg = document.getElementById('pdModalBg');
+  if (bg) bg.style.display = 'flex';
+  // 同步 canvas 寬度（modal 開啟後才有寬度）
+  requestAnimationFrame(() => {
+    const canvas = document.getElementById('pdCanvas');
+    const wrap   = document.getElementById('pdDrawWrap');
+    if (canvas && wrap) canvas.width = (wrap.clientWidth - 28) || 560;
+  });
+}
+
+function _closeModal() {
+  const bg = document.getElementById('pdModalBg');
+  if (bg) bg.style.display = 'none';
+  _updateTbChip();
+}
+
+function _updateTbChip() {
+  const chips = document.getElementById('pdTbChips');
+  if (!chips) return;
+  const tpl = AppState.pattern?.template;
+  if (!tpl?.length) {
+    chips.innerHTML = '<span style="color:var(--muted);font-size:12px">未設定型態</span>';
+    return;
+  }
+  const sim  = document.getElementById('pdSimilarity')?.value ?? 75;
+  const win  = document.getElementById('pdWindow')?.value ?? 20;
+  chips.innerHTML = `
+    <span class="seed-chip">型態 ${tpl.length}根</span>
+    <span class="seed-chip">相似度 ${sim}%</span>
+    <span class="seed-chip">視窗 ${win}根</span>
+  `;
+  // 有範本才開放掃描
+  const btn = document.getElementById('pdScanBtn');
+  const mstart = document.getElementById('pdModalStart');
+  if (btn) btn.disabled = false;
+  if (mstart) mstart.disabled = false;
+}
+
+function _triggerScan() {
+  const template = AppState.pattern?.template;
+  if (!template?.length) { _openModal(); return; }
+  AppState.pattern.similarity  = parseInt(document.getElementById('pdSimilarity')?.value  ?? 75);
+  AppState.pattern.windowSize  = parseInt(document.getElementById('pdWindow')?.value      ?? 20);
+  AppState.pattern.featureMode = document.getElementById('pdFeatureMode')?.value ?? 'simple';
+  document.dispatchEvent(new CustomEvent('patternScanStart', { detail: { template } }));
 }
 
 // ─── 圖片模式初始化 ────────────────────────────────────────
@@ -102,13 +178,25 @@ function _buildResultPanel() {
     </div>
 
     <!-- 結果列表 -->
-    <div class="pr-list-header" id="prListHeader" style="display:none">
-      <span>代號 / 名稱</span>
-      <span class="pr-sort-col active" data-sort="score">相似度 ↓</span>
-      <span class="pr-sort-col" data-sort="health">健康度</span>
-      <span>型態預覽</span>
+    <div id="prListHeader" style="display:none">
+      <table class="pr-tbl">
+        <thead>
+          <tr>
+            <th class="pr-th">代號</th>
+            <th class="pr-th">名稱</th>
+            <th class="pr-th pr-sort-col active" data-sort="score">相似度 ↓</th>
+            <th class="pr-th">現價</th>
+            <th class="pr-th">漲跌幅</th>
+            <th class="pr-th pr-sort-col" data-sort="hs">短線健康</th>
+            <th class="pr-th pr-sort-col" data-sort="hl">長線健康</th>
+            <th class="pr-th">妖股</th>
+            <th class="pr-th">走勢</th>
+            <th class="pr-th"></th>
+          </tr>
+        </thead>
+        <tbody id="prList"></tbody>
+      </table>
     </div>
-    <div class="pr-list" id="prList"></div>
 
     <!-- 空狀態 -->
     <div class="pr-empty" id="prEmpty" style="display:none">
@@ -131,6 +219,19 @@ function _listenScanStart() {
 
     _resetUI();
     _showProgress(true);
+    // 掃描開始前預填妖股 map（async，不阻塞主流程）
+    (async () => {
+      let allCache = [];
+      try { allCache = await getAllSignalsCache(); } catch(_) {}
+      allCache.forEach(row => {
+        const sigs = row.signals ?? [];
+        const x1 = sigs.some(s => s.id === 'X1');
+        const x2 = sigs.some(s => s.id === 'X2');
+        const x5 = sigs.some(s => s.id === 'X5');
+        const x6 = sigs.some(s => s.id === 'X6');
+        if (x1||x2||x5||x6) _prYaoguMap.set(row.code, { x1, x2, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':'X5' });
+      });
+    })();
 
     // 讀取篩選條件
     const priceMin  = parseFloat(document.getElementById('pdPriceMin')?.value  || 0)   || 0;
@@ -183,8 +284,15 @@ function _listenAbort() {
 
 // ─── 進度條 ────────────────────────────────────────────────
 function _showProgress(show) {
-  const el = document.getElementById('prProgress');
-  if (el) el.style.display = show ? '' : 'none';
+  const bar  = document.getElementById('prProgressBar');
+  const text = document.getElementById('prProgressText');
+  if (bar)  { bar.style.width = '0%'; bar.closest('.seed-progress')?.style && (bar.closest('.seed-progress').style.display = show ? '' : 'none'); }
+  if (text) text.style.display = show ? '' : 'none';
+  // toolbar 掃描中切換按鈕
+  const scanBtn  = document.getElementById('pdScanBtn');
+  const abortBtn = document.getElementById('prAbortBtn');
+  if (scanBtn)  scanBtn.style.display  = show ? 'none' : '';
+  if (abortBtn) abortBtn.style.display = show ? '' : 'none';
 }
 
 function _updateProgress(done, total, message) {
@@ -193,6 +301,9 @@ function _updateProgress(done, total, message) {
   const pct  = total > 0 ? Math.round((done / total) * 100) : 0;
   if (bar)  bar.style.width  = pct + '%';
   if (text) text.textContent = message + (total > 0 ? ` (${done}/${total})` : '');
+  // toolbar summary
+  const sum = document.getElementById('prSummaryText');
+  if (sum && done > 0) sum.textContent = `找到 ${_prResults.length} 檔`;
 }
 
 // ─── 結果渲染 ──────────────────────────────────────────────
@@ -202,6 +313,12 @@ function _resetUI() {
   _prSortAsc = false;
   _prFundCache = {};
   _prYaoguMap = new Map();
+  _prHealthCache = new Map();
+  _prSearchQuery = '';
+  const searchEl  = document.getElementById('prSearchInput');
+  const watchBtnEl = document.getElementById('prAddWatchBtn');
+  if (searchEl)   { searchEl.value = ''; searchEl.style.display = 'none'; }
+  if (watchBtnEl) watchBtnEl.style.display = 'none';
   document.getElementById('prList')?.replaceChildren();
   ['prSummary','prBacktest','prListHeader','prEmpty'].forEach(id => {
     const el = document.getElementById(id);
@@ -210,6 +327,14 @@ function _resetUI() {
 }
 
 function _renderResult(item, rank) {
+  // 加入時預算 health，存 cache，排序時不重算
+  const allCandles   = item.fullCandles ?? item.candles;
+  const candlesShort = allCandles?.length > 65 ? allCandles.slice(-65) : allCandles;
+  _prHealthCache.set(item.code, {
+    hs: calcHealth(candlesShort),
+    hl: allCandles?.length >= 120 ? calcHealthLong(allCandles, _prFundCache[item.code] ?? null) : null,
+  });
+
   _prResults.push(item);
   if (rank === 1) {
     const header = document.getElementById('prListHeader');
@@ -224,13 +349,27 @@ function _renderAllResults() {
   const list = document.getElementById('prList');
   if (!list) return;
 
-  // 排序
+  // 排序（tbody）
   const sorted = [..._prResults].sort((a, b) => {
     let av, bv;
-    if (_prSortKey === 'health') {
-      const _s = c => c?.length > 65 ? c.slice(-65) : c;
-      av = calcHealth(_s(a.candles)) ?? -1;
-      bv = calcHealth(_s(b.candles)) ?? -1;
+    if (_prSortKey === 'hs') {
+      av = (_prHealthCache.get(a.code)?.hs) ?? -1;
+      bv = (_prHealthCache.get(b.code)?.hs) ?? -1;
+    } else if (_prSortKey === 'hl') {
+      av = (_prHealthCache.get(a.code)?.hl) ?? -1;
+      bv = (_prHealthCache.get(b.code)?.hl) ?? -1;
+    } else if (_prSortKey === 'code') {
+      return _prSortAsc
+        ? (a.code ?? '').localeCompare(b.code ?? '')
+        : (b.code ?? '').localeCompare(a.code ?? '');
+    } else if (_prSortKey === 'yaogu') {
+      const ygScore = code => {
+        const yg = _prYaoguMap.get(code);
+        if (!yg) return 0;
+        return yg.x2 ? 4 : yg.x1 ? 3 : yg.x6 ? 2 : yg.x5 ? 1 : 0;
+      };
+      av = ygScore(a.code);
+      bv = ygScore(b.code);
     } else {
       av = a[_prSortKey] ?? 0;
       bv = b[_prSortKey] ?? 0;
@@ -238,44 +377,63 @@ function _renderAllResults() {
     return _prSortAsc ? av - bv : bv - av;
   });
 
+  // 搜尋過濾
+  const displayed = _prSearchQuery
+    ? sorted.filter(item =>
+        item.code.toLowerCase().includes(_prSearchQuery) ||
+        (item.name ?? '').toLowerCase().includes(_prSearchQuery)
+      )
+    : sorted;
+
   list.innerHTML = '';
-  for (const item of sorted) {
-    const row = document.createElement('div');
+  for (const item of displayed) {
+    const row = document.createElement('tr');
     row.className = 'pr-row';
     row.dataset.code = item.code;
 
     const scoreColor = item.score >= 90 ? 'var(--down)' :
                        item.score >= 75 ? 'var(--accent)' : 'var(--muted)';
 
-    const candlesShort = item.candles?.length > 65 ? item.candles.slice(-65) : item.candles;
-    const healthShort  = calcHealth(candlesShort);
-    const healthLong   = item.candles?.length >= 120
-      ? calcHealthLong(item.candles, _prFundCache[item.code] ?? null) : null;
+    // 健康度從 cache 讀取（_renderResult 時已預算）
+    const cached = _prHealthCache.get(item.code) ?? {};
+    const healthShort = cached.hs ?? null;
+    const healthLong  = cached.hl ?? null;
 
-    // 妖股 pill
+    // 妖股 pill（複用 th-yaogu-pill 樣式，支援多標籤）
     const yg = _prYaoguMap.get(item.code);
-    const ygHtml = yg
-      ? `<div class="pr-yaogu-cell"><span class="pr-yaogu-pill pr-yaogu-pill--${yg.strongest.toLowerCase()}">${yg.strongest}</span></div>`
-      : `<div class="pr-yaogu-cell">—</div>`;
+    const ygHtml = `<div class="pr-yaogu-cell">${
+      yg ? ['X2','X1','X6','X5'].filter(id => yg[id.toLowerCase()])
+               .map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`)
+               .join('') : ''
+    }</div>`;
 
+    const priceVal = isFinite(item.price) ? item.price : 0;
+    const chgCls   = (item.chgPct ?? 0) >= 0 ? 'up' : 'down';
+    const chgStr   = ((item.chgPct ?? 0) >= 0 ? '+' : '') + (item.chgPct ?? 0).toFixed(2) + '%';
     row.innerHTML = `
-      <div class="pr-row-info">
-        <span class="pr-row-code">${item.code}</span>
-        <span class="pr-row-name">${item.name || '–'}</span>
-      </div>
-      <div class="pr-row-score" style="color:${scoreColor}">
-        ${item.score.toFixed(1)}%
-      </div>
-      <div class="pr-row-health">${healthBadgeDual(healthShort, healthLong, 'pr')}</div>
-      ${ygHtml}
-      <canvas class="pr-mini-chart" width="110" height="40" data-code="${item.code}"></canvas>
+      <td class="pr-td"><span class="pr-row-code">${item.code}</span></td>
+      <td class="pr-td"><span class="pr-row-name">${item.name || '–'}</span></td>
+      <td class="pr-td pr-td-score" style="color:${scoreColor}">${item.score.toFixed(1)}%</td>
+      <td class="pr-td"><span class="pr-row-price">${priceVal > 0 ? priceVal.toFixed(priceVal >= 100 ? 0 : 1) : '—'}</span></td>
+      <td class="pr-td"><span class="pr-row-chg ${chgCls}">${chgStr}</span></td>
+      <td class="pr-td">${healthBadge(healthShort, 'hg')}</td>
+      <td class="pr-td">${healthBadge(healthLong, 'hg')}</td>
+      <td class="pr-td">${yg ? ['X2','X1','X6','X5'].filter(id=>yg[id.toLowerCase()]).map(id=>'<span class="th-yaogu-pill th-yaogu-pill--'+id.toLowerCase()+'">'+id+'</span>').join('') : ''}</td>
+      <td class="pr-td"><canvas class="pr-mini-chart" width="100" height="36" data-code="${item.code}"></canvas></td>
+      <td class="pr-td">
+        <div class="sr-add-wrap">
+          <button class="sr-add-btn" data-code="${item.code}" title="加入自選群組">＋</button>
+          <div class="sr-add-dropdown" style="display:none"></div>
+        </div>
+      </td>
     `;
 
     list.appendChild(row);
 
+    // Canvas 在 row 附加到 DOM 後才有尺寸，用 requestAnimationFrame 畫
     const canvas = row.querySelector('.pr-mini-chart');
     if (canvas && item.candles?.length) {
-      _drawMiniChart(canvas, item.candles, item.startIdx, item.endIdx);
+      requestAnimationFrame(() => _drawMiniChart(canvas, item.candles, item.startIdx, item.endIdx));
     }
 
     row.addEventListener('click', () => {
@@ -287,16 +445,15 @@ function _renderAllResults() {
   }
 
   // 排序 header 點擊
-  const header = document.getElementById('prListHeader');
-  header?.querySelectorAll('.pr-sort-col').forEach(col => {
+  document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(col => {
     col.addEventListener('click', () => {
       const key = col.dataset.sort;
       if (_prSortKey === key) _prSortAsc = !_prSortAsc;
       else { _prSortKey = key; _prSortAsc = false; }
-      header.querySelectorAll('.pr-sort-col').forEach(c => {
+      document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(c => {
         const isActive = c.dataset.sort === _prSortKey;
         c.classList.toggle('active', isActive);
-        const label = c.dataset.sort === 'score' ? '相似度' : '健康度';
+        const label = c.dataset.sort === 'score' ? '相似度' : c.dataset.sort === 'hs' ? '短線健康' : '長線健康';
         c.textContent = isActive ? `${label} ${_prSortAsc ? '↑' : '↓'}` : label;
       });
       _renderAllResults();
@@ -349,76 +506,174 @@ function _onScanDone(results, template, aborted = false) {
     return;
   }
 
-  // 彙總列
-  const sum = document.getElementById('prSummary');
-  if (sum) {
-    sum.style.display = '';
-    document.getElementById('prSumFound').textContent = `找到 ${results.length} 檔`;
-  }
+  // toolbar summary
+  const sumText = document.getElementById('prSummaryText');
+  if (sumText) sumText.textContent = `找到 ${results.length} 檔`;
 
   // 顯示列表 header
   const header = document.getElementById('prListHeader');
   if (header) header.style.display = '';
 
-  // 批次讀 fund → 長線健康度吃基本面，讀完重繪
+  // 批次讀 fund → 只更新 cache，不重繪（避免蓋掉妖股標籤）
   const codes = results.map(r => r.code);
   fetchFundamentalsBatch(codes).then(fundMap => {
     fundMap.forEach((f, code) => { _prFundCache[code] = f ?? null; });
-    _renderAllResults();
+    // 不在此重繪，由 _scanYaoguForResults 統一負責最終渲染
   }).catch(() => {});
 
   // 回測
   _renderBacktest(results, template);
 
-  // ── 妖股掃描：先讀 signals_cache，3天內有 X 訊號的直接用，否則即時掃
-  // ⚠️ 踩雷備忘（永久，2026-05-28）：
-  //   邏輯與 theme-ui.js _openYaoguScanModal 相同，讀 signals_cache → 有就用，沒有才即時掃
-  //   即時掃有 5 秒 timeout 保護，避免 proxy 全掛時整個卡死
+  // 顯示搜尋欄 + 加入追蹤清單 btn
+  const searchEl  = document.getElementById('prSearchInput');
+  const watchBtnEl = document.getElementById('prAddWatchBtn');
+  if (searchEl)   searchEl.style.display   = '';
+  if (watchBtnEl) watchBtnEl.style.display = '';
+
+  // 妖股掃描（全撈 cache，不串行打 API）
   _scanYaoguForResults(results);
 }
 
-// 妖股掃描（背景執行，不阻塞列表渲染）
+// 妖股掃描（全撈 cache，對齊 theme-ui 做法）
 async function _scanYaoguForResults(results) {
-  const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
   let xCount = 0;
-
+  const codeSet = new Set(results.map(r => r.code));
   let allCache = [];
   try { allCache = await getAllSignalsCache(); } catch(e) {}
 
-  for (const item of results) {
-    try {
-      const cached = allCache.find(r => r.code === item.code);
-      const isFresh = cached && (now - (cached.scannedAt ?? 0)) < THREE_DAYS;
-
-      let sigs = [];
-      if (isFresh) {
-        sigs = cached.signals ?? [];
-      } else {
-        sigs = await Promise.race([
-          scanOneCode(item.code, { silent: true }),
-          new Promise(res => setTimeout(() => res([]), 5000)),
-        ]);
-      }
-
-      const x1 = sigs.some(s => s.id === 'X1');
-      const x2 = sigs.some(s => s.id === 'X2');
-      const x5 = sigs.some(s => s.id === 'X5');
-      if (x1 || x2 || x5) {
-        const strongest = x2 ? 'X2' : x1 ? 'X1' : 'X5';
-        _prYaoguMap.set(item.code, { x1, x2, x5, strongest });
-        xCount++;
-      }
-    } catch(e) {
-      console.warn(`[pattern-ui] 妖股掃描失敗 ${item.code}:`, e.message);
+  allCache.forEach(row => {
+    if (!codeSet.has(row.code)) return;
+    const sigs = row.signals ?? [];
+    const x1 = sigs.some(s => s.id === 'X1');
+    const x2 = sigs.some(s => s.id === 'X2');
+    const x5 = sigs.some(s => s.id === 'X5');
+    const x6 = sigs.some(s => s.id === 'X6');
+    if (x1||x2||x5||x6) {
+      _prYaoguMap.set(row.code, { x1, x2, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':'X5' });
+      xCount++;
     }
-  }
+  });
 
-  // 有妖股才重繪 + 跳確認視窗
-  if (xCount > 0) {
+  // 無論有無妖股都重繪（修正 fundamentals 覆蓋問題）
+  _renderAllResults();
+  if (xCount > 0) _showYaoguAlert(xCount);
+}
+
+// ─── 搜尋 + 加入追蹤清單 ──────────────────────────────────
+let _prSearchQuery = '';
+
+function _bindSearchAndWatch() {
+  // 搜尋：即時過濾
+  document.getElementById('prSearchInput')?.addEventListener('input', e => {
+    _prSearchQuery = e.target.value.trim().toLowerCase();
     _renderAllResults();
-    _showYaoguAlert(xCount);
-  }
+  });
+
+  // 加入追蹤清單
+  document.getElementById('prAddWatchBtn')?.addEventListener('click', async () => {
+    if (!_prResults.length) return;
+
+    // 取得所有追蹤清單
+    const watchLists = listAll('watch');
+
+    // 建立選項 HTML：現有清單 + 新增選項
+    const opts = watchLists.map(l =>
+      `<option value="${l.id}">${l.name}（${l.items.length} 檔）</option>`
+    ).join('');
+
+    // 用 pfPromptModal 借用框架，但這裡需要 select
+    // 改用 window.prompt fallback 或自建簡易 modal
+    // 用最簡單的 confirm + prompt 組合
+    let listId;
+    if (!watchLists.length) {
+      const name = await _prPrompt('尚無追蹤清單，請輸入新清單名稱：', '型態比對結果');
+      if (!name) return;
+      const newList = await createList('watch', name);
+      listId = newList.id;
+    } else {
+      // 建一個簡易選擇 modal
+      listId = await _prPickWatchList(watchLists);
+      if (!listId) return;
+      if (listId === '__new__') {
+        const name = await _prPrompt('輸入新追蹤清單名稱：', '型態比對結果');
+        if (!name) return;
+        const newList = await createList('watch', name);
+        listId = newList.id;
+      }
+    }
+
+    // 批次加入
+    let added = 0, skipped = 0;
+    for (const item of _prResults) {
+      const result = await watchAddCode(listId, item.code, item.name, item.price ?? 0, '型態比對');
+      if (result) added++; else skipped++;
+    }
+
+    const listName = listAll('watch').find(l => l.id === listId)?.name ?? '';
+    _showToastPr(`✓ 已加入「${listName}」${added} 檔${skipped ? `（${skipped} 檔已存在）` : ''}`);
+  });
+}
+
+// 借用 pfPromptModal 顯示文字輸入
+function _prPrompt(message, defaultVal = '') {
+  const modal = document.getElementById('pfPromptModal');
+  if (!modal) return Promise.resolve(prompt(message, defaultVal));
+  return new Promise(resolve => {
+    document.getElementById('pfPromptMessage').textContent = message;
+    const input = document.getElementById('pfPromptInput');
+    input.value = defaultVal;
+    modal.classList.add('open');
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+    const close = val => {
+      modal.classList.remove('open');
+      btnOk.removeEventListener('click', onOk);
+      btnCancel.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      modal.removeEventListener('click', onBg);
+      resolve(val);
+    };
+    const btnOk     = document.getElementById('pfPromptConfirm');
+    const btnCancel = document.getElementById('pfPromptCancel');
+    const onOk      = () => close(input.value.trim() || null);
+    const onCancel  = () => close(null);
+    const onKey     = e => { if (e.key === 'Enter') onOk(); if (e.key === 'Escape') onCancel(); };
+    const onBg      = e => { if (e.target === modal) onCancel(); };
+    btnOk.addEventListener('click', onOk);
+    btnCancel.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+    modal.addEventListener('click', onBg);
+  });
+}
+
+// 選追蹤清單（下拉選單 modal）
+function _prPickWatchList(lists) {
+  return new Promise(resolve => {
+    // 動態建一個小 modal
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center';
+    bg.innerHTML = `
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px 24px;min-width:280px;max-width:360px">
+        <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:14px">選擇追蹤清單</div>
+        <select id="_prListPickSel" style="width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:6px;padding:6px 8px;font-size:13px;margin-bottom:14px">
+          ${lists.map(l => `<option value="${l.id}">${l.name}（${l.items.length} 檔）</option>`).join('')}
+          <option value="__new__">＋ 新增清單…</option>
+        </select>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="_prListPickCancel" style="padding:5px 14px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--muted);font-size:12px;cursor:pointer">取消</button>
+          <button id="_prListPickOk" style="padding:5px 14px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;cursor:pointer">確定</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bg);
+    const close = val => { bg.remove(); resolve(val); };
+    bg.querySelector('#_prListPickOk').addEventListener('click', () =>
+      close(bg.querySelector('#_prListPickSel').value));
+    bg.querySelector('#_prListPickCancel').addEventListener('click', () => close(null));
+    bg.addEventListener('click', e => { if (e.target === bg) close(null); });
+  });
+}
+
+function _showToastPr(msg) {
+  document.dispatchEvent(new CustomEvent('showToast', { detail: msg }));
 }
 
 // 妖股確認視窗
@@ -431,7 +686,7 @@ function _showYaoguAlert(count) {
   alert.className = 'pr-yaogu-alert';
   alert.innerHTML = `
     <span class="pr-yaogu-alert-icon">🚀</span>
-    <span class="pr-yaogu-alert-text">篩選結果中有 <strong>${count}</strong> 檔出現妖股訊號（X1/X2/X5）</span>
+    <span class="pr-yaogu-alert-text">篩選結果中有 <strong>${count}</strong> 檔出現妖股訊號（X1/X2/X5/X6）</span>
     <button class="pr-yaogu-alert-close" id="prYaoguAlertClose">✕</button>
   `;
 

@@ -84,9 +84,16 @@ function _bindModalOpenClose() {
 function _openModal() {
   const bg = document.getElementById('seedModalBg');
   if (bg) bg.style.display = 'flex';
-  // 標題同步模式
-  const title = document.getElementById('seedModalTitle');
-  if (title) title.textContent = _seedMode === 'single' ? '相似股設定' : '種子選股設定';
+  // 同步 modal 內撥盤 active 狀態
+  const toggle = document.getElementById('seedModeToggle');
+  toggle?.querySelectorAll('.seed-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === _seedMode)
+  );
+  // 同步內容區顯示
+  const multiArea  = document.getElementById('seedMultiArea');
+  const singleArea = document.getElementById('seedSingleArea');
+  if (multiArea)  multiArea.style.display  = _seedMode === 'multi'  ? '' : 'none';
+  if (singleArea) singleArea.style.display = _seedMode === 'single' ? '' : 'none';
 }
 
 function _closeModal() {
@@ -580,7 +587,21 @@ async function _startSingleScan() {
   const threshold = simMode === 'marketcap' ? 0.5 : 0.75;
 
   AppState.seed.scanResults = [];
+  _srYaoguMap = new Map();
   _renderResults([]);
+  // 掃描開始前先填入已有 cache 的妖股（async，不擋主流程）
+  (async () => {
+    let allCache = [];
+    try { allCache = await getAllSignalsCache(); } catch(e) {}
+    allCache.forEach(row => {
+      const sigs = row.signals ?? [];
+      const x1 = sigs.some(s => s.id === 'X1');
+      const x2 = sigs.some(s => s.id === 'X2');
+      const x5 = sigs.some(s => s.id === 'X5');
+      const x6 = sigs.some(s => s.id === 'X6');
+      if (x1||x2||x5||x6) _srYaoguMap.set(row.code, { x1, x2, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':'X5' });
+    });
+  })();
   _scanStart();
 
   let found = 0, scanned = 0;
@@ -604,7 +625,7 @@ async function _startSingleScan() {
           const codes = AppState.seed.scanResults.map(r => r.code);
           fetchFundamentalsBatch(codes).then(fundMap => {
             fundMap.forEach((f, c) => { _srFundCache[c] = f ?? null; });
-            _renderResults(AppState.seed.scanResults);
+            // 不在此重繪，由 _scanYaoguForSeedResults 統一負責最終渲染
           }).catch(() => {});
           _scanYaoguForSeedResults(AppState.seed.scanResults);
         }
@@ -712,7 +733,7 @@ async function _startScan() {
           const codes = AppState.seed.scanResults.map(r => r.code);
           fetchFundamentalsBatch(codes).then(fundMap => {
             fundMap.forEach((f, c) => { _srFundCache[c] = f ?? null; });
-            _renderResults(AppState.seed.scanResults);
+            // 不在此重繪，由 _scanYaoguForSeedResults 統一負責最終渲染
           }).catch(() => {});
           _scanYaoguForSeedResults(AppState.seed.scanResults);
         }
@@ -728,40 +749,27 @@ async function _startScan() {
 
 
 async function _scanYaoguForSeedResults(results) {
-  const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
-  const now = Date.now();
   let xCount = 0;
+  const codeSet = new Set(results.map(r => r.code));
   let allCache = [];
   try { allCache = await getAllSignalsCache(); } catch(e) {}
 
-  for (const item of results) {
-    try {
-      const cached  = allCache.find(r => r.code === item.code);
-      const isFresh = cached && (now - (cached.scannedAt ?? 0)) < THREE_DAYS;
-      let sigs = [];
-      if (isFresh) {
-        sigs = cached.signals ?? [];
-      } else {
-        sigs = await Promise.race([
-          scanOneCode(item.code, { silent: true }),
-          new Promise(res => setTimeout(() => res([]), 5000)),
-        ]);
-      }
-      const x1 = sigs.some(s => s.id === 'X1');
-      const x2 = sigs.some(s => s.id === 'X2');
-      const x5 = sigs.some(s => s.id === 'X5');
-      if (x1 || x2 || x5) {
-        _srYaoguMap.set(item.code, { x1, x2, x5, strongest: x2?'X2':x1?'X1':'X5' });
-        xCount++;
-      }
-    } catch(e) {
-      console.warn(`[seed-ui] 妖股掃描失敗 ${item.code}:`, e.message);
+  // 跟 theme-ui 一樣，不做 isFresh 判斷，直接全撈
+  allCache.forEach(row => {
+    if (!codeSet.has(row.code)) return;
+    const sigs = row.signals ?? [];
+    const x1 = sigs.some(s => s.id === 'X1');
+    const x2 = sigs.some(s => s.id === 'X2');
+    const x5 = sigs.some(s => s.id === 'X5');
+    const x6 = sigs.some(s => s.id === 'X6');
+    if (x1 || x2 || x5 || x6) {
+      _srYaoguMap.set(row.code, { x1, x2, x5, x6, strongest: x2?'X2':x1?'X1':x6?'X6':x5?'X5':'X5' });
+      xCount++;
     }
-  }
-  if (xCount > 0) {
-    _renderResults(results);
-    _showSeedYaoguAlert(xCount);
-  }
+  });
+
+  _renderResults(AppState.seed.scanResults ?? results);
+  if (xCount > 0) _showSeedYaoguAlert(xCount);
 }
 
 function _showSeedYaoguAlert(count) {
@@ -799,8 +807,11 @@ function _renderResults(items) {
       av = calcHealth(_s(a.miniCandles)) ?? -1;
       bv = calcHealth(_s(b.miniCandles)) ?? -1;
     } else if (_srSortKey === 'hl') {
-      av = calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null) ?? -1;
-      bv = calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null) ?? -1;
+      av = (a.miniCandles?.length >= 120 ? calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null) : null) ?? -1;
+      bv = (b.miniCandles?.length >= 120 ? calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null) : null) ?? -1;
+    } else if (_srSortKey === 'yaogu') {
+      const _yv = c => { const yg = _srYaoguMap.get(c); if (!yg) return 0; return yg.x2?3:yg.x1?2:yg.x5?1:0; };
+      av = _yv(a.code); bv = _yv(b.code);
     } else if (_srSortKey === 'chg') {
       av = a.chgPct ?? 0; bv = b.chgPct ?? 0;
     } else if (_srSortKey === 'price') {
@@ -819,7 +830,7 @@ function _renderResults(items) {
     { key: 'chg',   label: '漲跌幅' },
     { key: 'hs',    label: '短線健康' },
     { key: 'hl',    label: '長線健康' },
-    { key: 'yaogu', label: '妖股', noSort: true },
+    { key: 'yaogu', label: '妖股' },
     { key: 'chart', label: '走勢',  noSort: true },
     { key: 'add',   label: '',      noSort: true },
   ];
@@ -853,7 +864,7 @@ function _renderResults(items) {
       <td class="sr-tbl-td"><span class="sr-tbl-chg ${chgCls}">${chgStr}</span></td>
       <td class="sr-tbl-td">${healthBadge(hs, 'hg')}</td>
       <td class="sr-tbl-td">${healthBadge(hl, 'hg')}</td>
-      <td class="sr-tbl-td">${yg ? `<span class="sr-yaogu-pill sr-yaogu-pill--${yg.strongest.toLowerCase()}">${yg.strongest}</span>` : ''}</td>
+      <td class="sr-tbl-td">${yg ? ['X2','X1','X6','X5'].filter(id => yg[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}</td>
       <td class="sr-tbl-td"><canvas class="sr-mini-chart" height="36" data-code="${item.code}"></canvas></td>
       <td class="sr-tbl-td">
         <div class="sr-add-wrap">

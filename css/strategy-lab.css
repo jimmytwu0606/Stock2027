@@ -1,0 +1,551 @@
+/* strategy-lab.css — 策略實驗室樣式 */
+
+/* ══════════════════════════════════════════
+   Lab Toolbar
+   ══════════════════════════════════════════ */
+.lab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 42px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.lab-sub-btns {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.lab-sub-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .15s;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.lab-sub-btn:hover {
+  border-color: var(--border2);
+  color: var(--text);
+}
+
+.lab-sub-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(59, 130, 246, .07);
+}
+
+/* VVVIP 實驗室 tab 按鈕 — 金色調 */
+.hub-mode-btn--lab {
+  border-color: rgba(240, 180, 41, .4) !important;
+  color: #f0b429 !important;
+}
+
+.hub-mode-btn--lab:hover,
+.hub-mode-btn--lab.active {
+  border-color: #f0b429 !important;
+  color: #f0b429 !important;
+  background: rgba(240, 180, 41, .08) !important;
+}
+
+.lab-toolbar-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* ── Lab 控制區 ── */
+.lab-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lab-code-input {
+  width: 96px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.lab-code-input:focus {
+  border-color: var(--accent);
+}
+
+.lab-select {
+  height: 28px;
+  padding: 0 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+.lab-select:focus {
+  border-color: var(--accent);
+}
+
+.lab-run-btn {
+  height: 28px;
+  padding: 0 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .15s;
+}
+
+.lab-run-btn:hover  { opacity: .85; }
+.lab-run-btn:active { opacity: .7; }
+.lab-run-btn:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.lab-abort-btn {
+  height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--dn);
+  border-radius: 5px;
+  color: var(--dn);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lab-abort-btn:hover { background: rgba(38, 166, 154, .08); }
+
+/* ══════════════════════════════════════════
+   Pro Banner
+   ══════════════════════════════════════════ */
+.lab-pro-banner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  background: rgba(240, 180, 41, .07);
+  border-bottom: 1px solid rgba(240, 180, 41, .2);
+  color: #f0b429;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════
+   Progress Bar
+   ══════════════════════════════════════════ */
+.lab-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lab-progress-track {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.lab-progress-bar {
+  height: 3px;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width .25s ease;
+  width: 0%;
+}
+
+.lab-progress-text {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  min-width: 180px;
+}
+
+/* ══════════════════════════════════════════
+   Body & Panels
+   ══════════════════════════════════════════ */
+.lab-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.lab-panel {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Empty State ── */
+.lab-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 60px 20px;
+  color: var(--muted);
+  text-align: center;
+  flex: 1;
+}
+
+.lab-empty-state p {
+  font-size: 13px;
+  color: var(--text);
+  margin: 0;
+}
+
+.lab-empty-state p.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ══════════════════════════════════════════
+   KPI Cards
+   ══════════════════════════════════════════ */
+.lab-result-kpi {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.lab-kpi {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+
+.lab-kpi-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 5px;
+  white-space: nowrap;
+}
+
+.lab-kpi-val {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+
+/* ══════════════════════════════════════════
+   Result Title & Hint
+   ══════════════════════════════════════════ */
+.lab-result-title {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lab-result-hint {
+  font-size: 11px;
+  color: var(--muted);
+  padding-top: 4px;
+}
+
+.lab-copy-btn {
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all .12s;
+}
+
+.lab-copy-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ══════════════════════════════════════════
+   Table
+   ══════════════════════════════════════════ */
+.lab-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.lab-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lab-table th {
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--muted);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--bg2);
+}
+
+.lab-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lab-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.lab-table tbody tr:hover td {
+  background: var(--bg2);
+}
+
+/* ── Badges ── */
+.lab-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.lab-badge-win {
+  background: rgba(38, 166, 154, .12);
+  color: var(--dn);   /* 台股慣例：獲利顯示紅 */
+  border: 1px solid rgba(239, 83, 80, .2);
+  background: rgba(239, 83, 80, .08);
+  color: var(--up);
+}
+
+.lab-badge-loss {
+  background: rgba(38, 166, 154, .08);
+  color: var(--dn);
+  border: 1px solid rgba(38, 166, 154, .2);
+}
+
+/* ── 族群行 hover ── */
+.lab-ind-row:hover td {
+  background: var(--bg2);
+}
+
+.lab-ind-detail-btn {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .12s;
+}
+
+.lab-ind-detail-btn:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, .07);
+}
+
+/* ══════════════════════════════════════════
+   MC Result
+   ══════════════════════════════════════════ */
+.lab-mc-meta {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 0 8px;
+}
+
+/* ══════════════════════════════════════════
+   Industry Modal
+   ══════════════════════════════════════════ */
+.lab-modal-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.lab-modal {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 1060px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lab-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lab-modal-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.lab-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.lab-modal-close:hover { color: var(--text); background: var(--bg3); }
+
+.lab-modal-stats {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lab-modal-kpi-row {
+  display: flex;
+  gap: 12px;
+}
+
+.lab-modal-kpi {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 100px;
+}
+
+.lab-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+/* ── Modal 個股操作按鈕 ── */
+.lab-ind-mc-btn,
+.lab-ind-single-btn {
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 4px;
+  transition: all .12s;
+}
+
+.lab-ind-mc-btn {
+  color: #f0b429;
+  border-color: rgba(240, 180, 41, .35);
+}
+
+.lab-ind-mc-btn:hover {
+  background: rgba(240, 180, 41, .08);
+  border-color: #f0b429;
+}
+
+.lab-ind-single-btn {
+  color: var(--accent);
+  border-color: rgba(59, 130, 246, .35);
+}
+
+.lab-ind-single-btn:hover {
+  background: rgba(59, 130, 246, .07);
+  border-color: var(--accent);
+}
+
+/* ══════════════════════════════════════════
+   tabLab panel 佈局（對齊 tabHub）
+   ══════════════════════════════════════════ */
+#tabLab {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#tabLab.active {
+  display: flex;
+}
+
+/* ══════════════════════════════════════════
+   Responsive（窄螢幕微調）
+   ══════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .lab-toolbar {
+    height: auto;
+    min-height: 42px;
+    padding: 6px 10px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .lab-controls {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .lab-code-input { width: 80px; }
+
+  .lab-result-kpi {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .lab-modal {
+    max-height: 90vh;
+  }
+}

@@ -25,6 +25,8 @@
   <link rel="stylesheet" href="css/screener.css" />
   <link rel="stylesheet" href="css/pattern.css" />
   <link rel="stylesheet" href="css/seed.css" />
+  <link rel="stylesheet" href="css/screener-hub.css" />
+  <link rel="stylesheet" href="css/strategy-lab.css" />
   <link rel="stylesheet" href="css/search-card.css" />
   <link rel="stylesheet" href="css/additions.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -230,9 +232,8 @@
       <button class="main-tab"        data-tab="hotgroup">強勢族群</button>
       <button class="main-tab"        data-tab="theme">題材追蹤</button>
       <button class="main-tab"        data-tab="portfolio">庫存</button>
-      <button class="main-tab"        data-tab="screener">個股篩選</button>
-      <button class="main-tab"        data-tab="pattern">型態比對</button>
-      <button class="main-tab"        data-tab="seed">種子選股</button>
+      <button class="main-tab"        data-tab="hub" data-gate="tab_screener">選股篩選</button>
+      <button class="main-tab"        data-tab="lab" data-gate="tab_lab" id="mainTabLab" style="display:none">🔬 策略實驗室</button>
     </nav>
 
     <!-- ══ Tab：看盤 ══ -->
@@ -326,7 +327,7 @@
           <!-- Fixed 凍結：全視窗時顯示 -->
           <button class="ce-enter-btn" id="btnFixedChart" title="凍結 K 線（捲動說明文字時 K 線固定在頂部）" style="display:none">📌 Fixed</button>
           <!-- 蒙地卡羅模擬器 -->
-          <button class="ce-enter-btn" id="btnMonteCarlo" title="蒙地卡羅 K 線模擬">📈 模擬</button>
+          <button class="ce-enter-btn" id="btnMonteCarlo" title="蒙地卡羅 K 線模擬" style="display:none">📈 模擬</button>
           <!-- 強制刷新 K 線 -->
           <button class="ce-enter-btn" id="btnRefreshKline" title="強制刷新 K 線(跳過快取,重新從 Yahoo 抓)">⟳ 重整</button>
           <!-- 全視窗 -->
@@ -732,23 +733,45 @@
     </div>
 
         <!-- ══ Tab：選股篩選 ══ -->
-    <div class="tab-panel" id="tabScreener">
-      <div class="screener-wrap">
+    <div class="tab-panel" id="tabHub">
 
-        <!-- 控制欄 -->
-        <div class="sc-toolbar">
-          <span class="sc-toolbar-title">選股篩選</span>
-          <button class="sc-btn" id="screenerAddCond">＋ 新增條件</button>
-          <button class="sc-btn sc-btn-ghost" id="screenerClearConds">清除全部</button>
-          <div class="sc-toolbar-spacer"></div>
-          <button class="sc-btn" id="screenerSave">儲存組合</button>
-          <button class="sc-btn sc-btn-primary" id="screenerRun">開始篩選</button>
+      <!-- ── Hub Toolbar ── -->
+      <div class="hub-toolbar" id="hubToolbar">
+        <div class="hub-mode-btns">
+          <button class="hub-mode-btn active" data-hub="screener" id="hubBtnScreener">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M1 3h12M3 7h8M5 11h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            個股篩選
+          </button>
+          <button class="hub-mode-btn" data-hub="pattern" id="hubBtnPattern">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>
+            型態比對
+          </button>
+          <button class="hub-mode-btn" data-hub="seed" id="hubBtnSeed">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="5" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M4 11c0-2 6-2 6 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            種子選股
+          </button>
         </div>
+        <div class="hub-toolbar-spacer"></div>
+        <!-- 各模式設定 btn（由 JS 控制顯隱） -->
+        <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigScreener" style="display:none">⚙ 設定篩選</button>
+        <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigPattern" style="display:none">⚙ 設定型態</button>
+        <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigSeed" style="display:none">⚙ 設定種子</button>
+        <!-- 掃描後才出現 -->
+        <button class="sc-btn hub-action-btn" id="hubAddTrackBtn" style="display:none">＋ 加入追蹤</button>
+        <button class="sc-btn hub-action-btn" id="hubSaveResultBtn" style="display:none">💾 儲存結果</button>
+        <button class="sc-btn hub-action-btn" id="hubExportBtn" style="display:none">⬇ 匯出</button>
+      </div>
 
-        <!-- 狀態 / 進度 -->
-        <div class="sc-status-bar">
-          <span id="screenerStatus">新增篩選條件後點擊「開始篩選」</span>
-          <div class="sc-progress" id="screenerProgress">
+      <!-- ── Hub 子面板容器 ── -->
+      <div class="hub-body" id="hubBody">
+
+    <div class="hub-sub" id="hubSubScreener">
+      <div class="screener-wrap hub-screener-wrap">
+
+        <!-- 狀態 / 進度（全寬，modal 開始篩選後顯示） -->
+        <div class="sc-status-bar" id="screenerStatusBar">
+          <span id="screenerStatus"></span>
+          <div class="sc-progress" id="screenerProgress" style="display:none">
             <div class="sc-progress-track">
               <div class="sc-progress-fill" id="screenerProgressBar"></div>
             </div>
@@ -756,270 +779,91 @@
           </div>
         </div>
 
-        <!-- 主體 -->
-        <div class="sc-body">
+        <!-- 條件摘要列（顯示目前設定的條件 tags） -->
+        <div class="sc-cond-summary" id="screenerCondSummary" style="display:none">
+          <div class="sc-cond-tags" id="screenerCondTags"></div>
+          <button class="sc-btn sc-btn-ghost sc-cond-edit-btn" id="screenerCondEditBtn">編輯條件</button>
+          <button class="sc-btn sc-btn-ghost" id="screenerSaveResultBtn" style="display:none">💾 儲存結果</button>
+          <button class="sc-btn sc-btn-ghost" id="screenerAddAllToWlBtn" style="display:none">＋ 加入追蹤</button>
+        </div>
 
-          <!-- 左：條件面板 -->
-          <div class="sc-left">
+        <!-- 隱藏的舊版 DOM（供 screener-ui.js 內部使用，不顯示） -->
+        <div style="display:none">
+          <div id="screenerConditions"></div>
+          <div id="scPanelStrategyHidden"><div class="sc-strategy-list" id="strategyListHidden"></div></div>
+          <div id="strategyActiveBannerHidden"></div>
+          <div id="screenerSavedSets"></div>
+          <button id="screenerAddCond"></button>
+          <button id="screenerClearConds"></button>
+          <button id="screenerSave"></button>
+          <button id="screenerRun"></button>
+          <!-- screenerSaveResultBtn / screenerAddAllToWlBtn 已移至 sc-cond-summary -->
+        </div>
 
-            <!-- 左欄 Tab 切換 -->
-            <div class="sc-left-tabs">
-              <button class="sc-left-tab active" data-left-tab="custom">自訂條件</button>
-              <button class="sc-left-tab" data-left-tab="strategy">策略庫</button>
-            </div>
+        <!-- 命名輸入列 / 已載入備份提示列 -->
+        <div id="screenerSaveResultArea" style="display:none"></div>
 
-            <!-- 自訂條件面板 -->
-            <div class="sc-left-panel" id="scPanelCustom">
-             <div id="strategyActiveBanner"></div>
-              <div class="sc-cond-list" id="screenerConditions">
-                <div class="sc-empty-conds">尚未新增任何條件<br>點擊「＋ 新增條件」開始</div>
-              </div>
-            </div>
+        <!-- 全寬結果清單 -->
+        <div class="sc-results-wrap sc-results-full" id="screenerResults">
+          <div class="sc-results-empty">點擊右上角「⚙ 設定篩選」開始設定條件</div>
+        </div>
 
-            <!-- 策略庫面板 -->
-            <div class="sc-left-panel" id="scPanelStrategy" style="display:none">
-              <div class="sc-strategy-list" id="strategyList"></div>
-            </div>
+        <!-- 歷史備份清單 -->
+        <details class="saved-results-section">
+          <summary>📁 已儲存的篩選結果</summary>
+          <div id="screenerSavedList"></div>
+        </details>
 
-            <!-- 已儲存組合（兩個 tab 共用） -->
-            <div class="sc-saved-section">
-              <div class="sc-panel-title">已儲存的組合</div>
-              <div id="screenerSavedSets">
-                <div class="sc-saved-empty">尚無儲存的篩選組合</div>
-              </div>
-            </div>
-
-          </div>
-
-          <!-- 右：結果面板 -->
-          <div class="sc-right">
-            <div class="sc-result-toolbar">
-              <span class="sc-panel-title">篩選結果（點擊任一列 → 跳轉看盤）</span>
-              <button id="screenerSaveResultBtn" class="sc-btn" title="儲存篩選結果" style="display:none">
-                💾 儲存結果
-              </button>
-              <button id="screenerAddAllToWlBtn" class="sc-btn" title="全部加入追蹤清單" style="display:none">
-                ＋ 加入追蹤
-              </button>
-            </div>
-
-            <!-- 命名輸入列 / 已載入備份提示列（動態顯示） -->
-            <div id="screenerSaveResultArea" style="display:none"></div>
-
-            <div class="sc-results-wrap" id="screenerResults">
-              <div class="sc-results-empty">篩選結果將顯示於此</div>
-            </div>
-
-            <!-- 歷史備份清單 -->
-            <details class="saved-results-section">
-              <summary>📁 已儲存的篩選結果</summary>
-              <div id="screenerSavedList"></div>
-            </details>
-          </div>
-
-        </div><!-- /sc-body -->
       </div><!-- /screener-wrap -->
-    </div><!-- /tabScreener -->
+    </div><!-- /hubSubScreener -->
 
     <!-- ══ Tab：型態比對 ══ -->
-    <div class="tab-panel" id="tabPattern">
-      <div class="pattern-layout">
-
-        <!-- ── 左側：型態輸入 ── -->
-        <div class="pattern-input-panel">
-          <div class="pattern-input-panel-header">型態輸入</div>
-          <div id="patternDrawPanel">
-
-            <!-- 工具列：框選 / 手繪 切換 -->
-            <div class="pd-toolbar">
-              <div class="pd-mode-switch">
-                <button class="pd-mode-btn active" data-mode="draw">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor"
-                          stroke-width="1.2" stroke-linecap="round" fill="none"/>
-                  </svg>
-                  手繪
-                </button>
-                <button class="pd-mode-btn" data-mode="image">
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
-                    <circle cx="4.5" cy="5.5" r="1.2" stroke="currentColor" stroke-width="1"/>
-                    <path d="M1 9.5l3-2.5 2.5 2 2-2.5L13 9.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/>
-                  </svg>
-                  圖片
-                </button>
-              </div>
-            </div>
-            <div class="pd-meta" id="pdMeta">在下方畫布上繪製理想走勢</div>
-
-            <!-- 手繪 Canvas -->
-            <div class="pd-draw-wrap" id="pdDrawWrap">
-              <canvas id="pdCanvas" height="140"></canvas>
-              <button class="pd-clear-btn" id="pdClearBtn">清除</button>
-            </div>
-
-            <!-- 型態預覽（有範本時顯示） -->
-            <div class="pd-preview" id="pdPreview" style="display:none">
-              <div class="pd-preview-title">選取型態預覽</div>
-              <canvas id="pdPreviewCanvas" height="64"></canvas>
-              <div class="pd-preview-tags" id="pdPreviewTags"></div>
-            </div>
-
-            <!-- 掃描設定 -->
-            <div class="pd-settings">
-              <label>
-                <span>相似度門檻</span>
-                <input type="range" id="pdSimilarity" min="50" max="99" value="75" step="1">
-                <span id="pdSimilarityVal" class="pd-val-badge">75%</span>
-              </label>
-              <label>
-                <span>比對視窗</span>
-                <select id="pdWindow">
-                  <option value="10">10 根</option>
-                  <option value="15">15 根</option>
-                  <option value="20" selected>20 根</option>
-                  <option value="30">30 根</option>
-                  <option value="40">40 根</option>
-                </select>
-              </label>
-              <label>
-                <span>特徵模式</span>
-                <select id="pdFeatureMode">
-                  <option value="simple" selected>收盤價（快速）</option>
-                  <option value="multi">多維特徵（精準）</option>
-                </select>
-              </label>
-              <label>
-                <span>K線週期</span>
-                <select id="pdPeriod">
-                  <option value="1mo">1 個月</option>
-                  <option value="3mo" selected>3 個月</option>
-                  <option value="1y">1 年</option>
-                </select>
-              </label>
-            </div>
-
-            <!-- 股票範圍篩選 -->
-            <div class="pd-filter-section">
-              <div class="pd-filter-title">縮小掃描範圍</div>
-              <div class="pd-filter-row">
-                <label>
-                  <span>股價（元）</span>
-                  <div class="pd-range-inputs">
-                    <input type="number" id="pdPriceMin" placeholder="最低" min="0" step="1">
-                    <span class="pd-range-sep">—</span>
-                    <input type="number" id="pdPriceMax" placeholder="最高" min="0" step="1">
-                  </div>
-                </label>
-              </div>
-              <div class="pd-filter-row">
-                <label>
-                  <span>成交量（張）≥</span>
-                  <input type="number" id="pdVolumeMin" placeholder="不限" min="0" step="100">
-                </label>
-              </div>
-              <div class="pd-filter-row pd-filter-screener">
-                <label class="pd-checkbox-label">
-                  <input type="checkbox" id="pdFromScreener">
-                  <span>從「選股結果」掃描</span>
-                </label>
-                <span class="pd-screener-count" id="pdScreenerCount"></span>
-              </div>
-            </div>
-
-            <!-- 確認按鈕 -->
-            <button class="pd-confirm-btn" id="pdConfirmBtn" disabled>
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
-                <path d="M5 8l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              </svg>
-              開始掃描全市場
-            </button>
-
-            <!-- 圖片比對模式（預設隱藏，點擊「圖片」Tab 後顯示） -->
-            <div id="pdImageWrap" style="display:none"></div>
-
-          </div><!-- /patternDrawPanel -->
-        </div><!-- /pattern-input-panel -->
-
-        <!-- ── 右側：掃描結果 ── -->
-        <div class="pattern-result-panel">
-          <div class="pattern-result-header">比對結果</div>
-          <div id="patternResultPanel">
-
-            <!-- 進度 -->
-            <div class="pr-progress" id="prProgress" style="display:none">
-              <div class="pr-progress-bar-wrap">
-                <div class="pr-progress-bar" id="prProgressBar"></div>
-              </div>
-              <div class="pr-progress-meta">
-                <span id="prProgressText">準備中…</span>
-                <button class="pr-abort-btn" id="prAbortBtn">停止</button>
-              </div>
-            </div>
-
-            <!-- 彙總 -->
-            <div class="pr-summary" id="prSummary" style="display:none">
-              <div class="pr-summary-stat" id="prSumFound"></div>
-              <div class="pr-summary-stat" id="prSumScanned"></div>
-            </div>
-
-            <!-- 回測面板 -->
-            <div class="pr-backtest" id="prBacktest" style="display:none">
-              <div class="pr-backtest-header">
-                <span class="pr-backtest-title">歷史回測統計</span>
-                <label class="pr-hold-label">
-                  持有
-                  <select id="prHoldDays">
-                    <option value="3">3日</option>
-                    <option value="5" selected>5日</option>
-                    <option value="10">10日</option>
-                    <option value="20">20日</option>
-                  </select>
-                </label>
-              </div>
-              <div class="pr-backtest-stats" id="prBacktestStats"></div>
-              <div class="pr-dist-chart" id="prDistChart"></div>
-            </div>
-
-            <!-- 結果列表 header -->
-            <div class="pr-list-header" id="prListHeader" style="display:none">
-              <span>代號 / 名稱</span>
-              <span>相似度</span>
-              <span>近期走勢</span>
-            </div>
-
-            <!-- 結果列表 -->
-            <div class="pr-list" id="prList"></div>
-
-            <!-- 空狀態（掃描前） -->
-            <div class="pr-empty" id="prEmpty">
-              <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-                <circle cx="20" cy="20" r="13" stroke="var(--border2)" stroke-width="1.5"/>
-                <path d="M30 30l8 8" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round"/>
-                <path d="M14 20 Q17 13 20 17 Q23 21 26 13" stroke="var(--hint)"
-                      stroke-width="1.5" stroke-linecap="round" fill="none"/>
-              </svg>
-              <p>尚未開始掃描</p>
-              <p class="pr-empty-hint">先選取一段 K 線型態，再點擊「開始掃描全市場」</p>
-            </div>
-
-          </div><!-- /patternResultPanel -->
-        </div><!-- /pattern-result-panel -->
-
-      </div><!-- /pattern-layout -->
-    </div><!-- /tabPattern -->
-
-    <!-- ══ Tab：種子選股（Phase 4） ══ -->
-    <div class="tab-panel" id="tabSeed">
+    <div class="hub-sub" id="hubSubPattern">
 
       <!-- ── Toolbar ── -->
       <div class="seed-toolbar">
         <div class="seed-tb-left">
-          <div class="seed-mode-toggle" id="seedModeToggle">
-            <button class="seed-mode-btn active" data-mode="multi">多股模式</button>
-            <button class="seed-mode-btn" data-mode="single">單股模式</button>
-          </div>
+          <div class="seed-tb-chips" id="pdTbChips"></div>
+        </div>
+        <div class="seed-tb-right">
+          <span class="seed-tb-summary" id="prSummaryText"></span>
+          <span class="seed-tb-status" id="prProgressText" style="display:none"></span>
+          <button class="seed-tb-btn seed-tb-config" id="pdOpenConfig">⚙ 設定</button>
+          <button class="seed-tb-btn seed-tb-scan" id="pdScanBtn" disabled>▶ 開始掃描</button>
+          <button class="seed-tb-btn seed-tb-abort" id="prAbortBtn" style="display:none">■ 停止</button>
+        </div>
+      </div>
+
+      <!-- 進度條（全寬細線） -->
+      <div class="seed-progress" id="prProgress">
+        <div class="seed-progress-track">
+          <div class="seed-progress-bar" id="prProgressBar"></div>
+        </div>
+      </div>
+
+      <!-- 結果列表（全寬） -->
+      <div class="pr-fullresult" id="patternResultPanel">
+        <div class="seed-empty-state">
+          <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+            <circle cx="20" cy="20" r="13" stroke="var(--border2)" stroke-width="1.5"/>
+            <path d="M30 30l8 8" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M14 20 Q17 13 20 17 Q23 21 26 13" stroke="var(--hint)"
+                  stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          </svg>
+          <p>尚未開始掃描</p>
+          <p class="hint">點擊「⚙ 設定」繪製型態 → 「▶ 開始掃描」</p>
+        </div>
+      </div>
+
+    </div><!-- /hubSubPattern -->
+
+
+    <!-- ══ Tab：種子選股（Phase 4） ══ -->
+    <div class="hub-sub" id="hubSubSeed">
+
+      <!-- ── Toolbar ── -->
+      <div class="seed-toolbar">
+        <div class="seed-tb-left">
           <div class="seed-tb-chips" id="seedTbChips"></div>
           <div class="seed-tb-single" id="seedTbSingle" style="display:none">
             <span class="seed-tb-single-code" id="seedTbSingleCode">未設定</span>
@@ -1056,13 +900,367 @@
         </div>
       </div>
 
-    </div><!-- /tabSeed -->
+    </div><!-- /hubSubSeed -->
+
+      </div><!-- /hub-body -->
+    </div><!-- /tabHub -->
+
+    <!-- ══ Tab：策略實驗室（VVVIP / Pro 限定）══ -->
+    <div class="tab-panel" id="tabLab" style="display:none">
+
+      <!-- ── Lab 子頁 Toolbar ── -->
+      <div class="lab-toolbar" id="labToolbar">
+        <div class="lab-sub-btns">
+          <button class="lab-sub-btn active" data-lab="single" id="labBtnSingle">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M5 7h4M7 5v4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            單股回測
+          </button>
+          <button class="lab-sub-btn" data-lab="industry" id="labBtnIndustry">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11V6l3-3 3 3 3-4 3 4v5H1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+            族群回測
+          </button>
+          <button class="lab-sub-btn" data-lab="mc" id="labBtnMC">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
+            MC 模擬
+          </button>
+          <button class="lab-sub-btn" data-lab="compare" id="labBtnCompare">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11V4h3v7M5 11V2h3v9M9 11V6h3v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            策略比較
+          </button>
+        </div>
+        <div class="lab-toolbar-spacer"></div>
+        <!-- 單股回測控制 -->
+        <div class="lab-controls" id="labControlsSingle">
+          <input class="lab-code-input" id="labCodeInput" type="text" placeholder="輸入代號或股名" maxlength="10">
+          <span style="font-size:11px;color:var(--muted)">全策略分析，自動最佳持有天數</span>
+          <button class="lab-run-btn" id="labRunSingle">▶ 開始分析</button>
+        </div>
+        <!-- 族群回測控制 -->
+        <div class="lab-controls" id="labControlsIndustry" style="display:none;position:relative">
+          <button class="lab-copy-btn" id="labIndSettingBtn" style="font-size:12px;padding:3px 10px">⚙ 回測設定</button>
+          <button class="lab-run-btn" id="labRunIndustry">▶ 開始掃描</button>
+          <button class="lab-abort-btn" id="labAbortIndustry" style="display:none">■ 停止</button>
+        </div>
+        <!-- 族群回測設定 Panel -->
+        <div id="labIndSettingPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:780px;max-width:92vw;box-shadow:0 12px 48px rgba(0,0,0,.85)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size:13px;font-weight:500;color:var(--text)">回測設定</span>
+            <button id="labIndSettingClose" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
+          </div>
+          <!-- 持有天數 -->
+          <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px">持有天數</div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap" id="labIndHoldChecks">
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="5"  checked style="accent-color:#ef5350">5日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="10" checked style="accent-color:#ef5350">10日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="15" style="accent-color:#ef5350">15日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="20" checked style="accent-color:#ef5350">20日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="30" checked style="accent-color:#ef5350">30日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="60" style="accent-color:#ef5350">60日</label>
+            </div>
+          </div>
+          <!-- 族群選擇 -->
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:500;color:var(--text)">族群篩選</span>
+              <button id="labIndSelectAll"  class="lab-copy-btn" style="font-size:12px;padding:3px 10px">全選</button>
+              <button id="labIndSelectNone" class="lab-copy-btn" style="font-size:12px;padding:3px 10px">取消全選</button>
+              <span id="labIndSelectedCount" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+            <div id="labIndSectorChecks" style="max-height:300px;overflow-y:auto">
+              <span style="color:var(--muted);font-size:12px">載入族群中...</span>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+            <button id="labIndSettingConfirm" class="lab-run-btn" style="padding:5px 20px;font-size:13px">✓ 確定</button>
+          </div>
+        </div>
+        <!-- MC 控制 -->
+        <div class="lab-controls" id="labControlsMC" style="display:none">
+          <input class="lab-code-input" id="labMCCodeInput" type="text" placeholder="輸入代號 2330" maxlength="6">
+          <select class="lab-select" id="labMCBarsSelect">
+            <option value="10">模擬 10 日</option>
+            <option value="20">模擬 20 日</option>
+            <option value="30">模擬 30 日</option>
+          </select>
+          <button class="lab-run-btn" id="labRunMC">▶ 執行模擬</button>
+        </div>
+        <!-- 策略比較控制 -->
+        <div class="lab-controls" id="labControlsCompare" style="display:none">
+          <input class="lab-code-input" id="labCompareCodeInput" type="text" placeholder="2330 2454 6116" maxlength="40" style="width:180px">
+          <span style="font-size:11px;color:var(--muted)">多股空格分隔，最多5支</span>
+          <button class="lab-run-btn" id="labRunCompare">▶ 全策略分析</button>
+        </div>
+      </div>
+
+      <!-- ── Lab 進度條 ── -->
+      <div class="lab-progress" id="labProgress" style="display:none">
+        <div class="lab-progress-track">
+          <div class="lab-progress-bar" id="labProgressBar"></div>
+        </div>
+        <span class="lab-progress-text" id="labProgressText"></span>
+      </div>
+
+      <!-- ── Lab Pro 限制提示 ── -->
+      <div class="lab-pro-banner" id="labProBanner" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1l1.5 3.5 3.5.5-2.5 2.5.5 3.5L7 9.5 4 11l.5-3.5L2 5l3.5-.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        Pro 方案：每日可執行單股回測 1 次、族群回測 1 次。升級 VVVIP 解鎖完整功能。
+      </div>
+
+      <!-- ── Lab 主內容區 ── -->
+      <div class="lab-body" id="labBody">
+
+        <!-- 單股回測面板 -->
+        <div class="lab-panel" id="labPanelSingle">
+          <div class="lab-empty-state" id="labSingleEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <rect x="8" y="8" width="28" height="28" rx="3" stroke="var(--border2)" stroke-width="1.5"/>
+              <path d="M15 22h14M22 15v14" stroke="var(--hint)" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <p>輸入股票代號，選擇策略</p>
+            <p class="hint">系統從 R2 拉取 1 年 K 線，自動找出所有歷史觸發點</p>
+          </div>
+          <div class="lab-single-result" id="labSingleResult" style="display:none"></div>
+        </div>
+
+        <!-- 族群回測面板 -->
+        <div class="lab-panel" id="labPanelIndustry" style="display:none">
+          <div class="lab-empty-state" id="labIndustryEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M6 36V20l8-8 8 8 8-12 8 12v16H6z" stroke="var(--border2)" stroke-width="1.5" stroke-linejoin="round"/>
+              <circle cx="22" cy="26" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>點擊「▶ 開始掃描」</p>
+            <p class="hint">掃描全市場 1940 支股票，按族群統計 X6 歷史勝率</p>
+          </div>
+          <div class="lab-industry-result" id="labIndustryResult" style="display:none"></div>
+        </div>
+
+        <!-- MC 模擬面板 -->
+        <div class="lab-panel" id="labPanelMC" style="display:none">
+          <div class="lab-empty-state" id="labMCEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M6 36 Q14 12 22 22 Q30 32 38 8" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+              <circle cx="22" cy="22" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>輸入代號，執行 MC 模擬</p>
+            <p class="hint">500 條路徑模擬，顯示未來 N 日報酬分布與支撐壓力</p>
+          </div>
+          <div class="lab-mc-result" id="labMCResult" style="display:none"></div>
+        </div>
+
+        <!-- 策略比較面板 -->
+        <div class="lab-panel" id="labPanelCompare" style="display:none">
+          <div class="lab-empty-state" id="labCompareEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M8 36V20h6v16M18 36V12h6v24M28 36V24h6v12" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <p>輸入代號，比較所有策略</p>
+            <p class="hint">一次跑所有策略，自動找最佳持有天數</p>
+          </div>
+          <div class="lab-compare-result" id="labCompareResult" style="display:none"></div>
+        </div>
+
+      </div><!-- /lab-body -->
+
+      <!-- ── 族群個股 Modal ── -->
+      <div class="lab-modal-bg" id="labIndModalBg" style="display:none">
+        <div class="lab-modal" id="labIndModal">
+          <div class="lab-modal-header">
+            <span class="lab-modal-title" id="labIndModalTitle">半導體業 — 個股排行</span>
+            <button class="lab-modal-close" id="labIndModalClose">✕</button>
+          </div>
+          <div class="lab-modal-stats" id="labIndModalStats"></div>
+          <div class="lab-modal-body" id="labIndModalBody"></div>
+        </div>
+      </div>
+
+    </div><!-- /tabLab -->
+
+    <!-- ══ 個股篩選設定 Modal ══ -->
+    <div class="seed-modal-bg" id="screenerModalBg" style="display:none">
+      <div class="seed-modal" id="screenerModal">
+        <div class="seed-modal-header">
+          <div class="sc-left-tabs">
+            <button class="sc-left-tab active" data-left-tab="custom">自訂條件</button>
+            <button class="sc-left-tab" data-left-tab="strategy">策略庫</button>
+          </div>
+          <button class="seed-modal-close" id="screenerModalClose">✕</button>
+        </div>
+        <div class="seed-modal-body" id="screenerModalBody">
+
+          <!-- 自訂條件 tab -->
+          <div id="scPanelCustom">
+            <div class="seed-modal-section">
+              <div id="strategyActiveBanner"></div>
+              <div class="sc-cond-list" id="screenerConditionsModal">
+                <div class="sc-empty-conds">尚未新增任何條件<br>點擊下方「＋ 新增條件」</div>
+              </div>
+              <button class="sc-btn" id="screenerAddCondModal" style="margin-top:8px">＋ 新增條件</button>
+            </div>
+            <div class="seed-modal-section">
+              <div class="seed-section-title">已儲存的組合</div>
+              <div id="screenerSavedSetsModal">
+                <div class="sc-saved-empty">尚無儲存的篩選組合</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 策略庫 tab -->
+          <div id="scPanelStrategy" style="display:none">
+            <div class="seed-modal-section">
+              <div class="sc-strategy-list" id="strategyList"></div>
+            </div>
+          </div>
+
+          <!-- 底部範圍篩選（兩個 tab 共用） -->
+          <div class="seed-modal-section" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+            <div class="seed-section-title">掃描範圍</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <span>股價（元）</span>
+                <div class="seed-range-inputs">
+                  <input type="number" id="screenerPriceMin" placeholder="最低" min="0" step="1">
+                  <span class="seed-range-sep">—</span>
+                  <input type="number" id="screenerPriceMax" placeholder="最高" min="0" step="1">
+                </div>
+              </div>
+              <div class="seed-filter-row">
+                <span>成交量（張）≥</span>
+                <input type="number" id="screenerVolumeMin" placeholder="不限" min="0" step="100">
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /seed-modal-body -->
+        <div class="seed-modal-footer" style="display:flex;align-items:center;gap:8px">
+          <button class="sc-btn sc-btn-ghost" id="screenerModalSave">儲存組合</button>
+          <button class="sc-btn sc-btn-ghost" id="screenerModalClear">清除全部</button>
+          <div style="flex:1"></div>
+          <button class="seed-modal-start" id="screenerModalRun">▶ 開始篩選</button>
+        </div>
+      </div>
+    </div><!-- /screenerModalBg -->
+
+    <!-- ══ 型態比對設定 Modal ══ -->
+    <div class="seed-modal-bg" id="pdModalBg" style="display:none">
+      <div class="seed-modal" id="pdModal">
+        <div class="seed-modal-header">
+          <div class="pd-mode-switch" id="pdModeToggle">
+            <button class="pd-mode-btn active" data-mode="draw">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" fill="none"/>
+              </svg>
+              手繪
+            </button>
+            <button class="pd-mode-btn" data-mode="image">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="2" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>
+                <circle cx="4.5" cy="5.5" r="1.2" stroke="currentColor" stroke-width="1"/>
+                <path d="M1 9.5l3-2.5 2.5 2 2-2.5L13 9.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" fill="none"/>
+              </svg>
+              圖片
+            </button>
+          </div>
+          <button class="seed-modal-close" id="pdModalClose">✕</button>
+        </div>
+        <div class="seed-modal-body">
+
+          <!-- 手繪區 -->
+          <div id="pdDrawArea">
+            <div class="pd-meta" id="pdMeta">在下方畫布上繪製理想走勢</div>
+            <div class="pd-draw-wrap" id="pdDrawWrap">
+              <canvas id="pdCanvas" height="140"></canvas>
+              <button class="pd-clear-btn" id="pdClearBtn">清除</button>
+            </div>
+            <div class="pd-preview" id="pdPreview" style="display:none">
+              <div class="pd-preview-title">型態預覽</div>
+              <canvas id="pdPreviewCanvas" height="64"></canvas>
+              <div class="pd-preview-tags" id="pdPreviewTags"></div>
+            </div>
+          </div>
+
+          <!-- 圖片區 -->
+          <div id="pdImageWrap" style="display:none"></div>
+
+          <!-- 設定 -->
+          <div class="seed-modal-section">
+            <div class="seed-section-title">掃描設定</div>
+            <div class="pd-settings">
+              <label>
+                <span>相似度門檻</span>
+                <input type="range" id="pdSimilarity" min="50" max="99" value="75" step="1">
+                <span id="pdSimilarityVal" class="pd-val-badge">75%</span>
+              </label>
+              <label>
+                <span>比對視窗</span>
+                <select id="pdWindow">
+                  <option value="10">10 根</option>
+                  <option value="15">15 根</option>
+                  <option value="20" selected>20 根</option>
+                  <option value="30">30 根</option>
+                  <option value="40">40 根</option>
+                </select>
+              </label>
+              <label>
+                <span>特徵模式</span>
+                <select id="pdFeatureMode">
+                  <option value="simple" selected>收盤價（快速）</option>
+                  <option value="multi">多維特徵（精準）</option>
+                </select>
+              </label>
+              <label>
+                <span>K線週期</span>
+                <select id="pdPeriod">
+                  <option value="1mo">1 個月</option>
+                  <option value="3mo" selected>3 個月</option>
+                  <option value="1y">1 年</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <!-- 篩選範圍 -->
+          <div class="seed-modal-section">
+            <div class="seed-section-title">縮小掃描範圍</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <span>股價（元）</span>
+                <div class="seed-range-inputs">
+                  <input type="number" id="pdPriceMin" placeholder="最低" min="0" step="1">
+                  <span class="seed-range-sep">—</span>
+                  <input type="number" id="pdPriceMax" placeholder="最高" min="0" step="1">
+                </div>
+              </div>
+              <div class="seed-filter-row">
+                <span>成交量（張）≥</span>
+                <input type="number" id="pdVolumeMin" placeholder="不限" min="0" step="100">
+              </div>
+              <div class="seed-filter-row">
+                <label class="seed-checkbox-label">
+                  <input type="checkbox" id="pdFromScreener">
+                  <span>從「選股結果」掃描</span>
+                </label>
+                <span class="pd-screener-count" id="pdScreenerCount"></span>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /seed-modal-body -->
+        <div class="seed-modal-footer">
+          <button class="seed-modal-start" id="pdModalStart" disabled>▶ 開始掃描</button>
+        </div>
+      </div>
+    </div><!-- /pdModalBg -->
 
     <!-- ══ 種子選股設定 Modal ══ -->
     <div class="seed-modal-bg" id="seedModalBg" style="display:none">
       <div class="seed-modal" id="seedModal">
         <div class="seed-modal-header">
-          <span class="seed-modal-title" id="seedModalTitle">種子選股設定</span>
+          <div class="seed-mode-toggle" id="seedModeToggle">
+            <button class="seed-mode-btn active" data-mode="multi">多股模式</button>
+            <button class="seed-mode-btn" data-mode="single">單股模式</button>
+          </div>
           <button class="seed-modal-close" id="seedModalClose">✕</button>
         </div>
         <div class="seed-modal-body">
@@ -1590,6 +1788,7 @@
 <!-- 新增遊戲只要在這裡加一行 -->
 <script src="js/splash-game.js" defer></script>
 <script type="module" src="js/main.js"></script>
+
 <script type="module">
   import { initHelpModal } from './js/help/help-loader.js';
   initHelpModal();

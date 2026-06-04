@@ -1,0 +1,203 @@
+/* screener-hub.css — 選股篩選 Hub 統一入口樣式 */
+
+/* ── Hub Toolbar ─────────────────────────────────────────── */
+.hub-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 42px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.hub-mode-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.hub-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .15s;
+  line-height: 1;
+}
+
+.hub-mode-btn:hover {
+  border-color: var(--border2);
+  color: var(--text);
+}
+
+.hub-mode-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(59, 130, 246, .07);
+}
+
+.hub-toolbar-spacer {
+  flex: 1;
+}
+
+.hub-action-btn {
+  font-size: 12px !important;
+  padding: 4px 12px !important;
+}
+
+/* ── Hub Body ────────────────────────────────────────────── */
+#tabHub {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+}
+
+#tabHub.active {
+  display: flex;
+}
+
+.hub-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Hub Sub Panels ──────────────────────────────────────── */
+.hub-sub {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* screener-wrap 要填滿 hub-sub */
+.hub-sub .screener-wrap {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* pattern / seed 的 toolbar 和 body 也要填滿 */
+.hub-sub .seed-toolbar {
+  flex-shrink: 0;
+}
+
+.hub-sub .pr-fullresult,
+.hub-sub .seed-result-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* ── Tab panel 覆寫：tabHub 用 hub 自己的顯示邏輯 ─────── */
+/* 確保 .tab-panel.active 不干擾 hub-sub 顯隱 */
+#tabHub .hub-sub {
+  /* hub-sub 由 JS 控制 display，不走 .tab-panel.active */
+}
+
+/* ── 個篩 Modal tabs（複用 sc-left-tab，補 modal 容器樣式）── */
+#screenerModal .sc-left-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+
+/* ── 條件摘要列 ──────────────────────────────────────── */
+.sc-cond-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.sc-cond-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+
+.sc-cond-tag-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(59,130,246,.12);
+  color: var(--accent);
+  border: 1px solid rgba(59,130,246,.2);
+}
+
+.sc-cond-edit-btn {
+  font-size: 11px !important;
+  padding: 3px 10px !important;
+  flex-shrink: 0;
+}
+
+/* ── 全寬結果清單 ─────────────────────────────────────── */
+.hub-screener-wrap {
+  display: flex !important;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sc-results-full {
+  flex: 1;
+  overflow-y: auto;
+  position: relative;
+}
+
+.sc-status-bar {
+  flex-shrink: 0;
+}
+
+/* ── 篩選 Loading Overlay ────────────────────────────── */
+.sc-scanning-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.sc-scanning-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: scSpin .8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes scSpin {
+  to { transform: rotate(360deg); }
+}
+
+.sc-scanning-status {
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+}
+
+.sc-scanning-count {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .02em;
+}

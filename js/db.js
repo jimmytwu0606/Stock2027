@@ -43,7 +43,7 @@ export async function initDB() {
 
   // 先讀現有版本，確保不會用比現有低的版本開啟
   const currentVer = await _getCurrentVersion();
-  const DB_VERSION = Math.max(currentVer, 9);  // 至少 9，不降版
+  const DB_VERSION = Math.max(currentVer, 10);  // v10: 加 industry_cache
 
   _db = await new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -108,6 +108,12 @@ export async function initDB() {
         const s = db.createObjectStore('userThemes', { keyPath: 'id' });
         s.createIndex('order', 'order', { unique: false });
       }
+
+      // ⭐ Phase 10: 族群回測快取
+      // keyPath = 'industry_backtest'（單筆，存整份結果）
+      if (!db.objectStoreNames.contains('industry_cache')) {
+        db.createObjectStore('industry_cache', { keyPath: 'key' });
+      }
     };
 
     req.onblocked = () => {
@@ -128,7 +134,7 @@ export async function initDB() {
   // ── 自動補建缺失的 store(處理 DB 升版沒跑到 onupgradeneeded 的情況)
   const required = ['watchlistGroups','screenerSets','screenerResults','seedSets','config',
                     'annotations','kline_cache','signals_cache','stockInfo','portfolio','portfolio_lists',
-                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes'];
+                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes','industry_cache'];
   const missing  = required.filter(s => !_db.objectStoreNames.contains(s));
   if (missing.length > 0) {
     console.warn('[db] 缺失 stores:', missing, '→ 自動升版補建');
@@ -170,6 +176,8 @@ export async function initDB() {
           } else if (s === 'userThemes') {
             const st = db.createObjectStore('userThemes', { keyPath: 'id' });
             st.createIndex('order', 'order', { unique: false });
+          } else if (s === 'industry_cache') {
+            db.createObjectStore('industry_cache', { keyPath: 'key' });
           } else {
             db.createObjectStore(s, { keyPath: 'id' });
           }
@@ -362,7 +370,10 @@ export async function getAllScreenerResults() {
 
 export async function saveScreenerResult(record) {
   await dbPut('screenerResults', record);
-  _fsPushOne('screenerResults', record);
+  // Firestore 只存 metadata，不含 results（避免超過 1MB 限制）
+  const { results: _omit, ...meta } = record;
+  meta.resultCount = Array.isArray(record.results) ? record.results.length : 0;
+  _fsPushOne('screenerResults', meta);
 }
 
 export async function deleteScreenerResult(id) {
@@ -748,10 +759,15 @@ export async function syncLocalToCloud() {
         // annotations 用 code 當 id,其餘 store 沿用 row.id
         const docId = row.id || row.code;
         if (!docId) continue;
+        // screenerResults：只上傳 metadata，不含 results（避免超過 Firestore 1MB 限制）
+        let payload = row;
+        if (idb === 'screenerResults') {
+          const { results: _omit, ...meta } = row;
+          meta.resultCount = Array.isArray(row.results) ? row.results.length : 0;
+          payload = meta;
+        }
         // ⚠️ Firestore 不接受 undefined,需先清除(null 可以,undefined 不行)
-        //   舊版直接傳 row,某個 group 有 undefined 欄位就整批雲端寫不上去
-        //   修法:跟 _fsPushOne 一樣用 JSON.stringify replacer 把 undefined 轉 null
-        const clean = JSON.parse(JSON.stringify(row, (k, v) => v === undefined ? null : v));
+        const clean = JSON.parse(JSON.stringify(payload, (k, v) => v === undefined ? null : v));
         await fsSet(uid, fs, docId, clean);
       }
     } catch (err) {
@@ -1204,5 +1220,37 @@ export async function reorderUserThemes(orderList) {
     const updated = { ...existing, order, updatedAt: Date.now() };
     await wrap(tx('userThemes', 'readwrite').put(updated));
     _fsPushOne('userThemes', updated);
+  }
+}
+
+// ─── 族群回測快取（industry_cache）v10 ──────────────────────────────────────
+// 以日期為 key，儲存整份族群回測結果，當天再跑直接用快取
+
+export async function getIndustryCache(key = 'industry_backtest') {
+  await initDB();
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const rec = await wrap(tx('industry_cache').get(key));
+    if (!rec) return null;
+    if (rec.date !== today) return null;
+    return rec.data;
+  } catch (e) {
+    console.warn('[db] getIndustryCache failed:', e.message);
+    return null;
+  }
+}
+
+export async function setIndustryCache(data, key = 'industry_backtest') {
+  await initDB();
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    await wrap(tx('industry_cache', 'readwrite').put({
+      key,
+      date: today,
+      data,
+      savedAt: Date.now(),
+    }));
+  } catch (e) {
+    console.warn('[db] setIndustryCache failed:', e.message);
   }
 }

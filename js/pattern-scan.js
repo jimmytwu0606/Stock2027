@@ -149,11 +149,10 @@ export async function* runPatternScan(templateCandles, opts = {}) {
       done++;
 
       if (result === '429') {
-        // 遇到無法恢復的 429，記錄並繼續
         consecutive429++;
         yield { type: 'progress', phase: 'scan', message: `掃描中（rate limit，放慢中）…`, done, total };
       } else {
-        consecutive429 = Math.max(0, consecutive429 - 1); // 成功則遞減
+        consecutive429 = Math.max(0, consecutive429 - 1);
         if (result && result.score >= similarity) {
           results.push(result);
           yield { type: 'result', item: result, done, total };
@@ -161,14 +160,13 @@ export async function* runPatternScan(templateCandles, opts = {}) {
         yield { type: 'progress', phase: 'scan', message: `掃描中…`, done, total };
       }
 
-      // 動態間隔：
-      //   fromCache=true → 幾乎 0ms，短讓出主執行緒
-      //   429 → 指數退避
-      //   cache miss（打了 API）→ 200ms 保護 proxy
       const isCacheHit = result?.fromCache === true;
-      const baseDelay  = result === '429' ? 800 : isCacheHit ? 20 : 200;
+      const baseDelay  = result === '429' ? 800 : isCacheHit ? 0 : 200;
       const extraDelay = Math.min(consecutive429 * 1000, 8000);
-      await _sleep(baseDelay + extraDelay);
+      if (baseDelay + extraDelay > 0) await _sleep(baseDelay + extraDelay);
+
+      // 每 10 筆強制讓出主執行緒，避免 DTW 計算連續佔用導致畫面凍結
+      if (done % 10 === 0) await _yieldToUI();
     }
   }
 
@@ -224,10 +222,13 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
 
       const { score } = findBestMatch(templateCandles, recent);
 
+      const pd = priceMap?.[code] ?? {};
       return {
         code,
-        name:        getChineseName(code) ?? priceMap?.[code]?.name ?? '',
+        name:        getChineseName(code) ?? pd.name ?? '',
         score:       Math.round(score * 10) / 10,
+        price:       isFinite(pd.price)  ? pd.price  : 0,
+        chgPct:      isFinite(pd.chgPct) ? pd.chgPct : 0,
         startIdx:    0,
         endIdx:      windowSize - 1,
         candles:     recent,
@@ -257,4 +258,9 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
 // ─── 工具 ──────────────────────────────────────────────────
 function _sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 強制讓出主執行緒一次，讓瀏覽器有機會更新畫面
+function _yieldToUI() {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }

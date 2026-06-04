@@ -1099,6 +1099,11 @@ export function applyStrategy(strategyId) {
   document.dispatchEvent(new CustomEvent('showToast', {
     detail: `✓ 已套用「${strategy.name}」，共 ${total} 個條件（含預過濾）`,
   }));
+
+  // 通知 screener-ui 記錄當前策略名稱（供結果列顯示）
+  document.dispatchEvent(new CustomEvent('strategyApplied', {
+    detail: { name: strategy.name, id: strategy.id },
+  }));
 }
 
 function _bindLeftTabs() {

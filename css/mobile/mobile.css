@@ -122,10 +122,14 @@ body {
 .tab-panel {
   display: none;
   flex-direction: column;
-  height: calc(100dvh - var(--m-nav-h) - var(--m-safe-bottom));
+  height: 100dvh;
+  padding-top: 52px;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
 }
 .tab-panel::-webkit-scrollbar { display: none; }
 .tab-panel.active {
@@ -351,31 +355,23 @@ body {
 .mobile-tabbar { display: none !important; }
 
 /* 左側固定導航 */
-#mSideNav {
-  position: fixed;
-  left: 0; top: 0; bottom: 0; width: 64px;
-  background: #161b22;
-  border-right: 0.5px solid #21262d;
-  z-index: 150;
-  display: flex; flex-direction: column;
-  align-items: center; padding: 16px 0; gap: 4px;
+/* ── 常駐 topbar ── */
+#mTopbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 300;
+  background: #161b22; border-bottom: 0.5px solid #21262d;
+  display: none; align-items: center; justify-content: space-between; padding: 0 16px;
 }
-#mSideNav.m-nav-hidden { display: none !important; }
-.msn-btn {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 10px 8px;
-  background: none; border: none; cursor: pointer;
-  border-radius: 10px; width: 52px;
-  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', sans-serif;
-}
-.msn-icon { font-size: 22px; line-height: 1; }
-.msn-label { font-size: 10px; color: #8b949e; }
-.msn-btn.active .msn-label { color: #58a6ff; }
-.msn-btn.active { background: rgba(88,166,255,.1); }
+@media (max-width: 767px) { #mTopbar { display: flex; } }
+#mMenuBtn { background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; padding: 4px 8px 4px 0; flex-shrink: 0; }
+#mTopbarBrand { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; }
+#mTopbarLogo { width: 22px; height: 22px; }
+#mTopbarName { font-size: 15px; font-weight: 700; color: #e6edf3; letter-spacing: 0.3px; }
+#mTopbarRight { font-size: 13px; color: #8b949e; }
 
-/* 內容區左移 64px */
-.main { margin-left: 64px !important; width: calc(100% - 64px) !important; }
-.tab-panel { height: 100dvh !important; }
+/* 內容區頂部留 topbar 高度 */
+.main { margin-top: 0 !important; }
+.m-has-topbar { /* padding handled by tab-panel */ }
+.tab-panel { height: 100dvh !important; padding-top: 52px; box-sizing: border-box; }
 
 /* 個股全頁 — 個股模式時左側 nav 會隱藏，直接從 left:0 撐全屏 */
 #mStockPage {
@@ -391,12 +387,12 @@ body {
 }
 
 /* topbar 和抽屜直接掛 body，不繼承 mStockPage pointer-events */
-#mStockTopbar,
-#mStockDrawer,
+#mTopbar-stock,
+#mDrawer,
 #mDrawerOverlay { pointer-events: all; }
 
 /* 個股模式 topbar — 預設隱藏，開個股頁才顯示 */
-#mStockTopbar {
+#mTopbar-stock {
   display: none;
   position: fixed;
   top: 0; left: 0; right: 0; height: 48px;
@@ -405,7 +401,7 @@ body {
   align-items: center;
   padding: 0 12px; gap: 10px; z-index: 210;
 }
-body.m-stock-open #mStockTopbar { display: flex; }
+body.m-stock-open #mTopbar-stock { display: flex; }
 #mDrawerToggle, #mStockClose {
   background: none; border: none;
   font-size: 20px; color: #8b949e;
@@ -420,7 +416,7 @@ body.m-stock-open #mStockTopbar { display: flex; }
 body.m-stock-open #tabChart,
 #tabChart.m-stock-active {
   position: fixed !important;
-  top: 48px !important; left: 0 !important;
+  top: 52px !important; left: 0 !important;
   right: 0 !important; bottom: 0 !important;
   z-index: 200 !important;
   display: flex !important; flex-direction: column !important;
@@ -467,19 +463,19 @@ body.m-stock-open .sh-price     { font-size: 22px; }
 /* 抽屜 overlay */
 #mDrawerOverlay {
   display: none; position: fixed;
-  top: 48px; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,.55); z-index: 205;
+  top: 52px; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,.55); z-index: 305;
 }
 #mDrawerOverlay.open { display: block; }
 
 /* 側邊抽屜 */
-#mStockDrawer {
+#mDrawer {
   display: none; position: fixed;
-  top: 48px; left: 0; bottom: 0; width: 200px;
+  top: 52px; left: 0; bottom: 0; width: 200px;
   background: #161b22; border-right: 0.5px solid #30363d;
-  z-index: 206; overflow-y: auto; flex-direction: column; padding: 6px 0;
+  z-index: 306; overflow-y: auto; flex-direction: column; padding: 6px 0;
 }
-#mStockDrawer.open { display: flex; }
+#mDrawer.open { display: flex; }
 .m-drawer-item {
   display: flex; align-items: center; gap: 10px;
   padding: 13px 16px; background: none; border: none;
@@ -523,31 +519,17 @@ body.m-stock-open .sh-price     { font-size: 22px; }
 /* mwl 自選清單樣式 → 見 mobile-watchlist.css */
 
 /* 設定頁 */
-#tabMobileSettings { display: none; flex-direction: column; overflow-y: auto; padding: 0; }
+#tabMobileSettings {
+  display: none; flex-direction: column;
+  width: 100%; max-width: 100vw; box-sizing: border-box;
+  overflow-y: auto; overflow-x: hidden; padding: 0;
+}
 #tabMobileSettings.active { display: flex; }
+#tabMobileSettings * { box-sizing: border-box; min-width: 0; }
+#tabMobileSettings > div { width: 100%; max-width: 100%; }
 .msettings-header { padding: 14px 16px; font-size: 16px; font-weight: 600; color: #e6edf3; border-bottom: 0.5px solid #21262d; background: #161b22; flex-shrink: 0; }
 
-/* ══ nav 收合（點已 active btn 收起）══ */
-#mSideNav {
-  transition: width 0.25s cubic-bezier(0.4,0,0.2,1);
-  overflow: hidden;
-}
-#mSideNav.m-nav-collapsed {
-  width: 0 !important;
-  padding: 0 !important;
-  border-right: none !important;
-}
-/* main 區塊隨 nav 收合 */
-.main.m-nav-collapsed {
-  margin-left: 0 !important;
-  width: 100% !important;
-  transition: margin-left 0.25s cubic-bezier(0.4,0,0.2,1),
-              width 0.25s cubic-bezier(0.4,0,0.2,1);
-}
-.main {
-  transition: margin-left 0.25s cubic-bezier(0.4,0,0.2,1),
-              width 0.25s cubic-bezier(0.4,0,0.2,1);
-}
+
 
 /* ══ 自選清單兩欄小卡覆蓋 ══ */
 /* 舊的單列 wl-row 隱藏，改用 mwl 體系 */
