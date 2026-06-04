@@ -1240,6 +1240,16 @@ export async function getIndustryCache(key = 'industry_backtest') {
   }
 }
 
+export async function listIndustryCacheKeys() {
+  await initDB();
+  try {
+    const allKeys = await wrap(tx('industry_cache').getAllKeys());
+    return (allKeys ?? []).filter(k => k !== '__heatmap_meta__');
+  } catch (e) {
+    return [];
+  }
+}
+
 export async function setIndustryCache(data, key = 'industry_backtest') {
   await initDB();
   const today = new Date().toISOString().slice(0, 10);
@@ -1252,5 +1262,85 @@ export async function setIndustryCache(data, key = 'industry_backtest') {
     }));
   } catch (e) {
     console.warn('[db] setIndustryCache failed:', e.message);
+  }
+}
+
+// ─── 族群熱力圖 Meta — Firebase 雙寫（跨裝置保留排行榜摘要）─────────────────
+// 只存輕量 meta（不含完整 K 線），方便換裝置時知道「上次跑了哪些族群」
+// 完整 indStats（含 stocks sigs）仍只在 IndexedDB
+
+/**
+ * 讀取熱力圖 meta（先查 Firebase，再 fallback IndexedDB）
+ * @returns {{ cacheKey, savedAt, indStatsMeta, date } | null}
+ */
+export async function getHeatmapMeta() {
+  // 優先查 Firebase（登入狀態）
+  if (currentUser) {
+    try {
+      const data = await fsGet(currentUser.uid, 'lab_state', 'heatmap_meta');
+      if (data) return data;
+    } catch (e) {
+      console.warn('[db] getHeatmapMeta Firebase failed:', e.message);
+    }
+  }
+  // fallback: IndexedDB
+  await initDB();
+  try {
+    const rec = await wrap(tx('industry_cache').get('__heatmap_meta__'));
+    return rec ?? null;
+  } catch (e) {
+    console.warn('[db] getHeatmapMeta IDB failed:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 儲存熱力圖 meta（同步寫 Firebase + IndexedDB）
+ * @param {object[]} indStats  完整族群陣列（會自動去除 stocks 欄位存 meta）
+ * @param {string} cacheKey
+ */
+export async function saveHeatmapMeta(indStats, cacheKey) {
+  const today = new Date().toISOString().slice(0, 10);
+  // 輕量 meta：去掉 stocks（K 線訊號），保留統計欄位
+  const indStatsMeta = indStats.map(({ ind, wr, ret, cnt, stockCount, avgVolRatio, avgVol }) => ({
+    ind, wr, ret, cnt, stockCount, avgVolRatio, avgVol,
+  }));
+
+  // 額外計算近30日熱度 heatMap（讓重開頁面後 badge 仍可顯示）
+  const now = Date.now();
+  const MS30 = 30 * 86400000;
+  const heatMap = {};
+  indStats.forEach(({ ind, stocks }) => {
+    let recentCnt = 0, vrSum = 0, vrCnt = 0;
+    Object.values(stocks).forEach(data => {
+      (data.sigs ?? []).forEach(sig => {
+        const d = new Date((sig.date ?? '').replace(/\//g, '-'));
+        if (now - d.getTime() <= MS30) {
+          recentCnt++;
+          if (sig.volRatio != null) { vrSum += sig.volRatio; vrCnt++; }
+        }
+      });
+    });
+    const avgVr = vrCnt > 0 ? vrSum / vrCnt : 1;
+    const heat  = recentCnt * Math.min(avgVr, 5);
+    heatMap[ind] = { heat: +heat.toFixed(1), cnt: recentCnt, avgVr: +avgVr.toFixed(2) };
+  });
+
+  const payload = { cacheKey, savedAt: Date.now(), date: today, indStatsMeta, heatMap };
+
+  // IDB（快速）
+  await initDB();
+  try {
+    await wrap(tx('industry_cache', 'readwrite').put({ key: '__heatmap_meta__', ...payload }));
+  } catch (e) {
+    console.warn('[db] saveHeatmapMeta IDB failed:', e.message);
+  }
+  // Firebase（跨裝置）
+  if (currentUser) {
+    try {
+      await fsSet(currentUser.uid, 'lab_state', 'heatmap_meta', payload);
+    } catch (e) {
+      console.warn('[db] saveHeatmapMeta Firebase failed:', e.message);
+    }
   }
 }

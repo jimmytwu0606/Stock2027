@@ -494,12 +494,24 @@ function _bindIndustryRun() {
   });
 
   selectAll?.addEventListener('click', () => {
-    checksEl.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+    checksEl.querySelectorAll('.sector-tile').forEach(tile => {
+      tile.querySelector('input[type=checkbox]').checked = true;
+      tile.dataset.checked = 'true';
+      tile.style.border = '2px solid rgba(239,83,80,.7)';
+      const mark = tile.querySelector('span');
+      if (mark) mark.style.display = '';
+    });
     _updateSectorCount(countEl, checksEl);
   });
 
   selectNone?.addEventListener('click', () => {
-    checksEl.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    checksEl.querySelectorAll('.sector-tile').forEach(tile => {
+      tile.querySelector('input[type=checkbox]').checked = false;
+      tile.dataset.checked = 'false';
+      tile.style.border = '2px solid rgba(255,255,255,.08)';
+      const mark = tile.querySelector('span');
+      if (mark) mark.style.display = 'none';
+    });
     _updateSectorCount(countEl, checksEl);
   });
 }
@@ -625,15 +637,48 @@ async function _populateSectorChecks(checksEl, countEl) {
   if (!checksEl) return;
 
   if (!_industryMap) {
-    checksEl.innerHTML = '<span style="color:var(--muted);font-size:11px">載入族群中...</span>';
+    checksEl.innerHTML = '<span style="color:var(--muted);font-size:13px">載入族群中...</span>';
     _industryMap = await _loadIndustryMap();
   }
 
-  const heatMap  = _getSectorHeatMap();
-  const hasHeat  = Object.keys(heatMap).length > 0;
+  const heatMap   = _getSectorHeatMap();
+  const hasHeat   = Object.keys(heatMap).length > 0;
   const allSectors = [...new Set(Object.values(_industryMap))].sort();
 
-  // 分類快選列（橫排一行）
+  // 排序狀態（預設熱→冷）
+  if (typeof checksEl._sortAsc === 'undefined') checksEl._sortAsc = false;
+
+  function _sortedSectors() {
+    return [...allSectors].sort((a, b) => {
+      const ha = heatMap[a]?.heat ?? -1;
+      const hb = heatMap[b]?.heat ?? -1;
+      return checksEl._sortAsc ? ha - hb : hb - ha;
+    });
+  }
+
+  // 熱力背景色（純色階，不用 icon）
+  function _tileColor(heat) {
+    if (!hasHeat)    return 'rgba(255,255,255,.04)';
+    if (heat >= 10)  return 'rgba(239,68,68,.55)';
+    if (heat >= 6)   return 'rgba(251,146,60,.45)';
+    if (heat >= 3)   return 'rgba(234,179,8,.38)';
+    if (heat >= 1)   return 'rgba(148,163,184,.18)';
+    if (heat > 0)    return 'rgba(59,130,246,.22)';
+    return 'rgba(37,99,235,.28)';
+  }
+  function _tileBorder(heat, checked) {
+    if (!checked) return '2px solid rgba(255,255,255,.08)';
+    if (heat >= 6)  return '2px solid rgba(239,83,80,.9)';
+    return '2px solid rgba(239,83,80,.7)';
+  }
+  function _tileText(heat) {
+    if (!hasHeat) return 'var(--muted)';
+    if (heat >= 3)  return '#fff';
+    if (heat >= 1)  return 'rgba(255,255,255,.7)';
+    return 'rgba(255,255,255,.55)';
+  }
+
+  // 分類快選列
   const groupBtns = Object.keys(SECTOR_GROUPS).map(g => {
     const inGroup = SECTOR_GROUPS[g].filter(s => allSectors.includes(s));
     const avgHeat = inGroup.length
@@ -645,16 +690,26 @@ async function _populateSectorChecks(checksEl, countEl) {
     </button>`;
   }).join('');
 
-  // checkbox（依熱度排序，字體 13px）
-  const sortedSectors = [...allSectors].sort((a, b) =>
-    (heatMap[b]?.heat ?? 0) - (heatMap[a]?.heat ?? 0));
-
-  const checkboxes = sortedSectors.map(s => {
-    const badge = hasHeat ? _heatBadge(heatMap[s]) : '';
-    return `<label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer;padding:2px 0">
-      <input type="checkbox" value="${s}" checked style="accent-color:#ef5350;width:14px;height:14px">${s}${badge}
-    </label>`;
-  }).join('');
+  function _renderTiles(sortedList, checkedSet) {
+    return sortedList.map(s => {
+      const heat    = heatMap[s]?.heat ?? (hasHeat ? 0 : -1);
+      const checked = checkedSet.has(s);
+      const bg      = _tileColor(heat);
+      const border  = _tileBorder(heat, checked);
+      const tc      = _tileText(heat);
+      const checkMark = checked
+        ? `<span style="position:absolute;top:3px;right:5px;font-size:10px;color:rgba(255,255,255,.9)">✓</span>`
+        : '';
+      return `<div class="sector-tile" data-sector="${s}" data-checked="${checked}"
+        style="position:relative;padding:7px 8px;border-radius:6px;background:${bg};border:${border};
+               cursor:pointer;text-align:center;font-size:12px;font-weight:500;color:${tc};
+               transition:transform .1s,box-shadow .1s;user-select:none"
+        title="${s}${hasHeat && heatMap[s] ? '｜近30日訊號'+heatMap[s].cnt+'筆，量比'+heatMap[s].avgVr+'x' : ''}">
+        ${checkMark}${s}
+        <input type="checkbox" value="${s}" ${checked ? 'checked' : ''} style="display:none">
+      </div>`;
+    }).join('');
+  }
 
   const warningBanner = !hasHeat ? `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(240,180,41,.08);border:0.5px solid rgba(240,180,41,.3);border-radius:6px;margin-bottom:10px">
@@ -662,42 +717,90 @@ async function _populateSectorChecks(checksEl, countEl) {
       <span style="font-size:13px;color:#f0b429">先跑一次<b>全市場掃描</b>，即可顯示各族群近期熱度，協助快速篩選</span>
     </div>` : '';
 
+  const sortLabel = checksEl._sortAsc ? '↑ 冷→熱' : '↓ 熱→冷';
+  const allChecked = allSectors.every(s => true); // 預設全選
+  const checkedSet = new Set(allSectors); // 初始全選
+
   checksEl.innerHTML = `
     <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       ${groupBtns}
     </div>
     ${warningBanner}
-    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px 8px">
-      ${checkboxes}
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px">
+      <button id="sectorSortBtn" style="font-size:12px;padding:2px 10px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer">${sortLabel}</button>
     </div>
-    ${hasHeat ? `<div style="margin-top:10px;padding:6px 10px;background:rgba(255,255,255,.03);border-radius:6px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-      <span style="color:var(--text);font-size:13px">熱</span>
-      <span style="color:#fca5a5;font-size:14px">🔥</span><span style="opacity:.4">&gt;</span>
-      <span style="color:#fdba74;font-size:13px;font-weight:700">↑</span><span style="opacity:.4">&gt;</span>
-      <span style="color:#fde68a;font-size:13px;font-weight:700">○</span><span style="opacity:.4">&gt;</span>
-      <span style="color:#94a3b8;font-size:13px;font-weight:700">·</span><span style="opacity:.4">&gt;</span>
-      <span style="color:#93c5fd;font-size:13px;font-weight:700">↓</span><span style="opacity:.4">&gt;</span>
-      <span style="color:#60a5fa;font-size:14px">❄</span>
-      <span style="color:var(--text);font-size:13px">冷</span>
-      <span style="margin-left:6px;font-size:13px;opacity:.45">近30日訊號密度 × 均量比</span>
+    <div id="sectorTileGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:5px">
+      ${_renderTiles(_sortedSectors(), checkedSet)}
+    </div>
+    ${hasHeat ? `<div style="margin-top:10px;padding:5px 10px;background:rgba(255,255,255,.03);border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--text)">熱</span>
+      ${['rgba(239,68,68,.55)','rgba(251,146,60,.45)','rgba(234,179,8,.38)','rgba(148,163,184,.18)','rgba(59,130,246,.22)','rgba(37,99,235,.28)'].map(c =>
+        `<div style="width:20px;height:10px;border-radius:3px;background:${c}"></div>`).join('<span style="color:var(--muted);opacity:.4;font-size:11px">&gt;</span>')}
+      <span style="font-size:12px;color:var(--text)">冷</span>
+      <span style="font-size:11px;color:var(--muted);opacity:.5;margin-left:4px">近30日訊號密度 × 均量比</span>
     </div>` : ''}`;
+
+  // 恢復已儲存的勾選狀態
+  const savedChecks = [...checksEl.querySelectorAll('input[type=checkbox]')];
+  // （初始全選，不需額外操作）
+
+  // 排序按鈕
+  checksEl.querySelector('#sectorSortBtn')?.addEventListener('click', () => {
+    checksEl._sortAsc = !checksEl._sortAsc;
+    const btn = checksEl.querySelector('#sectorSortBtn');
+    if (btn) btn.textContent = checksEl._sortAsc ? '↑ 冷→熱' : '↓ 熱→冷';
+    const grid = checksEl.querySelector('#sectorTileGrid');
+    if (!grid) return;
+    const curChecked = new Set(
+      [...grid.querySelectorAll('.sector-tile[data-checked="true"]')].map(t => t.dataset.sector)
+    );
+    grid.innerHTML = _renderTiles(_sortedSectors(), curChecked);
+    _bindTiles(grid, countEl, checksEl);
+  });
+
+  function _bindTiles(grid, countEl, checksEl) {
+    grid.querySelectorAll('.sector-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        const s = tile.dataset.sector;
+        const cb = tile.querySelector('input[type=checkbox]');
+        const nowChecked = tile.dataset.checked === 'true';
+        const nextChecked = !nowChecked;
+        cb.checked = nextChecked;
+        tile.dataset.checked = nextChecked;
+        // 更新邊框
+        const heat = heatMap[s]?.heat ?? (hasHeat ? 0 : -1);
+        tile.style.border = _tileBorder(heat, nextChecked);
+        // 更新打勾標示
+        const mark = tile.querySelector('span');
+        if (mark) mark.style.display = nextChecked ? '' : 'none';
+        _updateSectorCount(countEl, checksEl);
+      });
+    });
+  }
+
+  _bindTiles(checksEl.querySelector('#sectorTileGrid'), countEl, checksEl);
 
   // 分類按鈕點擊 → 勾選該分類
   checksEl.querySelectorAll('.sector-group-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const group = btn.dataset.group;
       const targets = SECTOR_GROUPS[group] ?? [];
-      // 判斷目前是否全選 → 切換
-      const boxes = checksEl.querySelectorAll('input[type=checkbox]');
-      const groupBoxes = [...boxes].filter(cb => targets.includes(cb.value));
-      const allChecked = groupBoxes.every(cb => cb.checked);
-      groupBoxes.forEach(cb => { cb.checked = !allChecked; });
+      const grid = checksEl.querySelector('#sectorTileGrid');
+      if (!grid) return;
+      const tiles = [...grid.querySelectorAll('.sector-tile')].filter(t => targets.includes(t.dataset.sector));
+      const allChk = tiles.every(t => t.dataset.checked === 'true');
+      tiles.forEach(t => {
+        const cb = t.querySelector('input[type=checkbox]');
+        const next = !allChk;
+        cb.checked = next;
+        t.dataset.checked = next;
+        const heat = heatMap[t.dataset.sector]?.heat ?? (hasHeat ? 0 : -1);
+        t.style.border = _tileBorder(heat, next);
+        const mark = t.querySelector('span');
+        if (mark) mark.style.display = next ? '' : 'none';
+      });
       _updateSectorCount(countEl, checksEl);
     });
-  });
-
-  checksEl.querySelectorAll('input[type=checkbox]').forEach(cb => {
-    cb.addEventListener('change', () => _updateSectorCount(countEl, checksEl));
   });
 
   _updateSectorCount(countEl, checksEl);
@@ -810,6 +913,10 @@ async function _startIndustryBacktest() {
       _renderIndustryResult(resultEl, { indStats: cached });
       resultEl.style.display = '';
       dengToast('✓ 使用今日快取結果');
+      // 快取命中也補寫 Firebase meta（確保跨裝置同步）
+      saveHeatmapMeta(cached, cacheKey).catch(e =>
+        console.warn('[lab] saveHeatmapMeta(cache) failed:', e.message)
+      );
       return;
     }
 
@@ -928,13 +1035,10 @@ async function _startIndustryBacktest() {
 
     // ── 存入 IndexedDB 快取 + Firebase meta ──────────────────────────
     await setIndustryCache(indStats, cacheKey);
-    // 只有這次族群數 ≥ 上次 meta 才更新（防止單族群小測試蓋掉全市場大結果）
-    getHeatmapMeta().then(prevMeta => {
-      const prevCount = prevMeta?.indStatsMeta?.length ?? 0;
-      if (indStats.length >= prevCount) {
-        saveHeatmapMeta(indStats, cacheKey).catch(() => {});
-      }
-    }).catch(() => saveHeatmapMeta(indStats, cacheKey).catch(() => {}));
+    // 無條件寫入 Firebase meta（heatMap 跨裝置同步）
+    saveHeatmapMeta(indStats, cacheKey).catch(e =>
+      console.warn('[lab] saveHeatmapMeta failed:', e.message)
+    );
 
     _lastIndustryResult = indStats;
     _renderIndustryResult(resultEl, { indStats });
