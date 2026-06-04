@@ -1239,38 +1239,16 @@ function initPhase7() {
 
 // ── 自選清單 toolbar 初始化 ─────────────────────────────────────────────────
 function _initWatchlistToolbar() {
-  // 下拉選單開關
-  const menuBtn  = document.getElementById('wlMenuBtn');
-  const dropdown = document.getElementById('wlDropdown');
-  if (menuBtn && dropdown) {
-    const _closeMenu = () => {
-      dropdown.classList.remove('open');
-      menuBtn.setAttribute('aria-expanded', 'false');
-    };
-    menuBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = dropdown.classList.toggle('open');
-      menuBtn.setAttribute('aria-expanded', String(isOpen));
-    });
-    dropdown.addEventListener('click', (e) => {
-      // 補充資訊清單按鈕不關選單（由按鈕自己處理）
-      if (e.target.closest('#watchlistSiListBtn')) return;
-      setTimeout(_closeMenu, 80);
-    });
-    document.addEventListener('click', (e) => {
-      if (!document.getElementById('wlMenuWrap')?.contains(e.target)) _closeMenu();
-    });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') _closeMenu(); });
+  // 讓 watchlist.js 設定 Modal 的搜尋框可以用 main.js 的 _searchStocks
+  window.__searchStocks = _searchStocks;
 
-    // 補充資訊清單按鈕
-    const siListBtn = document.getElementById('watchlistSiListBtn');
-    if (siListBtn) {
-      siListBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _closeMenu();
-        window.__showSiListPanel?.();
-      });
-    }
+  // ⚙ 設定按鈕 → 開啟 watchlist 設定 Modal
+  const settingsBtn = document.getElementById('wlSettingsBtn');
+  if (settingsBtn && !settingsBtn.dataset.bound) {
+    settingsBtn.dataset.bound = '1';
+    settingsBtn.addEventListener('click', () => {
+      window.__openWatchlistSettings?.();
+    });
   }
 
   // 更新按鈕：報價 + 燈號 合一

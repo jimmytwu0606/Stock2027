@@ -102,11 +102,13 @@ export async function initWatchlist() {
     await saveGroup(def);
   }
 
-  await _ensureDefaultIndices();
+  // ★ 不再自動塞預設指數，改由設定 Modal 的市場追蹤狀態控制
+  await _syncMarketTracking();
   AppState.watchlistGroups = _groups;
   renderWatchlist();
   _bindSidebarEvents();
-  window.__showSiListPanel = _showSiListPanel;
+  window.__showSiListPanel      = _showSiListPanel;
+  window.__openWatchlistSettings = openWatchlistSettings;
 
   if (!document.body.dataset.signalWlBound) {
     document.body.dataset.signalWlBound = '1';
@@ -168,35 +170,61 @@ export async function reloadWatchlist() {
     _groups = [def];
     await saveGroup(def);
   }
-  // ⚠️ 不可在此呼叫 _ensureDefaultIndices：
-  //   雲端下載後若 defGroup 沒有指數代號（因為使用者已把它們移到大盤群組），
-  //   會一直重複塞入 → 無性繁殖。只有 initWatchlist（首次安裝）才補預設。
+  // ⚠️ 不可在此呼叫 _syncMarketTracking（會重複寫 IndexedDB）。
+  //   市場追蹤同步只在 initWatchlist 時執行一次。
   AppState.watchlistGroups = _groups;
   renderWatchlist();
 }
 
-// ─── 預設指數 ─────────────────────────────────────────────────────────────────
+// ─── 市場追蹤（使用者自選，取代舊版自動塞預設指數）──────────────────────────
+// ⚠️ 踩雷備忘：_ensureDefaultIndices 已永久移除（2026-06-05）。
+//   舊版在 initWatchlist 自動把加權/道瓊/費半塞入預設清單，造成無性繁殖。
+//   現在改由 localStorage('wl_market_prefs') 控制，預設全 false，不自動塞任何東西。
 
-const _DEFAULT_INDICES = [
-  { code: '^TWII', name: '加權指數' },
-  { code: '^DJI',  name: '道瓊指數' },
-  { code: '^SOX',  name: '費城半導體' },
+const _MARKET_OPTIONS = [
+  { key: 'twii',  code: '^TWII',   name: '加權指數'  },
+  { key: 'dji',   code: '^DJI',    name: '道瓊指數'  },
+  { key: 'sox',   code: '^SOX',    name: '費城半導體' },
+  { key: 'txf',   code: 'TXF1.TW', name: '台指期夜盤' },
 ];
 
-async function _ensureDefaultIndices() {
-  // ⚠️ 只在 initWatchlist（首次安裝/全空）時呼叫，reloadWatchlist 不可呼叫此函式。
-  // 查重範圍改為「全部群組」：使用者若已把指數移到大盤群組，就不再塞入 defGroup。
+function _loadMarketPrefs() {
+  try { return JSON.parse(localStorage.getItem('wl_market_prefs') ?? '{}'); }
+  catch { return {}; }
+}
+
+function _saveMarketPrefs(prefs) {
+  localStorage.setItem('wl_market_prefs', JSON.stringify(prefs));
+}
+
+/** 根據偏好 diff，把勾選的加入預設清單、取消的移除（不管在哪個群組） */
+async function _syncMarketTracking() {
+  const prefs    = _loadMarketPrefs();
   const defGroup = _groups.find(g => g.name.includes('預設')) ?? _groups[0];
   if (!defGroup) return;
+
   let changed = false;
-  for (const idx of _DEFAULT_INDICES) {
-    const existsAnywhere = _groups.some(g => g.stocks.some(s => s.code === idx.code));
-    if (!existsAnywhere) {
-      defGroup.stocks.push({ code: idx.code, name: idx.name });
+  for (const opt of _MARKET_OPTIONS) {
+    const want      = !!prefs[opt.key];
+    const existsAny = _groups.some(g => g.stocks.some(s => s.code === opt.code));
+
+    if (want && !existsAny) {
+      // 勾選但清單裡還沒有 → 加入預設清單
+      defGroup.stocks.push({ code: opt.code, name: opt.name });
       changed = true;
+    } else if (!want && existsAny) {
+      // 取消勾選 → 從所有群組移除
+      for (const g of _groups) {
+        const before = g.stocks.length;
+        g.stocks = g.stocks.filter(s => s.code !== opt.code);
+        if (g.stocks.length !== before) changed = true;
+      }
     }
   }
-  if (changed) await saveGroup(defGroup);
+
+  if (changed) {
+    await Promise.all(_groups.map(g => saveGroup(g)));
+  }
 }
 
 // ─── v3: Sparkline 資料層 ──────────────────────────────────────────────────────
@@ -935,23 +963,6 @@ function _handleGroupClick(e) {
 let _importFileInput = null;
 
 function _bindSidebarEvents() {
-  const addGroupBtn = document.getElementById('watchlistAddGroup');
-  const importBtn   = document.getElementById('watchlistImportBtn');
-  const siListBtn   = document.getElementById('watchlistSiListBtn');
-
-  if (addGroupBtn && !addGroupBtn.dataset.bound) {
-    addGroupBtn.dataset.bound = '1';
-    addGroupBtn.addEventListener('click', () => _promptCreateGroup());
-  }
-  if (importBtn && !importBtn.dataset.bound) {
-    importBtn.dataset.bound = '1';
-    importBtn.addEventListener('click', () => _triggerImport());
-  }
-  if (siListBtn && !siListBtn.dataset.bound) {
-    siListBtn.dataset.bound = '1';
-    siListBtn.addEventListener('click', () => { _closeAllDropdowns(); _showSiListPanel(); });
-  }
-
   // ── v3: 點 dropdown 外部時關閉所有 dropdown ──────────────────
   if (!document.body.dataset.wlDdBound) {
     document.body.dataset.wlDdBound = '1';
@@ -963,115 +974,432 @@ function _bindSidebarEvents() {
   }
 }
 
-// ─── 補充資訊清單面板 ──────────────────────────────────────────────────────────
+// ─── 設定 Modal ───────────────────────────────────────────────────────────────
 
-function _showSiListPanel() {
-  // 收集所有有 stockInfo 的個股
+let _settingsActiveTab = 'add';
+
+export function openWatchlistSettings(defaultTab) {
+  if (defaultTab) _settingsActiveTab = defaultTab;
+  _injectSettingsStyles();
+  _renderSettingsModal();
+}
+
+function _injectSettingsStyles() {
+  if (document.getElementById('wl-settings-style')) return;
+  const s = document.createElement('style');
+  s.id = 'wl-settings-style';
+  s.textContent = `
+    .wls-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.7); z-index: 99998;
+      align-items: center; justify-content: center; padding: 16px;
+    }
+    .wls-overlay.open { display: flex; }
+    .wls-modal {
+      background: #161b22; border: 0.5px solid rgba(255,255,255,.12);
+      border-radius: 16px; width: 100%; max-width: 380px;
+      max-height: 88vh; display: flex; flex-direction: column;
+      box-shadow: 0 24px 64px rgba(0,0,0,.7);
+      animation: wls-in .18s ease;
+    }
+    @keyframes wls-in {
+      from { opacity:0; transform: scale(.94) translateY(8px); }
+      to   { opacity:1; transform: scale(1)  translateY(0); }
+    }
+    .wls-header {
+      display: flex; align-items: center; padding: 16px 16px 0;
+      gap: 8px; flex-shrink: 0;
+    }
+    .wls-title { font-size: 15px; font-weight: 600; color: #e8e8ea; flex: 1; }
+    .wls-close {
+      background: none; border: none; color: #8b8d93;
+      font-size: 18px; cursor: pointer; padding: 2px 6px; line-height: 1;
+      border-radius: 6px;
+    }
+    .wls-close:hover { background: rgba(255,255,255,.08); color: #e8e8ea; }
+    .wls-tabs {
+      display: flex; gap: 2px; padding: 12px 16px 0; flex-shrink: 0;
+      border-bottom: 0.5px solid rgba(255,255,255,.06);
+    }
+    .wls-tab {
+      background: none; border: none; font-size: 12px; font-weight: 500;
+      color: #8b8d93; cursor: pointer; padding: 6px 10px; border-radius: 6px 6px 0 0;
+      border-bottom: 2px solid transparent; margin-bottom: -0.5px; transition: color .15s;
+    }
+    .wls-tab:hover { color: #cdd0d4; }
+    .wls-tab.active { color: #e8e8ea; border-bottom-color: #ef5350; }
+    .wls-body { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
+    .wls-section { margin-bottom: 20px; }
+    .wls-section-title {
+      font-size: 10px; font-weight: 600; color: #8b8d93;
+      text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px;
+    }
+    .wls-input-row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .wls-input {
+      flex: 1; background: rgba(255,255,255,.06); border: 0.5px solid rgba(255,255,255,.1);
+      border-radius: 8px; padding: 8px 10px; font-size: 13px; color: #e8e8ea;
+      outline: none; transition: border-color .15s;
+    }
+    .wls-input:focus { border-color: rgba(255,255,255,.25); }
+    .wls-btn {
+      background: rgba(255,255,255,.09); border: 0.5px solid rgba(255,255,255,.12);
+      border-radius: 8px; color: #cdd0d4; font-size: 12px; font-weight: 500;
+      padding: 0 12px; cursor: pointer; white-space: nowrap; transition: background .15s;
+    }
+    .wls-btn:hover { background: rgba(255,255,255,.15); }
+    .wls-btn-primary { background: #ef5350; border-color: #ef5350; color: #fff; }
+    .wls-btn-primary:hover { background: #e53935; }
+    .wls-suggest {
+      background: #1c2128; border: 0.5px solid rgba(255,255,255,.1);
+      border-radius: 8px; overflow: hidden; margin-bottom: 8px; display: none;
+    }
+    .wls-suggest.open { display: block; }
+    .wls-sug-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; cursor: pointer; font-size: 12px;
+    }
+    .wls-sug-item:hover { background: rgba(255,255,255,.05); }
+    .wls-sug-code { color: #e8e8ea; font-family: monospace; min-width: 42px; }
+    .wls-sug-name { color: #8b8d93; }
+    .wls-market-grid { display: flex; flex-direction: column; gap: 6px; }
+    .wls-market-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 8px;
+      background: rgba(255,255,255,.04); cursor: pointer;
+      transition: background .15s;
+    }
+    .wls-market-row:hover { background: rgba(255,255,255,.07); }
+    .wls-toggle {
+      width: 34px; height: 20px; border-radius: 10px; position: relative;
+      background: rgba(255,255,255,.15); transition: background .2s; flex-shrink: 0;
+      border: none; cursor: pointer; padding: 0;
+    }
+    .wls-toggle::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #fff; transition: transform .2s;
+    }
+    .wls-toggle.on { background: #ef5350; }
+    .wls-toggle.on::after { transform: translateX(14px); }
+    .wls-market-info { flex: 1; }
+    .wls-market-name { font-size: 13px; color: #cdd0d4; }
+    .wls-market-code { font-size: 10px; color: #8b8d93; font-family: monospace; }
+    .wls-group-sel {
+      width: 100%; background: rgba(255,255,255,.06);
+      border: 0.5px solid rgba(255,255,255,.1);
+      border-radius: 8px; padding: 8px 10px; font-size: 13px;
+      color: #e8e8ea; outline: none; margin-bottom: 8px;
+      appearance: none; cursor: pointer;
+    }
+    .wls-io-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px; border-radius: 8px;
+      background: rgba(255,255,255,.04); margin-bottom: 6px;
+    }
+    .wls-io-icon { font-size: 18px; }
+    .wls-io-info { flex: 1; }
+    .wls-io-title { font-size: 13px; color: #cdd0d4; }
+    .wls-io-desc  { font-size: 11px; color: #8b8d93; }
+    /* si list inside modal */
+    .wls-si-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 4px; border-bottom: 0.5px solid rgba(255,255,255,.05);
+      cursor: pointer; border-radius: 4px;
+    }
+    .wls-si-row:hover { background: rgba(255,255,255,.04); }
+    .wls-si-code { font-size: 13px; font-weight: 500; color: #e8eaed; font-family: monospace; min-width: 44px; }
+    .wls-si-name { font-size: 12px; color: #c9d1d9; flex: 1; }
+    .wls-si-empty { font-size: 13px; color: #8b8d93; padding: 20px 0; text-align: center; }
+    .wls-pill {
+      font-size: 10px; font-weight: 500; padding: 2px 6px;
+      border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+    }
+    .wls-pill-ok    { background: #ef5350; color: #fff; }
+    .wls-pill-warn  { background: #f59e0b; color: #fff; }
+    .wls-pill-stale { background: #26a69a; color: #fff; }
+  `;
+  document.head.appendChild(s);
+}
+
+function _renderSettingsModal() {
+  // 建立或重用 overlay
+  let overlay = document.getElementById('wls-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'wls-overlay';
+    overlay.className = 'wls-overlay';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) _closeSettings();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay.classList.contains('open')) _closeSettings();
+    });
+  }
+
+  overlay.innerHTML = `
+    <div class="wls-modal" role="dialog" aria-modal="true">
+      <div class="wls-header">
+        <span class="wls-title">自選清單設定</span>
+        <button class="wls-close" id="wlsClose">✕</button>
+      </div>
+      <div class="wls-tabs">
+        <button class="wls-tab${_settingsActiveTab==='add'    ? ' active' : ''}" data-wls-tab="add">新增</button>
+        <button class="wls-tab${_settingsActiveTab==='manage' ? ' active' : ''}" data-wls-tab="manage">清單管理</button>
+        <button class="wls-tab${_settingsActiveTab==='si'     ? ' active' : ''}" data-wls-tab="si">補充資訊</button>
+      </div>
+      <div class="wls-body" id="wlsBody"></div>
+    </div>`;
+
+  overlay.classList.add('open');
+  document.getElementById('wlsClose')?.addEventListener('click', _closeSettings);
+  overlay.querySelectorAll('.wls-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      _settingsActiveTab = tab.dataset.wlsTab;
+      overlay.querySelectorAll('.wls-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      _renderSettingsBody();
+    });
+  });
+  _renderSettingsBody();
+}
+
+function _closeSettings() {
+  const overlay = document.getElementById('wls-overlay');
+  if (overlay) overlay.classList.remove('open');
+}
+
+function _renderSettingsBody() {
+  const body = document.getElementById('wlsBody');
+  if (!body) return;
+  if (_settingsActiveTab === 'add')    _renderTabAdd(body);
+  if (_settingsActiveTab === 'manage') _renderTabManage(body);
+  if (_settingsActiveTab === 'si')     _renderTabSi(body);
+}
+
+// ── Tab 1: 新增 ──────────────────────────────────────────────────────────────
+
+function _renderTabAdd(body) {
+  const prefs = _loadMarketPrefs();
+  body.innerHTML = `
+    <div class="wls-section">
+      <div class="wls-section-title">新增個股</div>
+      <div class="wls-input-row">
+        <input class="wls-input" id="wlsStockInput" placeholder="代號或股名" autocomplete="off" spellcheck="false">
+        <select class="wls-btn" id="wlsGroupSel" style="padding:0 8px;border-radius:8px;background:rgba(255,255,255,.09);border:0.5px solid rgba(255,255,255,.12);color:#cdd0d4;font-size:12px;cursor:pointer;outline:none;"></select>
+        <button class="wls-btn wls-btn-primary" id="wlsAddStockBtn">加入</button>
+      </div>
+      <div class="wls-suggest" id="wlsSuggest"></div>
+    </div>
+
+    <div class="wls-section">
+      <div class="wls-section-title">新增群組</div>
+      <div class="wls-input-row">
+        <input class="wls-input" id="wlsGroupInput" placeholder="群組名稱">
+        <button class="wls-btn wls-btn-primary" id="wlsAddGroupBtn">新增</button>
+      </div>
+    </div>
+
+    <div class="wls-section">
+      <div class="wls-section-title">市場追蹤</div>
+      <div class="wls-market-grid">
+        ${_MARKET_OPTIONS.map(opt => `
+          <div class="wls-market-row" data-market-key="${opt.key}">
+            <div class="wls-market-info">
+              <div class="wls-market-name">${opt.name}</div>
+              <div class="wls-market-code">${opt.code}</div>
+            </div>
+            <button class="wls-toggle${prefs[opt.key] ? ' on' : ''}"
+                    data-market-key="${opt.key}" aria-label="切換${opt.name}"></button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  // 填充群組 select
+  const sel = document.getElementById('wlsGroupSel');
+  _groups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g.id; opt.textContent = g.name;
+    sel.appendChild(opt);
+  });
+
+  // 搜尋建議
+  const input   = document.getElementById('wlsStockInput');
+  const suggest = document.getElementById('wlsSuggest');
+  let _debounce = null;
+  let _selCode  = null;
+
+  input.addEventListener('input', () => {
+    _selCode = null;
+    clearTimeout(_debounce);
+    const q = input.value.trim();
+    if (!q) { suggest.innerHTML = ''; suggest.classList.remove('open'); return; }
+    _debounce = setTimeout(() => {
+      const results = (window.__searchStocks ?? (() => []))(q).slice(0, 8);
+      if (!results.length) { suggest.innerHTML = ''; suggest.classList.remove('open'); return; }
+      suggest.innerHTML = results.map(r =>
+        `<div class="wls-sug-item" data-code="${r.code}">
+          <span class="wls-sug-code">${r.code}</span>
+          <span class="wls-sug-name">${r.name}</span>
+        </div>`).join('');
+      suggest.classList.add('open');
+      suggest.querySelectorAll('.wls-sug-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          _selCode = item.dataset.code;
+          input.value = _selCode;
+          suggest.innerHTML = ''; suggest.classList.remove('open');
+        });
+      });
+    }, 160);
+  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') _doAddStock(); });
+
+  // 加入按鈕
+  document.getElementById('wlsAddStockBtn')?.addEventListener('click', _doAddStock);
+  async function _doAddStock() {
+    suggest.innerHTML = ''; suggest.classList.remove('open');
+    const raw = input.value.trim();
+    if (!raw) return;
+    const code    = (_selCode || raw).toUpperCase();
+    const groupId = document.getElementById('wlsGroupSel')?.value || getDefaultGroupId();
+    input.value   = '';
+    _selCode = null;
+    try {
+      const { fetchQuote, toYahooSymbol, getChineseName } = await import('./api.js');
+      const symbol = toYahooSymbol(code);
+      const quote  = await fetchQuote(symbol);
+      const name   = getChineseName(code) || quote.name || code;
+      await addStockToGroup({ code, name, price: quote.price ?? null, chg: null, chgPct: null }, groupId);
+      showToast(`✓ ${code} 已加入`);
+    } catch {
+      showToast('⚠ 找不到此代號：' + code);
+    }
+  }
+
+  // 新增群組
+  document.getElementById('wlsAddGroupBtn')?.addEventListener('click', async () => {
+    const name = document.getElementById('wlsGroupInput')?.value.trim();
+    if (!name) return;
+    await createGroup(name);
+    document.getElementById('wlsGroupInput').value = '';
+    showToast(`✓ 群組「${name}」已建立`);
+    // 重新渲染 tab（更新群組 select）
+    _renderTabAdd(body);
+  });
+
+  // 市場追蹤 toggle
+  body.querySelectorAll('.wls-toggle[data-market-key]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const key   = btn.dataset.marketKey;
+      const prefs = _loadMarketPrefs();
+      prefs[key]  = !prefs[key];
+      _saveMarketPrefs(prefs);
+      btn.classList.toggle('on', !!prefs[key]);
+      await _syncMarketTracking();
+      AppState.watchlistGroups = _groups;
+      renderWatchlist();
+    });
+  });
+  // 點整行也觸發 toggle
+  body.querySelectorAll('.wls-market-row[data-market-key]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.classList.contains('wls-toggle')) return;
+      row.querySelector('.wls-toggle')?.click();
+    });
+  });
+}
+
+// ── Tab 2: 清單管理 ──────────────────────────────────────────────────────────
+
+function _renderTabManage(body) {
+  body.innerHTML = `
+    <div class="wls-section">
+      <div class="wls-section-title">匯入</div>
+      <div class="wls-io-row" id="wlsImportRow" style="cursor:pointer;">
+        <span class="wls-io-icon">📥</span>
+        <div class="wls-io-info">
+          <div class="wls-io-title">匯入 JSON</div>
+          <div class="wls-io-desc">從備份檔還原群組</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wls-section">
+      <div class="wls-section-title">匯出</div>
+      <select class="wls-group-sel" id="wlsExportSel">
+        ${_groups.map(g => `<option value="${g.id}">${g.name}（${g.stocks.length} 檔）</option>`).join('')}
+      </select>
+      <div class="wls-io-row" id="wlsExportRow" style="cursor:pointer;">
+        <span class="wls-io-icon">📤</span>
+        <div class="wls-io-info">
+          <div class="wls-io-title">匯出選取群組</div>
+          <div class="wls-io-desc">下載為 JSON 備份</div>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('wlsImportRow')?.addEventListener('click', () => {
+    _closeSettings();
+    _triggerImport();
+  });
+  document.getElementById('wlsExportRow')?.addEventListener('click', () => {
+    const gid = document.getElementById('wlsExportSel')?.value;
+    if (gid) exportGroupJSON(gid);
+  });
+}
+
+// ── Tab 3: 補充資訊 ──────────────────────────────────────────────────────────
+
+function _renderTabSi(body) {
   const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
   const rows = [];
   for (const code of allCodes) {
     const info = _siInfoCache[code];
     if (!info?.forward?.story && !info?.forward?.consensus) continue;
-    const name       = getChineseName(code) || code;
-    const updatedAt  = info.forward.updatedAt ?? null;
-    const daysSince  = updatedAt
+    const name      = getChineseName(code) || code;
+    const updatedAt = info.forward.updatedAt ?? null;
+    const daysSince = updatedAt
       ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000)
       : null;
-    rows.push({ code, name, updatedAt, daysSince });
+    rows.push({ code, name, daysSince });
   }
-
-  // 排序：過期最久的優先
   rows.sort((a, b) => (b.daysSince ?? 0) - (a.daysSince ?? 0));
 
-  const container = document.getElementById('watchlistContainer');
-  if (!container) return;
-
-  // CSS 注入（只注入一次）
-  if (!document.getElementById('wl-si-list-style')) {
-    const s = document.createElement('style');
-    s.id = 'wl-si-list-style';
-    s.textContent = `
-      .wl-si-panel { padding: 10px 12px; }
-      .wl-si-panel-header {
-        display: flex; align-items: center; gap: 8px;
-        margin-bottom: 10px; padding-bottom: 8px;
-        border-bottom: 0.5px solid rgba(255,255,255,.08);
-      }
-      .wl-si-panel-title { font-size: 13px; font-weight: 500; color: #e8eaed; flex: 1; }
-      .wl-si-panel-close {
-        background: none; border: none; color: #8a8f99;
-        font-size: 16px; cursor: pointer; padding: 0 4px;
-      }
-      .wl-si-panel-close:hover { color: #e8eaed; }
-      .wl-si-row {
-        display: flex; align-items: center; gap: 8px;
-        padding: 7px 4px; border-bottom: 0.5px solid rgba(255,255,255,.05);
-        cursor: pointer;
-      }
-      .wl-si-row:hover { background: rgba(255,255,255,.04); border-radius: 4px; }
-      .wl-si-row-code { font-size: 13px; font-weight: 500; color: #e8eaed; font-family: monospace; min-width: 44px; }
-      .wl-si-row-name { font-size: 12px; color: #c9d1d9; flex: 1; }
-      .wl-si-row-arrow { font-size: 14px; color: #8a8f99; }
-      .wl-si-empty { font-size: 13px; color: #8a8f99; padding: 20px 0; text-align: center; }
-      .wl-si-pill {
-        font-size: 10px; font-weight: 500;
-        padding: 2px 6px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
-      }
-      .wl-si-pill-ok    { background: #ef5350; color: #fff; }
-      .wl-si-pill-warn  { background: #f59e0b; color: #fff; }
-      .wl-si-pill-stale { background: #26a69a; color: #fff; }
-      .wl-si-fresh { border-left: 2px solid #ef5350; padding-left: 6px; }
-      .wl-si-warn  { border-left: 2px solid #f59e0b; padding-left: 6px; }
-      .wl-si-stale { border-left: 2px solid #26a69a; padding-left: 6px; }
-    `;
-    document.head.appendChild(s);
+  if (rows.length === 0) {
+    body.innerHTML = `<div class="wls-si-empty">目前沒有補充資訊</div>`;
+    return;
   }
 
-  // 渲染清單
-  const rowsHtml = rows.length === 0
-    ? `<div class="wl-si-empty">目前沒有補充資訊</div>`
-    : rows.map(r => {
-        let pillCls, pillText, rowCls;
-        if (r.daysSince == null || r.daysSince < 30) {
-          pillCls = 'wl-si-pill-ok';   pillText = '正常';               rowCls = 'wl-si-fresh';
-        } else if (r.daysSince < 60) {
-          pillCls = 'wl-si-pill-warn';  pillText = `${r.daysSince}天前更新`; rowCls = 'wl-si-warn';
-        } else {
-          pillCls = 'wl-si-pill-stale'; pillText = `${r.daysSince}天前更新`; rowCls = 'wl-si-stale';
-        }
-        return `<div class="wl-si-row ${rowCls}" data-si-code="${r.code}">
-          <span class="wl-si-row-code">${r.code}</span>
-          <span class="wl-si-row-name">${r.name}</span>
-          <span class="wl-si-pill ${pillCls}">${pillText}</span>
-          <span class="wl-si-row-arrow">›</span>
-        </div>`;
-      }).join('');
-
-  container.innerHTML = `
-    <div class="wl-si-panel">
-      <div class="wl-si-panel-header">
-        <span class="wl-si-panel-title">補充資訊清單</span>
-        <button class="wl-si-panel-close" id="wlSiPanelClose">✕</button>
-      </div>
-      ${rowsHtml}
+  body.innerHTML = rows.map(r => {
+    let pillCls, pillText;
+    if (r.daysSince == null || r.daysSince < 30) { pillCls = 'wls-pill-ok';    pillText = '正常'; }
+    else if (r.daysSince < 60)                   { pillCls = 'wls-pill-warn';  pillText = `${r.daysSince}天前`; }
+    else                                          { pillCls = 'wls-pill-stale'; pillText = `${r.daysSince}天前`; }
+    return `<div class="wls-si-row" data-si-code="${r.code}">
+      <span class="wls-si-code">${r.code}</span>
+      <span class="wls-si-name">${r.name}</span>
+      <span class="wls-pill ${pillCls}">${pillText}</span>
     </div>`;
+  }).join('');
 
-  // 關閉按鈕
-  document.getElementById('wlSiPanelClose')?.addEventListener('click', () => renderWatchlist());
-
-  // 點列 → 開啟個股補充資訊
-  container.querySelectorAll('.wl-si-row[data-si-code]').forEach(row => {
+  body.querySelectorAll('.wls-si-row[data-si-code]').forEach(row => {
     row.addEventListener('click', () => {
+      _closeSettings();
       const code = row.dataset.siCode;
-      // 發送 stockSelect 事件（讓 main.js 切換個股）
       document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code } }));
-      // 切換到補充資訊 tab（stockinfo）
       setTimeout(() => {
-        const siTab = document.querySelector('.stock-tab[data-stock-tab="stockinfo"]');
-        siTab?.click();
+        document.querySelector('.stock-tab[data-stock-tab="stockinfo"]')?.click();
       }, 300);
     });
   });
+}
+
+// ─── 補充資訊清單（向後相容 stub，功能已整合至設定 Modal Tab 3） ──────────────
+
+function _showSiListPanel() {
+  openWatchlistSettings('si');
 }
 
 function _triggerImport() {

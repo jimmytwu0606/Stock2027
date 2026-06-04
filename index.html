@@ -189,33 +189,8 @@
     <div class="sidebar-head">
       <span>自選清單</span>
       <div style="display:flex;gap:6px;align-items:center">
-
-        <!-- 主要：更新報價 + 燈號合一 -->
-        <button id="watchlistRescanAll" class="wl-update-btn" title="更新報價與燈號">
-          ⟳ 更新
-        </button>
-
-        <!-- 下拉選單 -->
-        <div class="wl-menu-wrap" id="wlMenuWrap">
-          <button class="wl-icon-btn" id="wlMenuBtn" title="更多功能" aria-haspopup="true" aria-expanded="false">⋯</button>
-          <div class="wl-dropdown" id="wlDropdown" role="menu">
-            <button class="wl-dd-item" id="watchlistAddStock" role="menuitem">
-              <span class="wl-dd-icon">＋</span>新增個股
-            </button>
-            <button class="wl-dd-item" id="watchlistAddGroup" role="menuitem">
-              <span class="wl-dd-icon">▤</span>新增群組
-            </button>
-            <div class="wl-dd-sep"></div>
-            <button class="wl-dd-item" id="watchlistImportBtn" role="menuitem">
-              <span class="wl-dd-icon">↑</span>匯入 JSON
-            </button>
-            <div class="wl-dd-sep"></div>
-            <button class="wl-dd-item" id="watchlistSiListBtn" role="menuitem">
-              <span class="wl-dd-icon">📋</span>補充資訊清單
-            </button>
-          </div>
-        </div>
-
+        <button id="watchlistRescanAll" class="wl-update-btn" title="更新報價與燈號">⟳ 更新</button>
+        <button id="wlSettingsBtn" class="wl-icon-btn" title="自選清單設定">⚙</button>
       </div>
     </div>
     <div id="watchlistContainer"></div>

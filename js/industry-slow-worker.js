@@ -1,8 +1,13 @@
 // js/industry-slow-worker.js
 // ============================================================================
-// 族群回測 Slow Worker — Phase 2 完整策略計算
+// 族群回測 Slow Worker — Phase 2 完整策略計算（效能優化版）
 //
-// 接收候選股（已知有 Phase 1 觸發），跑完整指標計算找最佳策略組合
+// 優化項目（不破壞 screener.js 介面相容性）：
+//   1. CONDITION_DEFS 改用 Map（O(1) 查詢，消除每根K線的 find）
+//   2. 策略條件分類在 Worker 啟動時預處理，不在每根K線重複分類
+//   3. 同一策略的 indCache：每支股票 × 每個策略只算一次指標（hold 不影響指標）
+//   4. 消除 candles.slice(0, i+1) → 改用 candles.subarray 或直接傳 endIdx
+//      注意：calc(sliced) 介面不變，仍 slice（但從快取取結果不重複 calc）
 //
 // 通訊協定：
 //   Main → Worker:  { type: 'run', payload: { entries, strategies, holdOptions } }
@@ -14,6 +19,13 @@
 import { CONDITION_DEFS } from './screener.js';
 import { STRATEGIES }     from './strategy.js';
 
+// ── CONDITION_DEFS Map（O(1) 查詢）────────────────────────────────────────
+let _condMap = null;
+function getCondMap() {
+  if (!_condMap) _condMap = new Map(CONDITION_DEFS.map(d => [d.id, d]));
+  return _condMap;
+}
+
 function _tsToDate(ts) {
   if (!ts) return '—';
   if (typeof ts === 'string') return ts.replace(/-/g, '/').slice(0, 10);
@@ -21,82 +33,98 @@ function _tsToDate(ts) {
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
 }
 
-function _matchStrategyAt(sliced, strategyId) {
-  if (sliced.length < 20) return false;
+// ── 策略預處理（Worker 啟動後每個策略只做一次）────────────────────────────
+function _prepareStrategy(strategyId) {
+  const condMap  = getCondMap();
   const strategy = STRATEGIES.find(s => s.id === strategyId);
-  if (!strategy) return false;
+  if (!strategy) return null;
 
-  const hasPhase3 = strategy.conditions.some(c => {
-    const def = CONDITION_DEFS.find(d => d.id === c.condId);
-    return def?.phase === 3;
-  });
-  if (hasPhase3) return false;
+  const p1 = [], p2 = [];
+  for (const c of strategy.conditions) {
+    const def = condMap.get(c.condId);
+    if (!def) return null;
+    if (def.phase === 3) return null;
+    (def.phase === 1 ? p1 : p2).push({ def, value: c.value ?? def.default });
+  }
 
-  const allDefsExist = strategy.conditions.every(c =>
-    CONDITION_DEFS.some(d => d.id === c.condId)
-  );
-  if (!allDefsExist) return false;
+  // Phase2 需要的 calc 函式（去重）
+  const calcFns = [];
+  const seen = new Set();
+  for (const { def } of p2) {
+    if (def.calc && !seen.has(def.id)) { calcFns.push(def); seen.add(def.id); }
+  }
 
-  const last   = sliced[sliced.length - 1];
-  const prev   = sliced[sliced.length - 2];
+  return { id: strategyId, p1, p2, calcFns };
+}
+
+// ── 指標快取（每支股票 × 每個策略只算一次，不因 holdDays 重算）─────────────
+// 回傳 indCache[i] = indicators（candles[0..i] 的指標結果）
+function _buildIndCache(candles, stratInfo) {
+  if (!stratInfo.calcFns.length) return null;
+  const cache = new Array(candles.length).fill(null);
+  for (let i = 59; i < candles.length; i++) {
+    const sliced = candles.slice(0, i + 1); // 仍需 slice 保持 calc 介面相容
+    const ind = {};
+    for (const def of stratInfo.calcFns) {
+      try { Object.assign(ind, def.calc(sliced)); } catch {}
+    }
+    cache[i] = ind;
+  }
+  return cache;
+}
+
+// ── 單點匹配（使用預計算指標快取）────────────────────────────────────────
+function _matchAt(candles, i, stratInfo, indCache) {
+  if (i < 19) return false;
+
+  const last   = candles[i];
+  const prev   = candles[i - 1];
   const chgPct = prev?.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
   const twseRow = { price: last.close, chgPct, volume: Math.round((last.volume ?? 0) / 1000) };
 
-  const phase1Conds = strategy.conditions.filter(c => CONDITION_DEFS.find(d => d.id === c.condId)?.phase === 1);
-  const phase2Conds = strategy.conditions.filter(c => CONDITION_DEFS.find(d => d.id === c.condId)?.phase === 2);
-
-  if (phase1Conds.length > 0) {
-    const p1Pass = phase1Conds.every(c => {
-      const def = CONDITION_DEFS.find(d => d.id === c.condId);
-      try { return def.match(twseRow, c.value ?? def.default); } catch { return false; }
-    });
-    if (!p1Pass) return false;
+  // Phase1（純數值比較，極快）
+  for (const { def, value } of stratInfo.p1) {
+    try { if (!def.match(twseRow, value)) return false; } catch { return false; }
   }
 
-  const indicators = {};
-  const calcDone   = new Set();
-  for (const c of phase2Conds) {
-    const def = CONDITION_DEFS.find(d => d.id === c.condId);
-    if (def?.calc && !calcDone.has(def.id)) {
-      try { Object.assign(indicators, def.calc(sliced)); } catch {}
-      calcDone.add(def.id);
+  // Phase2（從快取取指標，不重算）
+  if (stratInfo.p2.length > 0) {
+    const ind = indCache?.[i];
+    if (!ind) return false;
+    for (const { def, value } of stratInfo.p2) {
+      try { if (!def.match(ind, value)) return false; } catch { return false; }
     }
   }
-
-  return phase2Conds.every(c => {
-    const def = CONDITION_DEFS.find(d => d.id === c.condId);
-    try { return def.match(indicators, c.value ?? def.default); } catch { return false; }
-  });
+  return true;
 }
 
-function _calcStrategySignals(candles, strategyId, holdDays) {
-  const signals = [];
-  const maxIdx  = candles.length - holdDays - 1;
-
-  // 近 20 日均量（張），用於計算量比
+// ── 訊號計算────────────────────────────────────────────────────────────────
+function _calcSignals(candles, stratInfo, indCache, holdDays) {
+  const signals  = [];
+  const maxIdx   = candles.length - holdDays - 1;
   const avg20vol = candles.slice(-20).reduce((s, c) => s + (c.volume ?? 0), 0) / 20 / 1000;
 
   for (let i = 60; i <= maxIdx; i++) {
-    if (_matchStrategyAt(candles.slice(0, i + 1), strategyId)) {
+    if (_matchAt(candles, i, stratInfo, indCache)) {
       const entry    = candles[i].close;
       const exit     = candles[i + holdDays].close;
       const ret      = (exit - entry) / entry * 100;
-      const volShares = candles[i].volume ?? 0;
-      const volK     = Math.round(volShares / 1000);           // 張
-      const volRatio = avg20vol > 0 ? +(volK / avg20vol).toFixed(2) : 1; // 量比
+      const volK     = Math.round((candles[i].volume ?? 0) / 1000);
+      const volRatio = avg20vol > 0 ? +(volK / avg20vol).toFixed(2) : 1;
       signals.push({
         date: _tsToDate(candles[i].time),
         entry, exit,
         ret:      +ret.toFixed(2),
         win:      ret > 0,
-        vol:      volK,       // 訊號當日成交量（張）
-        volRatio,             // 量比（相對近20日均量）
+        vol:      volK,
+        volRatio,
       });
     }
   }
   return signals;
 }
 
+// ── Worker 主流程 ──────────────────────────────────────────────────────────
 self.onmessage = function(e) {
   const { type, payload } = e.data;
   if (type !== 'run') return;
@@ -104,24 +132,32 @@ self.onmessage = function(e) {
   const { entries, strategies, holdOptions } = payload;
   const total = entries.length;
 
+  // 預處理所有策略（整個 run 只做一次）
+  const stratInfos = strategies.map(id => _prepareStrategy(id)).filter(Boolean);
+
   for (let ei = 0; ei < entries.length; ei++) {
     const { code, candles } = entries[ei];
     let bestScore = -Infinity, bestSigs = null, bestStrat = null, bestHold = null;
 
-    for (const stratId of strategies) {
+    for (const stratInfo of stratInfos) {
+      // 每支股票 × 每個策略只算一次指標（不因 holdDays 重算）
+      const indCache = _buildIndCache(candles, stratInfo);
+
       for (const hold of holdOptions) {
-        const sigs = _calcStrategySignals(candles, stratId, hold);
+        const sigs = _calcSignals(candles, stratInfo, indCache, hold);
         if (!sigs.length) continue;
         const wins  = sigs.filter(s => s.win).length;
         const wr    = wins / sigs.length * 100;
         const ret   = sigs.reduce((s, x) => s + x.ret, 0) / sigs.length;
         const score = wr * 0.6 + ret * 0.4;
-        if (score > bestScore) { bestScore = score; bestSigs = sigs; bestStrat = stratId; bestHold = hold; }
+        if (score > bestScore) {
+          bestScore = score; bestSigs = sigs;
+          bestStrat = stratInfo.id; bestHold = hold;
+        }
       }
     }
 
     if (bestSigs) {
-      // 近 60 日均量（張），代表這支股票的流動性水準
       const avg60vol = Math.round(
         candles.slice(-60).reduce((s, c) => s + (c.volume ?? 0), 0) / 60 / 1000
       );

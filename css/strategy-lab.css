@@ -584,3 +584,16 @@
 .sector-tile[data-checked="false"] {
   opacity: .45;
 }
+
+/* ══════════════════════════════════════════
+   熱力圖粒度切換按鈕
+   ══════════════════════════════════════════ */
+.gran-btn.active {
+  border-color: var(--up);
+  color: var(--up);
+  background: rgba(239, 83, 80, .08);
+}
+.gran-btn:hover {
+  border-color: var(--up);
+  color: var(--up);
+}

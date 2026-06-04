@@ -17,6 +17,7 @@ import { CONDITION_DEFS } from './screener.js';
 import { STRATEGIES } from './strategy.js';
 import { dengToast }       from './loading-deng.js';
 import { getIndustryCache, setIndustryCache, getHeatmapMeta, saveHeatmapMeta, listIndustryCacheKeys } from './db.js';
+import { fsGetShared } from './firebase.js';
 
 // ── 股名/代號反查 ─────────────────────────────────────────────────────────
 // 輸入可能是 "2330"、"台積電"、"台積"，回傳標準代號
@@ -540,6 +541,7 @@ function _updateSectorCount(countEl, checksEl) {
 // 計算近30日各族群熱度（來自上次回測結果）
 // 近30日熱度快取（從 Firebase meta 讀回，頁面重載後仍有效）
 let _cachedHeatMap = null;
+let _firebaseMatrix = null;  // Firebase GAS 算好的全粒度 matrix
 
 function _getSectorHeatMap() {
   // 完整回測結果（有真實 stocks.sigs）才從記憶體計算
@@ -577,29 +579,38 @@ function _getSectorHeatMap() {
 // 初始化時從 Firebase 預載 heatMap
 // 若 Firebase meta 沒有 heatMap（舊版資料），fallback 到 IDB 完整快取重算
 async function _preloadHeatMap() {
+  // 1. 優先從 Firebase shared/industry--heatmap 讀（GAS 每天算好的結果）
+  try {
+    const shared = await fsGetShared('industry/heatmap');
+    if (shared?.heatMap && Object.keys(shared.heatMap).length > 0) {
+      _cachedHeatMap   = shared.heatMap;
+      _firebaseMatrix  = shared.matrix ?? null;
+      console.log('[lab] heatMap 從 Firebase shared 載入，族群數:', Object.keys(_cachedHeatMap).length,
+        '| matrix粒度:', _firebaseMatrix ? Object.keys(Object.values(_firebaseMatrix)[0] ?? {}).join(',') : 'none');
+      return;
+    }
+  } catch (_) {}
+
+  // 2. fallback：IDB meta
   try {
     const meta = await getHeatmapMeta();
-    if (meta?.heatMap) {
+    if (meta?.heatMap && Object.keys(meta.heatMap).length > 0) {
       _cachedHeatMap = meta.heatMap;
       return;
     }
   } catch (_) {}
 
-  // fallback：從 IDB 找任意一筆完整族群快取，重算 heatMap 並回補存入 Firebase
+  // 3. 最終 fallback：IDB 完整快取重算
   try {
     const keys = await listIndustryCacheKeys();
     if (!keys.length) return;
-    // 找今天的快取（key 不帶日期，但 rec.date 有）
-    const today = new Date().toISOString().slice(0, 10);
     for (const k of keys) {
-      const rec = await getIndustryCache(k);   // getIndustryCache 已有日期過濾（同天才回傳）
+      const rec = await getIndustryCache(k);
       if (!rec?.length) continue;
-      // 找到有效的完整 indStats，重算並儲存
       _lastIndustryResult = rec;
       await saveHeatmapMeta(rec, k);
       break;
     }
-    // 再讀一次
     const meta2 = await getHeatmapMeta();
     if (meta2?.heatMap) _cachedHeatMap = meta2.heatMap;
   } catch (e) {
@@ -607,27 +618,34 @@ async function _preloadHeatMap() {
   }
 }
 
+// badge 百分位門檻（依 _cachedHeatMap 動態計算）
+function _getBadgeThresholds() {
+  const vals = Object.values(_cachedHeatMap ?? {}).map(v => v.heat ?? 0).filter(h => h > 0).sort((a,b) => a-b);
+  if (!vals.length) return { p25:1, p50:5, p75:20, p90:100 };
+  return {
+    p25: vals[Math.floor(vals.length*0.25)] ?? 1,
+    p50: vals[Math.floor(vals.length*0.50)] ?? 5,
+    p75: vals[Math.floor(vals.length*0.75)] ?? 20,
+    p90: vals[Math.floor(vals.length*0.90)] ?? 100,
+  };
+}
+
 function _heatBadge(heatInfo) {
   if (!heatInfo) return '<span style="font-size:11px;color:rgba(100,116,139,.5);margin-left:5px">—</span>';
   const { heat, cnt, avgVr } = heatInfo;
+  const { p25, p50, p75, p90 } = _getBadgeThresholds();
   let col, bg, label;
-  if (heat >= 10) {
-    // 爆熱：亮紅
+  if (heat >= p90) {
     col = '#fca5a5'; bg = 'rgba(239,68,68,.28)'; label = '🔥';
-  } else if (heat >= 6) {
-    // 升溫：橙
+  } else if (heat >= p75) {
     col = '#fdba74'; bg = 'rgba(251,146,60,.25)'; label = '↑';
-  } else if (heat >= 3) {
-    // 微溫：黃
+  } else if (heat >= p50) {
     col = '#fde68a'; bg = 'rgba(234,179,8,.22)'; label = '○';
-  } else if (heat >= 1) {
-    // 中性偏冷：灰
+  } else if (heat >= p25) {
     col = '#94a3b8'; bg = 'rgba(148,163,184,.15)'; label = '·';
   } else if (heat > 0) {
-    // 冷：淺藍（有訊號但極少）
     col = '#93c5fd'; bg = 'rgba(59,130,246,.18)'; label = '↓';
   } else {
-    // 最冷（近30日 cnt=0）：深藍 + 雪花
     col = '#60a5fa'; bg = 'rgba(37,99,235,.22)'; label = '❄';
   }
   return `<span style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;background:${bg};color:${col};margin-left:5px;flex-shrink:0" title="近30日訊號${cnt}筆，均量比${avgVr}x">${label}</span>`;
@@ -656,26 +674,32 @@ async function _populateSectorChecks(checksEl, countEl) {
     });
   }
 
-  // 熱力背景色（純色階，不用 icon）
+  // 相對百分位色階（依實際 heatMap 資料動態計算）
+  const _heatVals = Object.values(heatMap).map(v => v.heat ?? 0).filter(h => h > 0).sort((a,b) => a-b);
+  const _tp25 = _heatVals[Math.floor(_heatVals.length * 0.25)] ?? 1;
+  const _tp50 = _heatVals[Math.floor(_heatVals.length * 0.50)] ?? 5;
+  const _tp75 = _heatVals[Math.floor(_heatVals.length * 0.75)] ?? 20;
+  const _tp90 = _heatVals[Math.floor(_heatVals.length * 0.90)] ?? 100;
+
   function _tileColor(heat) {
-    if (!hasHeat)    return 'rgba(255,255,255,.04)';
-    if (heat >= 10)  return 'rgba(239,68,68,.55)';
-    if (heat >= 6)   return 'rgba(251,146,60,.45)';
-    if (heat >= 3)   return 'rgba(234,179,8,.38)';
-    if (heat >= 1)   return 'rgba(148,163,184,.18)';
-    if (heat > 0)    return 'rgba(59,130,246,.22)';
-    return 'rgba(37,99,235,.28)';
+    if (!hasHeat || !heat)  return '#1e3a5f';   // 無資料：深藍（最冷）
+    if (heat >= _tp90)      return '#b91c1c';   // top 10%：深紅
+    if (heat >= _tp75)      return '#ea580c';   // top 25%：橙
+    if (heat >= _tp50)      return '#ca8a04';   // top 50%：黃
+    if (heat >= _tp25)      return '#6b7280';   // top 75%：灰
+    if (heat > 0)           return '#3b82f6';   // bottom 25%：淺藍
+    return '#1e3a5f';                           // 零訊號：深藍
   }
   function _tileBorder(heat, checked) {
     if (!checked) return '2px solid rgba(255,255,255,.08)';
-    if (heat >= 6)  return '2px solid rgba(239,83,80,.9)';
-    return '2px solid rgba(239,83,80,.7)';
+    if (heat >= _tp90) return '2px solid #ef5350';
+    if (heat >= _tp75) return '2px solid #fb923c';
+    return '2px solid rgba(255,255,255,.15)';
   }
   function _tileText(heat) {
-    if (!hasHeat) return 'var(--muted)';
-    if (heat >= 3)  return '#fff';
-    if (heat >= 1)  return 'rgba(255,255,255,.7)';
-    return 'rgba(255,255,255,.55)';
+    if (!hasHeat || !heat) return '#93c5fd';   // 深藍底：淺藍字
+    if (heat >= _tp25)     return '#fff';      // 灰以上：白字
+    return '#fff';                             // 淺藍底：白字
   }
 
   // 分類快選列
@@ -683,7 +707,8 @@ async function _populateSectorChecks(checksEl, countEl) {
     const inGroup = SECTOR_GROUPS[g].filter(s => allSectors.includes(s));
     const avgHeat = inGroup.length
       ? inGroup.reduce((s, sec) => s + (heatMap[sec]?.heat ?? 0), 0) / inGroup.length : 0;
-    const dotCol = avgHeat >= 6 ? '#ef5350' : avgHeat >= 3 ? '#f0b429' : 'var(--muted)';
+    const { p50: _dp50, p75: _dp75 } = _getBadgeThresholds();
+    const dotCol = avgHeat >= _dp75 ? '#ef5350' : avgHeat >= _dp50 ? '#f0b429' : 'var(--muted)';
     return `<button class="lab-copy-btn sector-group-btn" data-group="${g}"
       style="font-size:13px;padding:3px 10px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:var(--text)">
       <span style="width:7px;height:7px;border-radius:50%;background:${dotCol};flex-shrink:0"></span>${g}
@@ -734,7 +759,7 @@ async function _populateSectorChecks(checksEl, countEl) {
     </div>
     ${hasHeat ? `<div style="margin-top:10px;padding:5px 10px;background:rgba(255,255,255,.03);border-radius:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
       <span style="font-size:12px;color:var(--text)">熱</span>
-      ${['rgba(239,68,68,.55)','rgba(251,146,60,.45)','rgba(234,179,8,.38)','rgba(148,163,184,.18)','rgba(59,130,246,.22)','rgba(37,99,235,.28)'].map(c =>
+      ${['#b91c1c','#ea580c','#ca8a04','#6b7280','#3b82f6','#1e3a5f'].map(c =>
         `<div style="width:20px;height:10px;border-radius:3px;background:${c}"></div>`).join('<span style="color:var(--muted);opacity:.4;font-size:11px">&gt;</span>')}
       <span style="font-size:12px;color:var(--text)">冷</span>
       <span style="font-size:11px;color:var(--muted);opacity:.5;margin-left:4px">近30日訊號密度 × 均量比</span>
@@ -1208,41 +1233,115 @@ function _renderIndustryResult(el, { indStats }) {
   }
 
   // ── 熱力圖渲染 ────────────────────────────────────────────────────────
-  function _renderHeatmap() {
+  // 粒度定義
+  const GRAN_DEFS = [
+    { key: 'day',     label: '日' },
+    { key: 'week',    label: '週' },
+    { key: 'month',   label: '月' },
+    { key: 'quarter', label: '季' },
+    { key: 'half',    label: '半年' },
+    { key: 'year',    label: '年' },
+  ];
+
+  // 從 Firebase matrix 建立指定粒度的熱力資料
+  function _buildHeatFromFirebase(granKey) {
+    if (!_firebaseMatrix) return null;
+    const periodSet = new Set();
+    const matrix = {};
+    Object.entries(_firebaseMatrix).forEach(([ind, grans]) => {
+      const granData = grans[granKey];
+      if (!granData) return;
+      matrix[ind] = {};
+      Object.entries(granData).forEach(([period, cell]) => {
+        periodSet.add(period);
+        matrix[ind][period] = { cnt: cell.cnt, avgVolRatio: cell.avgVr ?? 1, heat: cell.heat };
+      });
+    });
+    const periods = [...periodSet].sort();
+    return periods.length ? { matrix, periods } : null;
+  }
+
+  function _renderHeatmap(granKey) {
+    granKey = granKey || 'month';
+
+    // 優先用 Firebase matrix（GAS 算好的）
+    const fbData = _buildHeatFromFirebase(granKey);
+    if (fbData) {
+      return _renderHeatTable(fbData.matrix, fbData.periods, granKey, true);
+    }
+
+    // fallback：本機回測結果（月粒度）
     const { matrix, months } = _buildHeatMatrix();
-    if (!months.length) return '<div style="color:var(--muted);padding:20px">資料不足</div>';
+    if (!months.length) return '<div style="color:var(--muted);padding:20px">資料不足（請先跑族群回測或等待 GAS 更新）</div>';
+    return _renderHeatTable(matrix, months, 'month', false);
+  }
 
-    // 依「最近一個月熱度」排序族群
-    const lastMonth = months[months.length - 1];
-    const sortedInds = [...indStats]
-      .sort((a, b) => (matrix[b.ind]?.[lastMonth]?.heat ?? 0) - (matrix[a.ind]?.[lastMonth]?.heat ?? 0))
-      .map(s => s.ind);
+  function _renderHeatTable(matrix, periods, granKey, isFirebase) {
+    if (!periods.length) return '<div style="color:var(--muted);padding:20px">資料不足</div>';
 
-    let html = `<div style="overflow-x:auto;max-height:calc(100vh - 240px);overflow-y:auto;border:1px solid var(--border);border-radius:7px">` +
+    // 依「最新一個時間點熱度」排序族群
+    const lastPeriod = periods[periods.length - 1];
+    // 所有有資料的族群（Firebase 或本機）
+    const allInds = isFirebase
+      ? Object.keys(matrix)
+      : [...indStats].map(s => s.ind);
+    const sortedInds = [...allInds]
+      .sort((a, b) => (matrix[b]?.[lastPeriod]?.heat ?? 0) - (matrix[a]?.[lastPeriod]?.heat ?? 0));
+
+    let html = `<div style="position:relative">` +
+      `<div id="heatScrollWrap" style="overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto;border:1px solid var(--border);border-radius:7px 7px 0 0;cursor:grab;user-select:none;scrollbar-width:none;-ms-overflow-style:none">` +
+      `<style>#heatScrollWrap::-webkit-scrollbar{display:none}</style>` +
       `<table style="border-collapse:separate;border-spacing:2px;font-size:11px;white-space:nowrap;padding:6px">` +
       `<thead><tr>` +
       `<th style="text-align:right;padding:4px 10px 4px 4px;color:var(--muted);font-weight:400;min-width:88px;position:sticky;left:0;top:0;background:var(--bg2);z-index:3;border-bottom:1px solid var(--border)">族群</th>`;
-    months.forEach(m => {
-      const isLast = m === lastMonth;
-      html += `<th style="text-align:center;color:${isLast ? 'var(--up)' : 'var(--muted)'};font-weight:${isLast ? '600' : '400'};min-width:56px;padding:4px 2px;position:sticky;top:0;background:var(--bg2);z-index:2;border-bottom:1px solid var(--border)">${m.slice(0,7)}</th>`;
+    // 計算全域最大熱度（相對色階）
+    let maxHeat = 1;
+    sortedInds.forEach(ind => periods.forEach(p => {
+      const h = matrix[ind]?.[p]?.heat ?? 0;
+      if (h > maxHeat) maxHeat = h;
+    }));
+    const heatVals = sortedInds.flatMap(ind => periods.map(p => matrix[ind]?.[p]?.heat ?? 0)).filter(h => h > 0).sort((a,b)=>a-b);
+    const p25 = heatVals[Math.floor(heatVals.length*0.25)] ?? 2;
+    const p50 = heatVals[Math.floor(heatVals.length*0.50)] ?? 5;
+    const p75 = heatVals[Math.floor(heatVals.length*0.75)] ?? 15;
+    const p90 = heatVals[Math.floor(heatVals.length*0.90)] ?? 40;
+
+    function _relHeatColor(heat) {
+      if (!heat) return 'rgba(255,255,255,.03)';
+      if (heat >= p90) return 'rgba(220,38,38,.95)';
+      if (heat >= p75) return 'rgba(185,28,28,.80)';
+      if (heat >= p50) return 'rgba(194,65,12,.70)';
+      if (heat >= p25) return 'rgba(161,98,7,.60)';
+      return 'rgba(22,101,52,.50)';
+    }
+    function _relHeatText(heat) {
+      if (!heat) return 'rgba(156,163,175,.4)';
+      if (heat >= p50) return '#fff';
+      if (heat >= p25) return '#fde68a';
+      return '#86efac';
+    }
+
+    periods.forEach(p => {
+      const isLast = p === lastPeriod;
+      html += `<th style="text-align:center;color:${isLast ? 'var(--up)' : 'var(--muted)'};font-weight:${isLast ? '600' : '400'};min-width:56px;padding:4px 2px;position:sticky;top:0;background:var(--bg2);z-index:2;border-bottom:1px solid var(--border)">${p}</th>`;
     });
     html += `</tr></thead><tbody>`;
 
     sortedInds.forEach((ind, ri) => {
       const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
       html += `<tr><td style="text-align:right;padding:2px 10px 2px 4px;color:var(--text);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;white-space:nowrap">${ind}</td>`;
-      months.forEach(m => {
-        const cell = matrix[ind]?.[m];
+      periods.forEach(p => {
+        const cell = matrix[ind]?.[p];
         if (!cell) {
           html += `<td style="width:56px;height:32px;border-radius:4px;border:1px dashed rgba(255,255,255,.06)"></td>`;
         } else {
-          const bg = _heatColor(cell.heat);
-          const tc = _heatTextColor(cell.heat);
-          const vr = cell.avgVolRatio;
-          const pulse = cell.heat >= 10 ? 'outline:1px solid rgba(239,83,80,.45);' : '';
+          const bg = _relHeatColor(cell.heat);
+          const tc = _relHeatText(cell.heat);
+          const vr = cell.avgVolRatio ?? cell.avgVr ?? 1;
+          const pulse = cell.heat >= p90 ? 'outline:1px solid rgba(239,83,80,.5);' : '';
           html += `<td class="hm-cell" style="width:56px;height:32px;border-radius:4px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle;${pulse}"` +
-            ` title="${ind} ${m}\n訊號 ${cell.cnt} 筆｜均量比 ${vr}x\n點擊查看個股"` +
-            ` data-hm-ind="${ind}" data-hm-month="${m}">` +
+            ` title="${ind} ${p}\n訊號 ${cell.cnt} 筆｜均量比 ${vr}x\n點擊查看個股"` +
+            ` data-hm-ind="${ind}" data-hm-period="${p}">` +
             `<div style="color:${tc};font-size:11px;font-weight:700;line-height:1.3">${cell.cnt}</div>` +
             `<div style="color:${tc};font-size:10px;opacity:.85;line-height:1.1">${vr}x</div>` +
             `</td>`;
@@ -1251,21 +1350,22 @@ function _renderIndustryResult(el, { indStats }) {
       html += `</tr>`;
     });
 
-    html += `</tbody></table></div>`;
+    html += `</tbody></table></div></div>` +
+      `<div id="heatScrollTrack" style="height:14px;background:var(--bg2);border:1px solid var(--border);border-top:none;border-radius:0 0 7px 7px;overflow:hidden;position:relative;cursor:pointer">` +
+      `<div id="heatScrollThumb" style="position:absolute;top:2px;height:10px;background:rgba(255,255,255,.2);border-radius:5px;cursor:grab;transition:background .15s"></div>` +
+      `</div>` +
+      `</div>`;
 
-    const legendColors = [
-      'rgba(22,101,52,.55)', 'rgba(161,98,7,.65)', 'rgba(194,65,12,.80)',
-      'rgba(185,28,28,.85)', 'rgba(220,38,38,.95)',
-    ];
-    const legendLabels = ['< 2','2-5','5-10','10-18','≥18'];
+    // 圖例
+    const src = isFirebase ? '（GAS 每日更新）' : '（本機回測）';
     html += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);flex-wrap:wrap">` +
-      `<span>冷</span><div style="display:flex;gap:2px;align-items:center">` +
-      legendColors.map((c, i) =>
-        `<div style="width:22px;height:10px;border-radius:2px;background:${c}${i===4?';outline:1px solid rgba(239,83,80,.4)':''}" title="${legendLabels[i]}"></div>`
-      ).join('') +
+      `<span>冷</span>` +
+      `<div style="display:flex;gap:2px">` +
+      ['rgba(22,101,52,.50)','rgba(161,98,7,.60)','rgba(194,65,12,.70)','rgba(185,28,28,.80)','rgba(220,38,38,.95)'].map(c =>
+        `<div style="width:22px;height:10px;border-radius:2px;background:${c}"></div>`).join('') +
       `</div><span>熱</span>` +
-      `<span style="margin-left:4px;opacity:.6">格子：訊號數 / 均量比　熱度 = 訊號 × min(量比,5)　</span>` +
-      `<span style="color:var(--up)">▌ 最新月</span>` +
+      `<span style="margin-left:6px;opacity:.5">色階依相對百分位　訊號 × min(量比,5)　${src}</span>` +
+      `<span style="color:var(--up)">▌ 最新</span>` +
       `</div>`;
 
     return html;
@@ -1304,7 +1404,13 @@ function _renderIndustryResult(el, { indStats }) {
     </div>
 
     <div id="indViewHeat" style="display:none">
-      ${_renderHeatmap()}
+      <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted);margin-right:4px">粒度：</span>
+        ${GRAN_DEFS.map(g =>
+          `<button class="lab-copy-btn gran-btn${g.key === 'month' ? ' active' : ''}" data-gran="${g.key}" style="font-size:11px;padding:2px 8px">${g.label}</button>`
+        ).join('')}
+      </div>
+      <div id="indHeatContent">${_renderHeatmap('month')}</div>
     </div>
   `;
 
@@ -1319,10 +1425,112 @@ function _renderIndustryResult(el, { indStats }) {
     });
   });
 
-  // 熱力圖格子點擊 → 開 Modal
-  el.querySelectorAll('[data-hm-ind]').forEach(td => {
-    td.addEventListener('click', () => _openIndModal(td.dataset.hmInd));
+  // 粒度切換
+  el.querySelectorAll('.gran-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      el.querySelectorAll('.gran-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const gran = btn.dataset.gran;
+      const contentEl = el.querySelector('#indHeatContent');
+      if (contentEl) contentEl.innerHTML = _renderHeatmap(gran);
+      // 重新綁定格子點擊
+      _bindHeatmapCellClick(el.querySelector('#indHeatContent'));
+      _bindHeatmapDrag(el.querySelector('#indHeatContent'));
+    });
   });
+
+  // 熱力圖格子點擊 → 開 Modal
+  // 熱力圖拖移滾動 + 自訂滑軌
+  function _bindHeatmapDrag(container) {
+    const wrap  = container?.querySelector('#heatScrollWrap');
+    const track = container?.querySelector('#heatScrollTrack');
+    const thumb = container?.querySelector('#heatScrollThumb');
+    if (!wrap) return;
+
+    // 更新 thumb 位置和寬度
+    function _updateThumb() {
+      if (!track || !thumb) return;
+      const ratio     = wrap.clientWidth / wrap.scrollWidth;
+      const thumbW    = Math.max(track.clientWidth * ratio, 40);
+      const thumbLeft = (wrap.scrollLeft / (wrap.scrollWidth - wrap.clientWidth)) * (track.clientWidth - thumbW);
+      thumb.style.width = thumbW + 'px';
+      thumb.style.left  = (thumbLeft || 0) + 'px';
+      thumb.style.display = ratio >= 1 ? 'none' : 'block';
+    }
+    wrap.addEventListener('scroll', _updateThumb);
+    setTimeout(_updateThumb, 100); // 等渲染完
+
+    // 滑軌點擊跳轉
+    if (track) {
+      track.addEventListener('click', e => {
+        if (e.target === thumb) return;
+        const rect  = track.getBoundingClientRect();
+        const ratio = (e.clientX - rect.left) / track.clientWidth;
+        wrap.scrollLeft = ratio * (wrap.scrollWidth - wrap.clientWidth);
+      });
+    }
+
+    // Thumb 拖移
+    if (thumb) {
+      let thumbDrag = false, thumbStartX = 0, thumbScrollStart = 0;
+      thumb.addEventListener('mousedown', e => {
+        thumbDrag = true;
+        thumbStartX = e.clientX;
+        thumbScrollStart = wrap.scrollLeft;
+        thumb.style.cursor = 'grabbing';
+        e.stopPropagation();
+      });
+      document.addEventListener('mousemove', e => {
+        if (!thumbDrag) return;
+        const dx    = e.clientX - thumbStartX;
+        const ratio = dx / (track.clientWidth - thumb.clientWidth);
+        wrap.scrollLeft = thumbScrollStart + ratio * (wrap.scrollWidth - wrap.clientWidth);
+      });
+      document.addEventListener('mouseup', () => {
+        if (thumbDrag) { thumbDrag = false; thumb.style.cursor = 'grab'; }
+      });
+      thumb.addEventListener('mouseenter', () => { thumb.style.background = 'rgba(255,255,255,.35)'; });
+      thumb.addEventListener('mouseleave', () => { if (!thumbDrag) thumb.style.background = 'rgba(255,255,255,.2)'; });
+    }
+
+    // 表格本體拖移（滑鼠）
+    let isDragging = false, startX = 0, startY = 0, scrollLeft = 0, scrollTop = 0;
+    wrap.addEventListener('mousedown', e => {
+      if (e.target.closest('.hm-cell')) return;
+      isDragging = true;
+      wrap.style.cursor = 'grabbing';
+      startX = e.pageX - wrap.offsetLeft;
+      startY = e.pageY - wrap.offsetTop;
+      scrollLeft = wrap.scrollLeft;
+      scrollTop  = wrap.scrollTop;
+    });
+    wrap.addEventListener('mouseleave', () => { isDragging = false; wrap.style.cursor = 'grab'; });
+    wrap.addEventListener('mouseup',    () => { isDragging = false; wrap.style.cursor = 'grab'; });
+    wrap.addEventListener('mousemove',  e => {
+      if (!isDragging) return;
+      e.preventDefault();
+      wrap.scrollLeft = scrollLeft - (e.pageX - wrap.offsetLeft - startX) * 1.2;
+      wrap.scrollTop  = scrollTop  - (e.pageY - wrap.offsetTop  - startY) * 1.2;
+    });
+
+    // 觸控
+    wrap.addEventListener('touchstart', e => {
+      startX = e.touches[0].pageX; startY = e.touches[0].pageY;
+      scrollLeft = wrap.scrollLeft; scrollTop = wrap.scrollTop;
+    }, { passive: true });
+    wrap.addEventListener('touchmove', e => {
+      wrap.scrollLeft = scrollLeft - (e.touches[0].pageX - startX);
+      wrap.scrollTop  = scrollTop  - (e.touches[0].pageY - startY);
+    }, { passive: true });
+  }
+
+  function _bindHeatmapCellClick(container) {
+    (container || el).querySelectorAll('[data-hm-ind]').forEach(td => {
+      td.addEventListener('click', () => _openIndModal(td.dataset.hmInd));
+    });
+  }
+  _bindHeatmapCellClick(el.querySelector('#indHeatContent'));
+  _bindHeatmapDrag(el.querySelector('#indHeatContent'));
 
   // 排行榜排序
   el.querySelectorAll('#indRankTable th[data-sort]').forEach(th => {
