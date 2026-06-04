@@ -136,7 +136,7 @@ function _applyTierUI() {
 
   // Pro 限制 banner
   const banner = document.getElementById('labProBanner');
-  if (banner) banner.style.display = isPro ? '' : 'none';
+  if (banner) banner.style.display = 'none';
 
   // MC 子頁按鈕：Pro 不開放
   const mcBtn = document.getElementById('labBtnMC');
@@ -177,16 +177,6 @@ function _bindSingleRun() {
 }
 
 async function _runSingleBacktest() {
-  const tier = window.__userTier ?? 'guest';
-  if (tier !== 'vvvip' && tier !== 'pro') {
-    dengToast('策略實驗室需要 Pro 以上會員');
-    return;
-  }
-  if (tier === 'pro' && !_checkProLimit(PRO_LIMIT_KEY_SINGLE)) {
-    dengToast('Pro 方案今日單股分析次數已用完');
-    return;
-  }
-
   const _singleInput = (document.getElementById('labCodeInput')?.value ?? '').trim();
   const codeRaw = _resolveCode(_singleInput);
   if (!codeRaw) { dengToast('請輸入股票代號或名稱'); return; }
@@ -275,7 +265,6 @@ async function _runSingleBacktest() {
     });
     resultEl.style.display = '';
 
-    if (tier === 'pro') _consumeProLimit(PRO_LIMIT_KEY_SINGLE);
 
   } catch (e) {
     progressEl.style.display = 'none';
@@ -810,7 +799,6 @@ async function _startIndustryBacktest() {
     _renderIndustryResult(resultEl, { indStats });
     resultEl.style.display = '';
 
-    if (tier === 'pro') _consumeProLimit(PRO_LIMIT_KEY_INDUSTRY);
 
   } catch (e) {
     progressEl.style.display = 'none';
@@ -1374,11 +1362,6 @@ function _bindMCRun() {
 }
 
 async function _runMC() {
-  if (window.__userTier !== 'vvvip') {
-    dengToast('MC 模擬為 VVVIP 限定功能');
-    return;
-  }
-
   const _mcInput = (document.getElementById('labMCCodeInput')?.value ?? '').trim();
   const codeRaw = _resolveCode(_mcInput);
   const simBars = parseInt(document.getElementById('labMCBarsSelect')?.value ?? '10');
