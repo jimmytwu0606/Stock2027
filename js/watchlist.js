@@ -22,7 +22,7 @@ import {
   getAllGroups, saveGroup, deleteGroup as dbDeleteGroup,
   initDB, migrateFromLocalStorage,
 } from './db.js';
-import { getChineseName, toYahooSymbol, FEATURE_INTRADAY_5M } from './api.js';
+import { getChineseName, toYahooSymbol, fetchHistoryCached, FEATURE_INTRADAY_5M } from './api.js';
 import { calcSignalLamps } from './strategy.js';
 import { getYaoguStatus }  from './signal-scan.js';
 import { getYaoguRecord, loadStockInfo } from './db.js';
@@ -62,6 +62,7 @@ let _sparkMode = (_savedMode === 'bar')
     : '40d';
 
 const _kline40Cache  = new Map();       // code → number[] (close prices, last 40)
+const _barCache      = new Map();       // code → {open,high,low,close,prev}（最後一根 K 棒）
 const _intradayCache = new Map();       // code → { points: number[], fetchedAt: number }
 let   _sparkQueue    = new Set();       // 待載入的 codes
 let   _sparkRunning  = false;
@@ -182,10 +183,10 @@ export async function reloadWatchlist() {
 //   現在改由 localStorage('wl_market_prefs') 控制，預設全 false，不自動塞任何東西。
 
 const _MARKET_OPTIONS = [
-  { key: 'twii',  code: '^TWII',   name: '加權指數'  },
-  { key: 'dji',   code: '^DJI',    name: '道瓊指數'  },
-  { key: 'sox',   code: '^SOX',    name: '費城半導體' },
-  { key: 'txf',   code: 'TXF1.TW', name: '台指期夜盤' },
+  { key: 'twii',  code: '^TWII', name: '加權指數'  },
+  { key: 'dji',   code: '^DJI',  name: '道瓊指數'  },
+  { key: 'sox',   code: '^SOX',  name: '費城半導體' },
+  { key: 'n225',  code: '^N225', name: '日經225'   },
 ];
 
 function _loadMarketPrefs() {
@@ -255,15 +256,16 @@ function _svgDayBar(chgPct, color, priceData) {
   const barX = (W - barW) / 2;
   const wickX = W / 2;
 
-  // 從 priceData 取 OHLC，fallback 用 chgPct 估算柱體
+  // 從 priceData 取 OHLC；open == null/undefined 表示無 K 線資料，直接走漲跌幅柱
   const close = priceData?.price ?? 0;
-  const open  = priceData?.open  ?? close;
-  const high  = priceData?.high  ?? close;
-  const low   = priceData?.low   ?? close;
+  const hasOHLC = priceData?.open != null;
+  const open  = priceData?.open;
+  const high  = priceData?.high;
+  const low   = priceData?.low;
   const prev  = priceData?.prev  ?? close;
 
-  // 價格範圍：只用 OHLC，不含昨收（昨收差距大會把 K 棒壓縮到看不見）
-  const allPrices = [open, high, low, close].filter(v => v > 0);
+  // 沒有 OHLC，或收盤為 0 → 畫漲跌幅柱 fallback
+  const allPrices = hasOHLC ? [open, high, low, close].filter(v => v > 0) : [];
   if (allPrices.length < 2 || close <= 0) {
     // 無 OHLC 資料（停牌/未成交）→ 畫漲跌幅柱 fallback
     const pct  = Math.max(-10, Math.min(10, chgPct ?? 0));
@@ -281,9 +283,12 @@ function _svgDayBar(chgPct, color, priceData) {
 
   const minP = Math.min(...allPrices);
   const maxP = Math.max(...allPrices);
-  // 以昨收為中心，固定 ±6% 對應畫布高度（統一比例，K棒大小一致）
+  // 以昨收為中心，動態 span 確保 OHLC 四值都在畫布內（漲跌停不被截掉）
   const center  = prev > 0 ? prev : close;
-  const span    = center * 0.06;  // ±6%
+  const minOHLC = Math.min(open, high, low, close);
+  const maxOHLC = Math.max(open, high, low, close);
+  const spanNeed = Math.max(center - minOHLC, maxOHLC - center) * 1.15;  // 加 15% padding
+  const span    = Math.max(center * 0.06, spanNeed);  // 至少 ±6%，不夠就撐開
   const minPY   = center - span;
   const maxPY   = center + span;
 
@@ -323,10 +328,12 @@ function _svgFromPts(pts, color) {
 function _sparkHtmlSync(code, isUp, domId) {
   const color = isUp ? '#ef5350' : '#26a69a';
 
-  // ★ bar 模式：從 __priceCache 拿 OHLC 畫今日 K 棒，不需要 IndexedDB，瞬間完成
+  // ★ bar 模式：從 _barCache（IDB 最後一根 K 棒）畫今日 K 棒
   if (_sparkMode === 'bar') {
-    const p = (window.__priceCache ?? {})[code];
-    return _svgDayBar(p?.chgPct ?? 0, color, p);
+    const bar = _barCache.get(code);
+    if (bar) return _svgDayBar(bar.chgPct ?? 0, color, bar);
+    _sparkQueue.add(code);
+    return `<div class="wl-spark-ph"></div>`;
   }
 
   let prices = null;
@@ -356,9 +363,11 @@ function _updateSparkDom(code) {
   const isUp = (p?.chgPct ?? 0) >= 0;
   const color = isUp ? '#ef5350' : '#26a69a';
 
-  // ★ bar 模式：從 __priceCache 拿 OHLC 畫今日 K 棒
+  // ★ bar 模式：從 _barCache（IDB 最後一根 K 棒）畫今日 K 棒
   if (_sparkMode === 'bar') {
-    const svg = _svgDayBar(p?.chgPct ?? 0, color, p);
+    const bar = _barCache.get(code);
+    if (!bar) return;
+    const svg = _svgDayBar(bar.chgPct ?? 0, color, bar);
     container.querySelectorAll(`.wl-item[data-code="${CSS.escape(code)}"] .wl-item-right`)
       .forEach(el => { el.innerHTML = svg; });
     return;
@@ -384,6 +393,19 @@ function _updateSparkDom(code) {
 /** 批次啟動 sparkline 載入（renderWatchlist 後呼叫，next tick） */
 function _kickoffSparkLoads() {
   const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+
+  // ★ bar 模式快速通道：不需要 drain lock，直接同步掃一遍
+  //   有 OHLC → 立刻畫；沒有 → 等下次 MIS 輪詢 push 後 renderWatchlist 重跑
+  if (_sparkMode === 'bar') {
+    // 有快取直接畫，沒有排給 drain 去讀 IDB
+    for (const code of allCodes) {
+      if (_barCache.has(code)) _updateSparkDom(code);
+      else _sparkQueue.add(code);
+    }
+    _drainSparkQueue();
+    return;
+  }
+
   // 只加尚未在快取中的 code（已有快取的在 renderWatchlist 裡同步畫了）
   // drain 已在跑時，只補 queue 不重啟，避免 _sparkRunning 鎖造成 code 永遠不畫
   for (const code of allCodes) {
@@ -431,6 +453,22 @@ async function _drainSparkQueue() {
 }
 
 async function _loadSparkForCode(code) {
+  if (_sparkMode === 'bar') {
+    if (_barCache.has(code)) { _updateSparkDom(code); return; }
+    const candles = await _readKline40(code);
+    if (candles.length > 0) {
+      const last = candles[candles.length - 1];
+      const prev = candles.length >= 2 ? candles[candles.length - 2].close : last.close;
+      const chgPct = prev > 0 ? ((last.close - prev) / prev) * 100 : 0;
+      _barCache.set(code, { open: last.open, high: last.high, low: last.low, price: last.close, prev, chgPct });
+    } else {
+      // IDB 無資料：只存 chgPct，open/high/low 留 undefined 讓 _svgDayBar 走漲跌幅柱 fallback
+      const p = (window.__priceCache ?? {})[code];
+      _barCache.set(code, { price: p?.price ?? 0, prev: p?.prev ?? 0, chgPct: p?.chgPct ?? 0 });
+    }
+    _updateSparkDom(code);
+    return;
+  }
   if (_sparkMode === '40d') {
     if (_kline40Cache.has(code)) { _updateSparkDom(code); return; }
     // 直接傳 code，_readKline40 內部自動試 .TW / .TWO（與 theme-ui.js 一致）
@@ -469,12 +507,12 @@ async function _readKline40(code) {
       req.onerror   = () => res([]);
     });
 
-    // 指數（^ 開頭）直接用 code 當 key，不加 suffix
+    // 指數（^ 開頭）→ 走 fetchHistoryCached，確保從 R2 拉並寫入 IDB
     if (code.startsWith('^')) {
-      for (const period of ['1y', '3mo']) {
-        const candles = await _get(code, period);
-        if (candles.length > 0) return candles;
-      }
+      try {
+        const candles = await fetchHistoryCached(code, '1y', { allowStale: true });
+        if (candles?.length > 0) return candles;
+      } catch (_) {}
       return [];
     }
 
@@ -594,16 +632,9 @@ export function renderWatchlist() {
 
   // DOM 重建後，立即把已快取的 sparkline 同步畫上去（解決 drain race condition）
   if (_sparkMode === '40d') {
-    // _kline40Cache 已有資料的 code 不需要等 drain，直接更新新 DOM
-    for (const [code] of _kline40Cache) {
-      _updateSparkDom(code);
-    }
+    for (const [code] of _kline40Cache) _updateSparkDom(code);
   } else if (_sparkMode === 'bar') {
-    // bar 模式：全部同步畫，不需要 drain
-    const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
-    for (const code of allCodes) {
-      _updateSparkDom(code);
-    }
+    for (const [code] of _barCache) _updateSparkDom(code);
   }
 
   // v3: 下一 tick 啟動 sparkline 載入（DOM 已就緒才可查 getElementById）
@@ -864,6 +895,7 @@ function _setSparkMode(mode) {
   _drainGen++;                           // 使當前正在跑的 drain 世代失效
   _sparkRunning = false;                 // 強制釋放鎖（舊 drain 的 finally 會跳過重設）
   _sparkQueue.clear();
+  _barCache.clear();   // 切換模式清 bar 快取
   _sparkMode = mode;
   localStorage.setItem('wl_spark_mode', mode);
   if (mode === 'day') _intradayFailStreak = 0;  // 手動切回今日 → 重新計數
@@ -1390,7 +1422,7 @@ function _renderTabSi(body) {
       const code = row.dataset.siCode;
       document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code } }));
       setTimeout(() => {
-        document.querySelector('.stock-tab[data-stock-tab="stockinfo"]')?.click();
+        document.querySelector('.stock-tab[data-stock-tab="analysis"]')?.click();
       }, 300);
     });
   });

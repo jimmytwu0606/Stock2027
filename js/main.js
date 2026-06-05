@@ -17,7 +17,7 @@ if (!localStorage.getItem('__devMode')) {
 // ────────────────────────────────────────────────────────────
 
 import { AppState, updateWatchlistPrice } from './state.js';
-import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore } from './api.js';
+import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore, preloadBundles } from './api.js';
 import {
   initCharts, renderChartData, setSubChartsActive,
   getMainChart, getCandleSeries, getMainChartEl,
@@ -1472,6 +1472,18 @@ function _initFullscreen() {
   await migrateFromLocalStorage();
   // Phase 7.4 — 背景清理過期 K 線快取(不 await,不擋初始化)
   cleanupExpiredKlineCache();
+
+  // Bundle 預載：背景抓 GAS 預打包的全市場 K 線（7 包 gzip）→ 灌 IDB kline_cache
+  //   每日只灌一次（localStorage 旗標防重跑）。完成後篩選器/型態/種子掃描全本機命中。
+  //   用 requestIdleCallback 延後到瀏覽器空檔，完全不影響首屏與既有初始化。
+  window.__bundleReady = new Promise(resolve => {
+    const kick = () => preloadBundles().then(resolve).catch(e => {
+      console.warn('[main] preloadBundles 失敗:', e?.message);
+      resolve(null);
+    });
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 4000 });
+    else setTimeout(kick, 1500);
+  });
 
   // 1.5 Firebase 名稱庫預載（最高優先，背景執行不擋後續）
   // ⚠️ 踩雷備忘：之前有 export preloadNamesFromFirestore 但沒有呼叫

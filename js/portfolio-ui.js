@@ -50,6 +50,104 @@ function pfPrompt(message, defaultValue = '') {
   });
 }
 
+// ─── 自訂確認泡泡（取代原生 confirm()） ──────────────────────────────────────
+function _pfConfirm(title, body, okLabel = '刪除') {
+  return new Promise(resolve => {
+    // 樣式注入（只注一次，沿用 wl-confirm 設計語言）
+    if (!document.getElementById('pf-confirm-style')) {
+      const s = document.createElement('style');
+      s.id = 'pf-confirm-style';
+      s.textContent = `
+        .pf-confirm-overlay {
+          display: none; position: fixed; inset: 0;
+          background: rgba(0,0,0,.65); z-index: 99999;
+          align-items: center; justify-content: center; padding: 24px;
+        }
+        .pf-confirm-overlay.open { display: flex; }
+        .pf-confirm-modal {
+          background: #252830;
+          border-radius: 16px;
+          border: 0.5px solid rgba(255,255,255,.12);
+          padding: 24px 20px 20px;
+          width: 100%; max-width: 320px;
+          animation: pf-confirm-in .18s ease;
+          box-shadow: 0 16px 48px rgba(0,0,0,.7);
+        }
+        @keyframes pf-confirm-in {
+          from { opacity:0; transform: scale(.94); }
+          to   { opacity:1; transform: scale(1); }
+        }
+        .pf-confirm-title {
+          font-size: 16px; font-weight: 500; color: #e8e8ea;
+          margin: 0 0 8px; line-height: 1.4;
+        }
+        .pf-confirm-body {
+          font-size: 13px; color: #9aa0a6;
+          margin: 0 0 22px; line-height: 1.5;
+        }
+        .pf-confirm-btns { display: flex; gap: 10px; }
+        .pf-confirm-cancel, .pf-confirm-ok {
+          flex: 1; min-height: 48px; border-radius: 10px;
+          border: none; font-size: 15px; font-weight: 500;
+          cursor: pointer; transition: background .15s;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .pf-confirm-cancel {
+          background: rgba(255,255,255,.08); color: #cdd0d4;
+          border: 0.5px solid rgba(255,255,255,.1);
+        }
+        .pf-confirm-cancel:hover  { background: rgba(255,255,255,.13); }
+        .pf-confirm-cancel:active { background: rgba(255,255,255,.06); }
+        .pf-confirm-ok { background: #ef5350; color: #fff; }
+        .pf-confirm-ok:hover  { background: #e53935; }
+        .pf-confirm-ok:active { background: #c62828; }
+      `;
+      document.head.appendChild(s);
+    }
+
+    // 建立或重用 overlay
+    let overlay = document.getElementById('pf-confirm-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'pf-confirm-overlay';
+      overlay.className = 'pf-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="pf-confirm-modal" role="dialog" aria-modal="true">
+          <p class="pf-confirm-title"></p>
+          <p class="pf-confirm-body"></p>
+          <div class="pf-confirm-btns">
+            <button class="pf-confirm-cancel">取消</button>
+            <button class="pf-confirm-ok"></button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+    }
+
+    overlay.querySelector('.pf-confirm-title').textContent = title;
+    overlay.querySelector('.pf-confirm-body').textContent  = body;
+    overlay.querySelector('.pf-confirm-ok').textContent    = okLabel;
+
+    const close = (result) => {
+      overlay.classList.remove('open');
+      overlay.querySelector('.pf-confirm-ok').removeEventListener('click', onOk);
+      overlay.querySelector('.pf-confirm-cancel').removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBg);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk     = () => close(true);
+    const onCancel = () => close(false);
+    const onBg     = (e) => { if (e.target === overlay) close(false); };
+    const onKey    = (e) => { if (e.key === 'Escape') close(false); };
+
+    overlay.querySelector('.pf-confirm-ok').addEventListener('click', onOk);
+    overlay.querySelector('.pf-confirm-cancel').addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBg);
+    document.addEventListener('keydown', onKey);
+    overlay.classList.add('open');
+  });
+}
+
 let _initialized = false;
 let _activeKind   = 'holding';
 let _activeListId = null;
@@ -318,7 +416,7 @@ function _bindListSelector() {
       alert('至少要保留一個清單,無法刪除');
       return;
     }
-    if (!confirm(`確定刪除清單「${cur.name}」?裡面所有資料會一起刪除`)) return;
+    if (!await _pfConfirm('刪除清單', `確定刪除清單「${cur.name}」？裡面所有資料會一起刪除`, '刪除')) return;
     await deleteList(_activeListId);
     _autoSelectFirstList();
     _renderListSelector();
@@ -909,7 +1007,7 @@ function _renderTxList(item) {
       });
     });
     row.querySelector('.pf-tx-del').addEventListener('click', async () => {
-      if (!confirm('確定刪除這筆交易?')) return;
+      if (!await _pfConfirm('刪除交易', '確定刪除這筆交易？', '刪除')) return;
       const code = document.getElementById('pfModal').dataset.code;
       await holdingRemoveTx(_activeListId, code, txId);
       const it = getList(_activeListId)?.items.find(i => i.code === code);
@@ -1129,7 +1227,7 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
     document.getElementById('pfModalRemove')?.addEventListener('click', async () => {
       const code = document.getElementById('pfModal').dataset.code;
       if (!code) return;
-      if (!confirm(`確定從清單移除 ${code}?所有交易紀錄會一起刪除`)) return;
+      if (!await _pfConfirm(`移除 ${code}`, '所有交易紀錄會一起刪除', '移除')) return;
       await holdingRemoveCode(_activeListId, code);
       _closeModal();
       render();
@@ -1200,7 +1298,7 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
     document.getElementById('pfWatchRemove')?.addEventListener('click', async () => {
       const code = document.getElementById('pfWatchModal').dataset.code;
       if (!code) return;
-      if (!confirm(`從追蹤清單移除 ${code}?`)) return;
+      if (!await _pfConfirm(`移除 ${code}`, '確定從追蹤清單移除此股？', '移除')) return;
       await watchRemoveCode(_activeListId, code);
       _closeWatchModal();
       render();
