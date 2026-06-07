@@ -30,7 +30,7 @@ export function initAuthUI() {
 
   // 監聽登入狀態變化（由 firebase.js 的 onAuthStateChanged 派發）
   window.addEventListener('authStateChanged', async (e) => {
-    const { user } = e.detail;
+    const user = e.detail?.user ?? null;
     _render(user);
 
     if (user) {
