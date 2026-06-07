@@ -1504,12 +1504,22 @@ function _initFullscreen() {
   //   背景靜默載入，載入完成後篩選器自動走快速路徑（不需本機算 K 線）
   //   週末/假日也能正常使用（顯示最近交易日的資料）
   fetchSnapshot().then(snap => {
-    if (!snap) return;
     const el = document.getElementById('screenerSnapshotStatus');
-    if (el) {
-      el.textContent = `⚡ 策略快取已就緒・${snap.date}・共 ${Object.keys(snap.stocks || {}).length} 支`;
-      el.style.display = '';
+    if (!el) return;
+    if (!snap) {
+      // 有可能是品質驗算失敗（api.js 回 null + 設 window.__snapshotQualityFail）
+      const qFail = window.__snapshotQualityFail;
+      if (qFail) {
+        el.textContent = `⚠️ 策略快取驗算異常（偏差率 ${qFail.rate}%）・已切換本機模式`;
+        el.style.color   = '#ef5350';
+        el.style.display = '';
+        console.warn('[main] snapshot 品質異常，screener 將走本機 K 線計算');
+      }
+      return;
     }
+    el.textContent = `⚡ 策略快取已就緒・${snap.date}・共 ${Object.keys(snap.stocks || {}).length} 支`;
+    el.style.color   = '';
+    el.style.display = '';
     console.log(`[main] snapshot 就緒：${snap.date}`);
   }).catch(() => {});
 

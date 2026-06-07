@@ -2630,10 +2630,24 @@ export async function fetchSnapshot({ force = false } = {}) {
     try {
       const url = `${_WORKER_ORIGIN}/snapshot`;
       const res = await fetch(url, {
+        cache: 'no-store',
         headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
       });
       if (!res.ok) throw new Error(`snapshot ${res.status}`);
       const data = await res.json();
+
+      // ── 防火牆：檢查 GAS 驗算結果 ──────────────────────────────────────
+      const quality = data._quality;
+      if (quality) {
+        if (!quality.pass) {
+          // 驗算失敗：不使用 snapshot，fallback 本機算
+          console.warn(`[snapshot] ⚠️ 品質驗算未通過（偏差率 ${quality.rate}%，原因 ${quality.reason}）→ 導向本機模式`);
+          window.__snapshotQualityFail = quality;
+          return null;  // 讓 main.js 顯示警告，screener 走 needKline
+        }
+        console.log(`[snapshot] 品質驗算通過（偏差率 ${quality.rate}%，抽樣 ${quality.sampled} 支）`);
+      }
+
       window.__snapshot = data;
       console.log(`[snapshot] 載入完成：${Object.keys(data.stocks || {}).length} 支，日期 ${data.date}`);
       return data;
