@@ -83,6 +83,17 @@ export function matchSignals(candles, twseRow = null, opts = {}) {
     }
   } catch (_) { /* 計算失敗時不設定,calcSignalLamps 預設視為 true */ }
 
+  // ── 跌停板直接注入 W5（跌停 = 最強出貨訊號，不需量能條件）────────────
+  if (candles.length >= 2) {
+    const last = candles[candles.length - 1];
+    const prev = candles[candles.length - 2];
+    const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+    const isLimitDown = chgPct <= -9.5 && Math.abs(last.close - (last.low ?? last.close)) < 0.01;
+    if (isLimitDown && !deduped.find(s => s.id === 'W5')) {
+      deduped.push({ id: 'W5', name: '急跌訊號（跌停板）', _limitDown: true });
+    }
+  }
+
   return deduped;
 }
 
@@ -283,6 +294,23 @@ function _matchAllStrategiesAt(candles, twseRow, idx = null, opts = {}) {
  *   history.get('X2');
  *   // { streak: 3, firstTriggerDate: '2026-05-22', isNew: false, totalTriggers: 5 }
  */
+
+// ── 計算從某時間戳到今天的交易日數（排除週六日）────────────────────────────
+function _tradingDaysSince(activatedAt) {
+  const start = new Date(activatedAt);
+  start.setHours(0, 0, 0, 0);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  let days = 0;
+  const d = new Date(start);
+  while (d <= now) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) days++;
+    d.setDate(d.getDate() + 1);
+  }
+  return Math.max(days, 1);
+}
+
 export function getTriggerHistory(candles, twseRow = null, opts = {}) {
   const lookback = Math.min(opts.lookback || 120, candles?.length || 0);
   const result = new Map();
@@ -391,16 +419,32 @@ export function buildIndustryContext(code, candleMap) {
  * @param {object|null} record  DB 記錄（getYaoguRecord 回傳，null=從未追蹤）
  * @returns {object|null}  { status, label, color, daysSince, activatedAt } | null
  */
-export function getYaoguStatus(code, signals, record, streak = null) {
+export function getYaoguStatus(code, signals, record, streak = null, klineCtx = {}) {
   const sigIds = new Set((signals || []).map(s => s.id));
 
   const hasX1  = sigIds.has('X1');
   const hasX2  = sigIds.has('X2');
   const hasX5  = sigIds.has('X5');
-  const hasW1  = sigIds.has('W1');
+  // W1 可能被複合訊號（W3/W4/W8/W9/W10）吸收而消失
+  // exit 判斷改為「W1 或任何包含 W1 語義的超集訊號」
+  const W1_FAMILY = new Set(['W1','W3','W4','W8','W9','W10']);
+  const hasW1  = [...sigIds].some(id => W1_FAMILY.has(id));
   const hasW18 = sigIds.has('W18');
   const hasW14 = sigIds.has('W14');
   const hasW5  = sigIds.has('W5');
+
+  // K 線輔助判斷（由 scanOneCode 預算傳入）
+  const { belowMA10, kdHighDeadCross, testMA20, warningPeak, warningPeakDrop } = klineCtx;
+
+  // 弱妖（warning1）K 線條件：
+  // 1. KD 從高位（K>70）死叉
+  // 2. 跌破 MA10
+  // 3. 測試 MA20 當天守住（低點 < MA20 但收盤 ≥ MA20）
+  const hasKlineWarn1 = kdHighDeadCross || belowMA10 || testMA20;
+
+  // 出貨警示（warning2）K 線條件：
+  // 近 10 根內距高點跌幅 ≥ 10%
+  const hasKlineWarn2 = warningPeakDrop >= 10;
 
   const now = Date.now();
 
@@ -436,8 +480,11 @@ export function getYaoguStatus(code, signals, record, streak = null) {
     none:   '',
   };
 
-  // streak 顯示（從 K 線算，null = 尚未計算）
+  // streak 顯示：妖股啟動天數（activatedAt）
   const streakLabel = streak != null ? ` · 第 ${streak} 天` : '';
+  // 警示天數：從 warningAt 算（warning1/warning2 獨立計算，不混用妖股天數）
+  const warningDays  = record?.warningAt ? _tradingDaysSince(record.warningAt) : null;
+  const warningLabel = warningDays != null ? ` · 第 ${warningDays} 天` : streakLabel;
 
   // ── 底線：跌破 MA20 → 有記錄才出場確認 ──
   if ((hasW1 || hasW18) && record) {
@@ -474,28 +521,38 @@ export function getYaoguStatus(code, signals, record, streak = null) {
   }
 
   // ── 有記錄：依訊號層次判斷 ──
-  if (hasW5) {
+  if (hasW5 || hasKlineWarn2) {
     return {
-      status:   'warning2',
-      label:    `🟠 出貨警示${streakLabel}`,
-      color:    '#f97316',
-      desc:     `${_strengthTag[record.strength ?? strength]} W5 急跌訊號出現，主力可能出貨，建議縮倉`,
-      strength: record.strength ?? strength,
+      status:      'warning2',
+      label:       `🟠 出貨警示${warningLabel}`,
+      color:       '#f97316',
+      desc:        `${_strengthTag[record.strength ?? strength]} W5 急跌訊號出現，主力可能出貨，建議縮倉`,
+      strength:    record.strength ?? strength,
       streak,
       streakLabel,
       activatedAt: record.activatedAt,
+      warningAt:   record.warningAt ?? null,
+      warningDays,
+      // 同時回傳妖股主升段資訊（供 chip 雙行顯示）
+      activeLabel: `🟢 主升段${streakLabel}`,
+      activeDesc:  `${_strengthTag[record.strength ?? 'none']} 啟動已 ${streak ?? '?'} 個交易日`,
     };
   }
-  if (hasW14) {
+  if (hasW14 || hasKlineWarn1) {
     return {
-      status:   'warning1',
-      label:    `🟡 弱妖${streakLabel}`,
-      color:    '#fbbf24',
-      desc:     `${_strengthTag[record.strength ?? strength]} MACD 高位死叉，訊號轉弱，出場前 4-5 天前兆，可考慮出場`,
-      strength: record.strength ?? strength,
+      status:      'warning1',
+      label:       `🟡 弱妖${warningLabel}`,
+      color:       '#fbbf24',
+      desc:        `${_strengthTag[record.strength ?? strength]} MACD 高位死叉，訊號轉弱，出場前 4-5 天前兆，可考慮出場`,
+      strength:    record.strength ?? strength,
       streak,
       streakLabel,
       activatedAt: record.activatedAt,
+      warningAt:   record.warningAt ?? null,
+      warningDays,
+      // 同時回傳妖股主升段資訊（供 chip 雙行顯示）
+      activeLabel: `🟢 主升段${streakLabel}`,
+      activeDesc:  `${_strengthTag[record.strength ?? 'none']} 啟動已 ${streak ?? '?'} 個交易日`,
     };
   }
   if (hasX1 || hasX2 || hasX5) {
@@ -553,33 +610,170 @@ export async function updateYaoguTracker(code, signals, candles = null) {
     const isYaoguSignal = hasX1 || hasX2 || hasX5;
     if (!isYaoguSignal && !record) return null;
 
-    // ② 有 X1/X2/X5 才算 streak（從 K 線上算連續幾根）
-    let streak = null;
-    if (isYaoguSignal && candles?.length >= 20) {
-      const hist = getTriggerHistory(candles);
-      const x1streak = hist.get('X1')?.streak ?? 0;
-      const x2streak = hist.get('X2')?.streak ?? 0;
-      const x5streak = hist.get('X5')?.streak ?? 0;
-      streak = Math.max(x1streak, x2streak, x5streak) || 1;
+    // ② 從今天往回找 X 系列起點：遇到連續 3 根無 X 就停
+    //   這波妖股的起點 = 最早連續觸發 X 的那根
+    //   漲停板已豁免 vol_surge 條件，所以漲停板期間 X 系列能正確觸發
+    let _klineActivatedAt = null;
+    let _klineWarningAt   = null;
+    if (candles?.length >= 20) {
+      const warnIds = new Set(['W5', 'W14']);
+      let noXCount  = 0;
+      const MAX_GAP = 3;
+
+      // 警示根判斷：W5/W14 觸發 OR 當日跌幅 ≥ 5%（不依賴 loss_5d 5日累計）
+      const WARNING_DROP = 5.0;
+      const _isWarnCandle = (idx) => {
+        if (idx <= 0 || idx >= candles.length) return false;
+        const chg = (candles[idx].close - candles[idx - 1].close) / candles[idx - 1].close * 100;
+        return chg <= -WARNING_DROP;
+      };
+
+      // 從今天往回，連續累積「警示根」直到遇到非警示根才停
+      // 警示根 = W5/W14 觸發 OR 跌幅 ≥ 5%
+      // 今天單獨算 X；warningAt 回溯從 back=0 開始（今天也算）
+      let warnStopped = false;
+      for (let back = 0; back < candles.length - 20; back++) {
+        const idx    = candles.length - 1 - back;
+        const sliced = back === 0 ? candles : candles.slice(0, idx + 1);
+        const sigs   = matchSignals(sliced, null);
+        const hasX   = sigs.some(s => s.id === 'X1' || s.id === 'X2' || s.id === 'X5');
+        const hasW   = sigs.some(s => warnIds.has(s.id));
+        const isWarn = hasW || _isWarnCandle(idx);
+        const c      = candles[idx];
+        const ts     = c.time > 1e10 ? c.time : c.time * 1000;
+
+        // X 回溯：獨立處理，不受 warnStopped 影響
+        if (hasX) { _klineActivatedAt = ts; noXCount = 0; }
+        else { noXCount++; if (_klineActivatedAt && noXCount >= MAX_GAP) break; }
+
+        // warningAt 回溯：連續警示根往回延伸，遇非警示根停止
+        if (!warnStopped) {
+          if (isWarn) {
+            _klineWarningAt = ts;   // 持續更新，保留最早的連續警示起點
+          } else {
+            warnStopped = true;     // 遇到非警示根，停止往回延伸
+          }
+        }
+      }
     }
 
-    const status = getYaoguStatus(code, signals, record, streak);
+    // ③ streak 計算：用 K 線校正後的 activatedAt
+    let streak = null;
+    if (isYaoguSignal) {
+      const activatedAt = _klineActivatedAt ?? record?.activatedAt ?? Date.now();
+      streak = _tradingDaysSince(activatedAt);
+    }
+
+    // ── K 線輔助判斷（傳入 getYaoguStatus）──────────────────────────
+    const klineCtx = (() => {
+      if (!candles || candles.length < 20) return {};
+      const closes  = candles.map(c => c.close);
+      const highs   = candles.map(c => c.high ?? c.close);
+      const lows    = candles.map(c => c.low  ?? c.close);
+      const n       = closes.length;
+      const last    = candles[n - 1];
+      const prev    = candles[n - 2];
+
+      // MA10 / MA20
+      const ma10arr = calcMA(closes, 10);
+      const ma20arr = calcMA(closes, 20);
+      const lastMA10  = ma10arr[n - 1];
+      const lastMA20  = ma20arr[n - 1];
+      const lastClose = closes[n - 1];
+      const lastLow   = lows[n - 1];
+
+      // 跌破 MA10
+      const belowMA10 = lastMA10 != null && lastClose < lastMA10;
+
+      // 測試 MA20 當天守住（低點 < MA20 但收盤 ≥ MA20）
+      const testMA20 = lastMA20 != null && lastLow < lastMA20 && lastClose >= lastMA20;
+
+      // KD 從高位（K>70）死叉：需要 calcKD
+      let kdHighDeadCross = false;
+      try {
+        const kdResult = calcKD(candles);
+        const kArr = kdResult.k;
+        const dArr = kdResult.d;
+        if (kArr && kArr.length >= 2) {
+          const kNow  = kArr[n - 1], kPrev = kArr[n - 2];
+          const dNow  = dArr[n - 1], dPrev = dArr[n - 2];
+          // K 從 >70 往下穿越 D
+          kdHighDeadCross = kPrev > 70 && kPrev >= dPrev && kNow < dNow;
+        }
+      } catch(_) {}
+
+      // warningPeak：若有 warningAt，取 warningAt 到今天的最高 high
+      // 同時計算近 10 根距高點跌幅（不依賴 warningAt）
+      const last10Highs = highs.slice(Math.max(0, n - 10));
+      const peak10 = Math.max(...last10Highs);
+      const warningPeakDrop = peak10 > 0 ? (peak10 - lastClose) / peak10 * 100 : 0;
+
+      // warningPeak：這波警示段（warningAt 起）的最高 high
+      let warningPeak = peak10;
+      if (record?.warningAt) {
+        const warnDate = new Date(record.warningAt).toDateString();
+        let wIdx = n - 1;
+        for (let i = n - 1; i >= 0; i--) {
+          const cDate = new Date(candles[i].time > 1e10 ? candles[i].time : candles[i].time * 1000).toDateString();
+          if (cDate === warnDate) { wIdx = i; break; }
+        }
+        warningPeak = Math.max(...highs.slice(wIdx));
+      }
+
+      return { belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop };
+    })();
+
+    // close < MA20 直接強制 exit（不依賴 screener W1 策略條件）
+    let status = getYaoguStatus(code, signals, record, streak, klineCtx);
     if (!status) return null;
+
+    if (status.status !== 'exit' && record && candles?.length >= 20) {
+      const closes    = candles.map(c => c.close);
+      const ma20arr   = calcMA(closes, 20);
+      const lastMA20  = ma20arr[closes.length - 1];
+      const lastClose = closes[closes.length - 1];
+      if (lastMA20 && lastClose < lastMA20) {
+        status = {
+          status:      'exit',
+          label:       '🔴 出場確認',
+          color:       '#ef4444',
+          desc:        '跌破月線，妖股出場底線，請立刻出場',
+          strength:    status.strength,
+          streak,
+          streakLabel: status.streakLabel ?? '',
+          activatedAt: record.activatedAt,
+        };
+      }
+    }
+
+    // warning2 解除：收盤突破 warningPeak → 退回 active
+    if (status.status === 'warning2' && record && klineCtx.warningPeak) {
+      const lastClose = candles[candles.length - 1].close;
+      if (lastClose > klineCtx.warningPeak) {
+        // 壓力有效突破，重新判斷為 active（讓 X 系列決定最終狀態）
+        const hasX = signals.some(s => s.id === 'X1' || s.id === 'X2' || s.id === 'X5');
+        if (hasX) {
+          status = { ...status, status: 'active', label: '🟢 主升段' + (status.streakLabel ?? '') };
+        }
+      }
+    }
 
     const now = Date.now();
 
     if (status.isNew) {
+      const activatedAt     = _klineActivatedAt ?? now;
+      const activatedStreak = _tradingDaysSince(activatedAt);
       const newRecord = {
         code,
-        activatedAt:  now,
-        streak:       streak ?? 1,
-        strength:     status.strength,
-        status:       'active',
-        lastUpdated:  now,
-        exitedAt:     null,
+        activatedAt,
+        streak:      activatedStreak,
+        strength:    status.strength,
+        status:      'active',
+        lastUpdated: now,
+        exitedAt:    null,
       };
       await putYaoguRecord(newRecord);
-      console.log(`[yaogu] 🟢 新妖股啟動: ${code} streak=${streak} strength=${status.strength}`);
+      console.log(`[yaogu] 🟢 新妖股啟動: ${code} activatedAt=${new Date(activatedAt).toISOString().slice(0,10)} streak=${activatedStreak}`);
       return status;
     }
 
@@ -592,20 +786,36 @@ export async function updateYaoguTracker(code, signals, candles = null) {
 
     // 一般更新：streak 和 strength 每次都更新
     if (record) {
+      const newWarningAt = (() => {
+        const isWarning = status.status === 'warning1' || status.status === 'warning2';
+        if (!isWarning) return null;
+        return _klineWarningAt ?? record.warningAt ?? null;
+      })();
       const needUpdate = record.status !== status.status
         || record.streak !== streak
-        || record.strength !== status.strength;
+        || record.strength !== status.strength
+        || (newWarningAt !== record.warningAt);  // warningAt 校正也觸發更新
       if (needUpdate) {
+        // warningAt：用上方預算的 newWarningAt（已含 K 線校正）
+        const warningAt = newWarningAt;
+
+        // activatedAt 自動校正：若 K 線找到更早的觸發點，更新記錄
+        const correctedActivatedAt = (_klineActivatedAt && _klineActivatedAt < (record.activatedAt ?? Infinity))
+          ? _klineActivatedAt : record.activatedAt;
+        const correctedStreak = correctedActivatedAt ? _tradingDaysSince(correctedActivatedAt) : (streak ?? record.streak);
+
         const updated = {
           ...record,
           status:      status.status,
-          streak:      streak ?? record.streak,
+          activatedAt: correctedActivatedAt ?? record.activatedAt,
+          streak:      correctedStreak,
           strength:    status.strength,
           lastUpdated: now,
+          warningAt,
         };
         await putYaoguRecord(updated);
         if (record.status !== status.status) {
-          console.log(`[yaogu] 狀態更新 ${code}: ${record.status} → ${status.status} streak=${streak}`);
+          console.log(`[yaogu] 狀態更新 ${code}: ${record.status} → ${status.status} streak=${streak} warningAt=${warningAt}`);
         }
       }
     }

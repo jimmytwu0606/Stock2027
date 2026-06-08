@@ -561,6 +561,9 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
             const lastCandleTime = cached.candles[cached.candles.length - 1].time * 1000;
             const lastTradingDay = _lastTradingDayTs();
             if (lastTradingDay > 0 && lastCandleTime < lastTradingDay) {
+              // ★ allowStale：批次掃描（篩選器/族群回測）明確接受「差一天」的快取，
+              //   不為了最近一根重抓——避免 GAS 今日尚未更新 R2 時整批打 Worker。
+              if (opts.allowStale) return cached.candles;
               console.log(`[api] kline_cache 資料缺最近交易日 → 重抓 ${symbol}_${period}`,
                 new Date(lastCandleTime).toLocaleDateString('zh-TW'),
                 '應有:', new Date(lastTradingDay).toLocaleDateString('zh-TW'));
@@ -2475,7 +2478,9 @@ export async function preloadBundles(opts = {}) {
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
       if (p.status !== 'fulfilled' || !p.value) {
-        console.warn(`[bundle] part${i + 1} 失敗:`, p.reason?.message || 'no data');
+        const msg = p.reason?.message || 'no data';
+        console.warn(`[bundle] part${i + 1} 失敗:`, msg);
+        try { window.__bundleError = (window.__bundleError || '') + `part${i+1}:${msg}; `; } catch(_){}
         continue;
       }
       const map = p.value;
@@ -2493,9 +2498,15 @@ export async function preloadBundles(opts = {}) {
         }));
         entries.push({ symbol, period: '1y', candles, validUntil });
       }
-      const n = await bulkSetKlineCache(entries);
-      totalSeeded += n;
-      console.log(`[bundle] part${i + 1} 灌入 ${n} 檔`);
+      try {
+        const n = await bulkSetKlineCache(entries);
+        totalSeeded += n;
+        console.log(`[bundle] part${i + 1} 灌入 ${n} 檔`);
+      } catch (e) {
+        const msg = e?.message || 'IDB error';
+        console.warn(`[bundle] part${i + 1} IDB 寫入失敗:`, msg);
+        try { window.__bundleError = (window.__bundleError || '') + `part${i+1}-idb:${msg}; `; } catch(_){}
+      }
     }
 
     try { localStorage.setItem(flagKey, today); } catch (_) {}
@@ -2601,4 +2612,84 @@ export async function fetchVerifyData(code) {
     console.warn('[fetchVerifyData] failed:', code, e.message);
     return null;
   }
+}
+
+// ── signals snapshot（GAS 每日預算，全市場 condition boolean）────────────
+// 存 window.__snapshot = { date, stocks: { code: { condId: true/number } } }
+// 前端用來做預設策略快速篩（不需要本機 K 線運算）
+
+let _snapshotLoading = null;
+
+export async function fetchSnapshot({ force = false } = {}) {
+  // 已載入且不強制重取
+  if (!force && window.__snapshot) return window.__snapshot;
+  // 防重複發請求
+  if (_snapshotLoading) return _snapshotLoading;
+
+  _snapshotLoading = (async () => {
+    try {
+      const url = `${_WORKER_ORIGIN}/snapshot`;
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+      });
+      if (!res.ok) throw new Error(`snapshot ${res.status}`);
+      const data = await res.json();
+
+      // ── 防火牆：檢查 GAS 驗算結果 ──────────────────────────────────────
+      const quality = data._quality;
+      if (quality) {
+        if (!quality.pass) {
+          // 驗算失敗：不使用 snapshot，fallback 本機算
+          console.warn(`[snapshot] ⚠️ 品質驗算未通過（偏差率 ${quality.rate}%，原因 ${quality.reason}）→ 導向本機模式`);
+          window.__snapshotQualityFail = quality;
+          return null;  // 讓 main.js 顯示警告，screener 走 needKline
+        }
+        console.log(`[snapshot] 品質驗算通過（偏差率 ${quality.rate}%，抽樣 ${quality.sampled} 支）`);
+      }
+
+      window.__snapshot = data;
+      console.log(`[snapshot] 載入完成：${Object.keys(data.stocks || {}).length} 支，日期 ${data.date}`);
+      return data;
+    } catch (e) {
+      console.warn('[snapshot] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _snapshotLoading = null;
+    }
+  })();
+
+  return _snapshotLoading;
+}
+
+// 用 snapshot 跑預設策略篩選，回傳 { strategyId: [{ code, name, price, chgPct, vol }] }
+export function runSnapshotScreener(strategies, snapshot) {
+  if (!snapshot?.stocks) return {};
+  const result = {};
+
+  strategies.forEach(strat => {
+    const hits = [];
+    Object.entries(snapshot.stocks).forEach(([code, conds]) => {
+      const match = strat.conditions.every(condDef => {
+        const id  = condDef.id;
+        const val = conds[id];
+        if (val === undefined || val === null) return false;
+
+        // 數值型 condition（chg_min, price_min, price_max, vol_min）
+        if (condDef.type === 'number') {
+          const threshold = condDef.params?.[0]?.value ?? condDef.default ?? 0;
+          if (id === 'price_max' || id === 'chg_max' || id === 'vol_max' || id === 'rsi_max' || id === 'kd_k_max') {
+            return typeof val === 'number' && val <= threshold;
+          }
+          return typeof val === 'number' && val >= threshold;
+        }
+        // boolean condition
+        return val === true;
+      });
+      if (match) hits.push(code);
+    });
+    if (hits.length > 0) result[strat.id] = hits;
+  });
+
+  return result;
 }

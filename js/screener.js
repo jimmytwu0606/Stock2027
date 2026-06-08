@@ -1991,12 +1991,16 @@ export const CONDITION_DEFS = [
       const volOK  = avgVol > 0 && vols[n - 1] >= avgVol * 1.5;
       const prevClose = candles[n - 2].close;
       const chg    = prevClose > 0 ? (candles[n - 1].close - prevClose) / prevClose * 100 : 0;
-      return { volSurgeDropChg: chg, volSurgeDropOK: volOK };
+      // 跌停板判斷
+      const isLimitDown = chg <= -9.5 && Math.abs(candles[n-1].close - (candles[n-1].low ?? candles[n-1].close)) < 0.01;
+      return { volSurgeDropChg: chg, volSurgeDropOK: volOK, isLimitDown };
     },
     match: (indicators, v) =>
-      indicators.volSurgeDropOK === true
+      // 跌停板直接觸發（豁免量能條件）
+      indicators.isLimitDown === true
+      || (indicators.volSurgeDropOK === true
       && indicators.volSurgeDropChg != null
-      && indicators.volSurgeDropChg <= v,
+      && indicators.volSurgeDropChg <= v),
   },
 
   /**
@@ -2155,10 +2159,16 @@ export const CONDITION_DEFS = [
       if (n < 3) return { volSurge10: null };
       const avg = vols.slice(-n - 1, -1).reduce((a, b) => a + b, 0) / n;
       const ratio = avg > 0 ? vols[vols.length - 1] / avg : null;
-      return { volSurge10: ratio };
+      // 漲停板判斷
+      const lastS = candles[candles.length - 1];
+      const prevS = candles[candles.length - 2];
+      const chgPctS = prevS?.close > 0 ? (lastS.close - prevS.close) / prevS.close * 100 : 0;
+      const isLimitUpS = chgPctS >= 9.5 && Math.abs(lastS.close - (lastS.high ?? lastS.close)) < 0.01;
+      return { volSurge10: ratio, isLimitUp: isLimitUpS };
     },
     match: (indicators, v) =>
-      indicators.volSurge10 != null && indicators.volSurge10 >= v,
+      (indicators.volSurge10 != null && indicators.volSurge10 >= v)
+      || indicators.isLimitUp === true,  // 漲停板豁免量能條件
   },
 
   /**
@@ -2195,10 +2205,63 @@ export const CONDITION_DEFS = [
         if (ratio > 0.1) lastVol = lastVol / ratio; // 線性外推全天量
       }
       const surgeRatio = avg > 0 ? lastVol / avg : null;
-      return { volSurge30: surgeRatio };
+      // 漲停板判斷（直接在 calc 裡算，讓 match 可以讀到）
+      const last2 = candles[candles.length - 1];
+      const prev2 = candles[candles.length - 2];
+      const chgPct2 = prev2?.close > 0 ? (last2.close - prev2.close) / prev2.close * 100 : 0;
+      const isLimitUp = chgPct2 >= 9.5 && Math.abs(last2.close - (last2.high ?? last2.close)) < 0.01;
+      return { volSurge30: surgeRatio, isLimitUp };
     },
     match: (indicators, v) =>
-      indicators.volSurge30 != null && indicators.volSurge30 >= v,
+      (indicators.volSurge30 != null && indicators.volSurge30 >= v)
+      || indicators.isLimitUp === true,  // 漲停板豁免量能條件
+  },
+
+  /**
+   * limit_up：今日漲停板（漲幅 ≥ 9.5% 且收盤 = 最高）
+   * 用於豁免 vol_surge 條件，漲停板視為最強量能確認
+   * X1/X2/X5 漲停板時自動觸發（via vol_surge 豁免）
+   */
+  {
+    id:      'limit_up',
+    group:   'price',
+    label:   '漲停板',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      if (candles.length < 2) return { isLimitUp: false };
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+      // 漲停：漲幅 >= 9.5% 且收盤 = 最高價
+      const isLimitUp = chgPct >= 9.5 && Math.abs(last.close - last.high) < 0.01;
+      return { isLimitUp };
+    },
+    match: (indicators) => indicators.isLimitUp === true,
+  },
+
+  /**
+   * limit_down：今日跌停板（跌幅 <= -9.5% 且收盤 = 最低）
+   * Z 系列強空訊號使用
+   */
+  {
+    id:      'limit_down',
+    group:   'price',
+    label:   '跌停板',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      if (candles.length < 2) return { isLimitDown: false };
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+      // 跌停：跌幅 <= -9.5% 且收盤 = 最低價
+      const isLimitDown = chgPct <= -9.5 && Math.abs(last.close - last.low) < 0.01;
+      return { isLimitDown };
+    },
+    match: (indicators) => indicators.isLimitDown === true,
   },
 
   /**
@@ -2681,26 +2744,101 @@ export async function* runScreener(conditions) {
     return;
   }
 
-  // ── Phase B：批次拉 K 線（並發 concurrency=5，比逐一+350ms 快 5 倍）
-  yield { type: 'status', payload: { message: `計算技術指標中（共 ${phase1Pass.length} 檔）…` } };
+  // ── Phase B：技術指標篩選
+  // ⚡ Snapshot 快速路徑：若 window.__snapshot 已載入，直接查 condition boolean，跳過 K 線計算
+  //   命中條件：phase2Conds 的所有 condition id 都存在於 snapshot.stocks[code]
+  //   未命中（基本面、自訂閾值等）→ 走原本 fetchScreenerData 路徑
+  //
+  // ⚠️ 踩雷備忘（2026-06-06）：
+  //   snapshot 的數值型 condition（chg_min/price_min/price_max/vol_min 等）存的是實際值（非 bool）
+  //   必須跟 CONDITION_DEFS 的 match 邏輯對齊，不能直接當 bool 用
+  //   → 數值型 condition 仍讓 match(row, value) 對齊，boolean 型直接查 snapshot
+  const snap = window.__snapshot?.stocks ?? null;
+  const snapCodes   = new Set();  // snapshot 命中的 code（跳過 K 線）
+  const needKline   = [];         // 需要 K 線的 code
+
+  if (snap && phase2Conds.length > 0) {
+    for (const code of phase1Pass) {
+      const sc = snap[code];
+      if (!sc) { needKline.push(code); continue; }
+
+      // snapshot 有此股票資料 → 直接用
+      // 數值型 condition：snapshot 可能存 number（實際值）或 boolean（GAS 固定閾值算好）
+      //   - number → 可做精確 >= 比對
+      //   - boolean / 缺失 → 視為 GAS 已用固定閾值判斷，接受 boolean 值
+      // 完全沒有 snapshot 資料（sc 為 null）的才走 K 線
+      snapCodes.add(code);  // 有 sc 就走 snapshot 路徑
+    }
+    console.log(`[screener] snapshot快速路徑：${snapCodes.size} 支命中，${needKline.length} 支需 K 線`);
+  } else {
+    needKline.push(...phase1Pass);
+  }
+
+  // snapshot 命中的：直接用 sc[id] 比對，不跑 calc
+  for (const code of snapCodes) {
+    const sc  = snap[code];
+    const row = twsePrices[code];
+
+    // 比對邏輯：
+    //   數值型（price/chg/vol/rsi/kd_k）且 snapshot 存 number → fakeRow match
+    //   數值型但 snapshot 存 boolean（gain_10d 等 GAS 固定閾值）→ 直接用 boolean
+    //   boolean 型 → sc[id] === true
+    const pass = phase2Conds.every(c => {
+      const id  = c.def.id;
+      const val = sc[id];
+      if (c.def.type === 'number' && typeof val === 'number') {
+        const fakeRow = { price: sc.price_min ?? 0, chgPct: sc.chg_min ?? 0, volume: sc.vol_min ?? 0 };
+        return c.def.match(fakeRow, c.value);
+      }
+      // boolean 型 or 數值型但存的是 boolean（GAS 固定閾值）
+      return val === true;
+    });
+    if (!pass) continue;
+
+    // 把 sc 的 key 對應到 indicators（供 UI 顯示用，不影響篩選結果）
+    const indicators = { ...sc };
+
+    if (!phase3Conds.length || !hasToken) {
+      yield {
+        type: 'result',
+        payload: {
+          code,
+          name:           getChineseName(code) ?? row?.name ?? code,
+          price:          row?.price ?? sc.price_min ?? null,
+          chgPct:         row?.chgPct ?? sc.chg_min ?? null,
+          volume:         row?.volume ?? sc.vol_min ?? null,
+          indicators,
+          matchedConds:   conditions.map(c => _formatCondLabel(c)),
+          triggerHistory: null,
+        },
+      };
+    } else {
+      phase2Pass.push({ code, row, indicatorsForUI: indicators, triggerHistory: null });
+    }
+  }
+
+  // ── Phase B：K 線路徑（snapshot 未命中的）────────────────────────────────
+  yield { type: 'status', payload: { message: `計算技術指標中（共 ${needKline.length} 檔）…` } };
   const phase2Pass = [];
   const yield_buf  = [];
   let candleMap = new Map();
-  try {
-    candleMap = await fetchScreenerData(phase1Pass, {
-      period,
-      concurrency,
-      onProgress: (done, total) => {
-        document.dispatchEvent(new CustomEvent('screenerPhase2Progress', {
-          detail: { done, total }
-        }));
-      },
-    });
-  } catch (e) {
-    console.warn('[screener] fetchScreenerData 失敗:', e.message);
+  if (needKline.length > 0) {
+    try {
+      candleMap = await fetchScreenerData(needKline, {
+        period,
+        concurrency,
+        onProgress: (done, total) => {
+          document.dispatchEvent(new CustomEvent('screenerPhase2Progress', {
+            detail: { done, total }
+          }));
+        },
+      });
+    } catch (e) {
+      console.warn('[screener] fetchScreenerData 失敗:', e.message);
+    }
   }
 
-  for (const code of phase1Pass) {
+  for (const code of needKline) {
     const candles = candleMap.get(code);
     if (!candles || candles.length < 30) continue;
 

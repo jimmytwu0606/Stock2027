@@ -6,7 +6,7 @@
 import { saveUserTheme, deleteUserTheme, reloadThemes } from './theme.js';
 import { loadHealthCacheBatch, saveHealthCache, getAllSignalsCache, getKlineCache } from './db.js';
 import { resolveYahooSymbol, getChineseName } from './api.js';
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 import { fsGetShared, fsSetShared } from './firebase.js';
 import { scanOneCode } from './signal-scan.js';
 import { currentTier } from './auth-tier.js';
@@ -40,7 +40,6 @@ let _hotToday   = new Set();   // 今日漲停 code Set（盤中偵測）
 let _hotDate    = null;        // 強勢資料日期
 
 // ── 健康度工具（直接用 health.js export）────────────────────
-// healthBadge(score, prefix) / healthBadgeDual(hs, hl, prefix) 已 import
 
 // ── 撥盤狀態（四撥盤新增）────────────────────────────────────
 let _activePanel = 'custom';   // 'passive' | 'active' | 'custom' | 'admin'
@@ -966,7 +965,7 @@ function _renderCompact(body, stocks, theme, themeIdx, themes, stockThemeMap) {
         <button class="theme-stock-del" data-orig="${s._orig}" title="移除">✕</button>
       </div>
       <div class="th-compact-health">
-        ${healthBadgeDual(hs, hl, 'hg')}
+        ${renderHealthBadge(hs, hl)}
         ${yg ? ['X2','X1','X6','X5','X3'].filter(id => yg[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}
         ${_hotToday.has(s.code) ? '<span class="th-hot-pill th-hot-pill--today">🔥今日</span>' : _hotSet.has(s.code) ? `<span class="th-hot-pill">${_hotDate?.slice(5) ?? '前日'}</span>` : ''}
       </div>
@@ -1006,7 +1005,7 @@ function _renderDetail(body, stocks, theme, themeIdx, themes, stockThemeMap) {
       </div>
       <div class="theme-stock-reason">${s.reason || ''}</div>
       <div class="th-compact-health">
-        ${healthBadgeDual(hs, hl, 'hg')}
+        ${renderHealthBadge(hs, hl)}
         ${yg2 ? ['X2','X1','X6','X5','X3'].filter(id => yg2[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}
         ${_hotToday.has(s.code) ? '<span class="th-hot-pill th-hot-pill--today">🔥今日</span>' : _hotSet.has(s.code) ? `<span class="th-hot-pill">${_hotDate?.slice(5) ?? '前日'}</span>` : ''}
       </div>
@@ -1051,8 +1050,8 @@ function _renderTable(body, stocks, theme, themeIdx, themes, stockThemeMap) {
       <td class="th-tbl-td"><span class="theme-stock-name">${s.name}</span></td>
       <td class="th-tbl-td">${_priceHtml(s.code) || '—'}</td>
       <td class="th-tbl-td">${_chgHtml(s.code)}</td>
-      <td class="th-tbl-td">${healthBadge(hs, 'hg')}</td>
-      <td class="th-tbl-td">${healthBadge(hl, 'hg')}</td>
+      <td class="th-tbl-td">${renderHealthBadge(hs, null, { compact: true })}</td>
+      <td class="th-tbl-td">${renderHealthBadge(hl, null, { compact: true })}</td>
       <td class="th-tbl-td">${(() => { const yg3=_yaoguMap.get(s.code); return yg3?['X2','X1','X6','X5','X3'].filter(id=>yg3[id.toLowerCase()]).map(id=>`<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join(''):''; })()}</td>
       <td class="th-tbl-td">${_hotToday.has(s.code)?'<span class="th-hot-pill th-hot-pill--today">🔥今日</span>':_hotSet.has(s.code)?`<span class="th-hot-pill">${_hotDate?.slice(5)??'前日'}</span>`:''}</td>
       <td class="th-tbl-td th-tbl-reason">${s.reason || ''}</td>

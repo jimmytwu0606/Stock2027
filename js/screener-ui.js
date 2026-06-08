@@ -15,7 +15,7 @@ import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 
 // fund 快取（結果渲染後批次讀入）
 let _scFundCache = {};
-import { calcHealth, calcHealthFast, calcHealthLong, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
 import { Config } from './config.js';
 import { getKlineCache } from './db.js';
 
@@ -491,7 +491,7 @@ function _renderResultRow(r) {
       <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-price">${fmt(r.price)}</span></td>
       <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-chg ${chgCls}">${chgStr}</span></td>
       <td class="sc-tbl-td sc-tbl-num">${fmtVol(r.volume)}</td>
-      <td class="sc-tbl-td">${healthBadgeDual(healthShort, healthLong, 'sc')}</td>
+      <td class="sc-tbl-td">${renderHealthBadge(healthShort, healthLong)}</td>
       <td class="sc-tbl-td"><canvas class="sc-sparkline" data-code="${r.code}" width="80" height="32"></canvas></td>
       <td class="sc-tbl-td sc-tbl-tags">${tags}${tags && triggerChip ? '<span style="display:inline-block;width:6px"></span>' : ''}${triggerChip}</td>
       <td class="sc-tbl-td">

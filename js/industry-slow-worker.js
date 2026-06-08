@@ -16,14 +16,27 @@
 //                   { type: 'done' }
 // ============================================================================
 
-import { CONDITION_DEFS } from './screener.js';
-import { STRATEGIES }     from './strategy.js';
+import { STRATEGIES } from './strategy.js';
 
-// ── CONDITION_DEFS Map（O(1) 查詢）────────────────────────────────────────
+// ── Phase 1 內建 match（不依賴 screener.js，避免 firebase.js 鏈）────────────
+const _P1_MATCH = {
+  price_min: (row, v) => row.price >= v,
+  price_max: (row, v) => row.price <= v,
+  chg_min:   (row, v) => row.chgPct >= v,
+  chg_max:   (row, v) => row.chgPct <= v,
+  vol_min:   (row, v) => row.volume >= v,
+  vol_max:   (row, v) => row.volume <= v,
+};
+const _P1_DEFAULT = { price_min:10, price_max:9999, chg_min:3, chg_max:-3, vol_min:1000, vol_max:9999999 };
+
+// ── CONDITION_DEFS Map（由主執行緒傳入 id+phase，Worker 只用於分類 p1/p2）──
 let _condMap = null;
 function getCondMap() {
-  if (!_condMap) _condMap = new Map(CONDITION_DEFS.map(d => [d.id, d]));
   return _condMap;
+}
+function initCondMap(condDefs) {
+  // condDefs 只含 {id, phase}，函式不可序列化
+  _condMap = new Map(condDefs.map(d => [d.id, d]));
 }
 
 function _tsToDate(ts) {
@@ -41,17 +54,23 @@ function _prepareStrategy(strategyId) {
 
   const p1 = [], p2 = [];
   for (const c of strategy.conditions) {
-    const def = condMap.get(c.condId);
-    if (!def) return null;
-    if (def.phase === 3) return null;
-    (def.phase === 1 ? p1 : p2).push({ def, value: c.value ?? def.default });
+    const def = condMap?.get(c.condId);
+    // condMap 為 null（未傳入）時視為 phase=2
+    const phase = def?.phase ?? 2;
+    if (phase === 3) return null;
+    if (phase === 1) {
+      p1.push({ def: { id: c.condId, phase: 1 }, value: c.value ?? _P1_DEFAULT[c.condId] });
+    } else {
+      // Phase2：只需 condId 供 condSeqAt 查詢
+      p2.push({ def: { id: c.condId, phase: 2, calc: def?.calc, match: def?.match }, value: c.value ?? def?.default });
+    }
   }
 
-  // Phase2 需要的 calc 函式（去重）
+  // Phase2 需要的 calc 函式（condReady=false 的 fallback）
   const calcFns = [];
   const seen = new Set();
   for (const { def } of p2) {
-    if (def.calc && !seen.has(def.id)) { calcFns.push(def); seen.add(def.id); }
+    if (def?.calc && !seen.has(def.id)) { calcFns.push(def); seen.add(def.id); }
   }
 
   return { id: strategyId, p1, p2, calcFns };
@@ -73,8 +92,9 @@ function _buildIndCache(candles, stratInfo) {
   return cache;
 }
 
-// ── 單點匹配（使用預計算指標快取）────────────────────────────────────────
-function _matchAt(candles, i, stratInfo, indCache) {
+// ── 單點匹配（優先查 GAS condition 序列，fallback 本機指標快取）──────────
+// condSeqAt: 該根 K 線命中的 condition id Set（來自 GAS R2）
+function _matchAt(candles, i, stratInfo, indCache, condSeqAt) {
   if (i < 19) return false;
 
   const last   = candles[i];
@@ -82,30 +102,47 @@ function _matchAt(candles, i, stratInfo, indCache) {
   const chgPct = prev?.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
   const twseRow = { price: last.close, chgPct, volume: Math.round((last.volume ?? 0) / 1000) };
 
-  // Phase1（純數值比較，極快）
+  // Phase1（內建 match，不依賴 def.match 函式）
   for (const { def, value } of stratInfo.p1) {
-    try { if (!def.match(twseRow, value)) return false; } catch { return false; }
+    const matchFn = _P1_MATCH[def?.id];
+    if (!matchFn) continue;
+    try { if (!matchFn(twseRow, value)) return false; } catch { return false; }
   }
 
-  // Phase2（從快取取指標，不重算）
+  // Phase2（優先查 GAS condition 序列）
   if (stratInfo.p2.length > 0) {
-    const ind = indCache?.[i];
-    if (!ind) return false;
-    for (const { def, value } of stratInfo.p2) {
-      try { if (!def.match(ind, value)) return false; } catch { return false; }
+    if (condSeqAt) {
+      // GAS 序列：直接查 Set，O(1)，極快
+      for (const { def } of stratInfo.p2) {
+        if (!condSeqAt.has(def.id)) return false;
+      }
+    } else {
+      // Fallback：本機指標快取
+      const ind = indCache?.[i];
+      if (!ind) return false;
+      for (const { def, value } of stratInfo.p2) {
+        try { if (!def.match(ind, value)) return false; } catch { return false; }
+      }
     }
   }
   return true;
 }
 
 // ── 訊號計算────────────────────────────────────────────────────────────────
-function _calcSignals(candles, stratInfo, indCache, holdDays) {
+// condSeqSets: Array<Set<string>>，index 對應 candles（由 GAS 序列轉換）
+// condSeqOffset: candles 總長度 - condSeqSets 長度（序列從哪根 candle 開始）
+function _calcSignals(candles, stratInfo, indCache, holdDays, condSeqSets, condSeqOffset) {
   const signals  = [];
   const maxIdx   = candles.length - holdDays - 1;
   const avg20vol = candles.slice(-20).reduce((s, c) => s + (c.volume ?? 0), 0) / 20 / 1000;
 
   for (let i = 60; i <= maxIdx; i++) {
-    if (_matchAt(candles, i, stratInfo, indCache)) {
+    // 查 GAS condition 序列（若有）
+    const seqIdx = condSeqSets ? i - condSeqOffset : -1;
+    const condSeqAt = (condSeqSets && seqIdx >= 0 && seqIdx < condSeqSets.length)
+      ? condSeqSets[seqIdx] : null;
+
+    if (_matchAt(candles, i, stratInfo, indCache, condSeqAt)) {
       const entry    = candles[i].close;
       const exit     = candles[i + holdDays].close;
       const ret      = (exit - entry) / entry * 100;
@@ -129,22 +166,38 @@ self.onmessage = function(e) {
   const { type, payload } = e.data;
   if (type !== 'run') return;
 
-  const { entries, strategies, holdOptions } = payload;
+  const { entries, strategies, holdOptions, condReady, condDefs } = payload;
+  if (condDefs) initCondMap(condDefs);
   const total = entries.length;
 
   // 預處理所有策略（整個 run 只做一次）
   const stratInfos = strategies.map(id => _prepareStrategy(id)).filter(Boolean);
 
   for (let ei = 0; ei < entries.length; ei++) {
-    const { code, candles } = entries[ei];
+    const { code, candles: rawCandles, condSeq } = entries[ei];
+
+    // condReady 模式：從 condSeq 轉換成 Set 陣列，candles 仍需用於 Phase1 + 持有報酬計算
+    // condSeq.seq: Array<string[]>（true condition ids，由舊到新）
+    // condSeq.len: 序列長度
+    let condSeqSets = null, condSeqOffset = 0;
+    const candles = rawCandles;  // condReady 時 strategy-lab 仍傳 candles（Phase1 + 報酬計算需要）
+
+    if (condReady && condSeq?.seq) {
+      condSeqSets = condSeq.seq.map(ids => new Set(ids));
+      // offset = candles 總長 - seq 長（seq 從哪根 candle 開始）
+      condSeqOffset = (candles?.length ?? condSeq.len) - condSeq.len;
+    }
+
+    if (!candles || candles.length < 60) continue;
+
     let bestScore = -Infinity, bestSigs = null, bestStrat = null, bestHold = null;
 
     for (const stratInfo of stratInfos) {
-      // 每支股票 × 每個策略只算一次指標（不因 holdDays 重算）
-      const indCache = _buildIndCache(candles, stratInfo);
+      // condReady 模式下 Phase2 查序列，indCache 只在 fallback 時需要
+      const indCache = condSeqSets ? null : _buildIndCache(candles, stratInfo);
 
       for (const hold of holdOptions) {
-        const sigs = _calcSignals(candles, stratInfo, indCache, hold);
+        const sigs = _calcSignals(candles, stratInfo, indCache, hold, condSeqSets, condSeqOffset);
         if (!sigs.length) continue;
         const wins  = sigs.filter(s => s.win).length;
         const wr    = wins / sigs.length * 100;

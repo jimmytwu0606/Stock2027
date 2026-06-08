@@ -1267,7 +1267,7 @@ export async function renderStockSignals(candles, code) {
 
   // v2.8 妖股狀態機：個股頁明確提示
   // 先用 AppState 快速渲染一次（可能沒有 streak）
-  _renderYaoguChip(code, signals);
+  _renderYaoguChip(code, signals, candles);
 
   // 監聽 updateYaoguTracker 算完的事件，streak 算好後重繪一次
   const _onYaoguUpdated = async (e) => {
@@ -1295,7 +1295,7 @@ export async function renderStockSignals(candles, code) {
     } catch(e) { /* silent */ }
 
     // 重繪妖股狀態 chip
-    _renderYaoguChip(code, AppState.signals?.[code] ?? signals);
+    _renderYaoguChip(code, AppState.signals?.[code] ?? signals, candles);
   };
   document.addEventListener('yaoguUpdated', _onYaoguUpdated);
   // 10 秒後自動清除監聽（防止 memory leak）
@@ -1306,7 +1306,7 @@ export async function renderStockSignals(candles, code) {
  * v2.8 個股頁妖股狀態 chip（明確提示版）
  * 插入到 #stockYaoguChip 容器（若無則自動插入到 stockSignalTags 之前）
  */
-async function _renderYaoguChip(code, signals) {
+async function _renderYaoguChip(code, signals, candles = null) {
   let el = document.getElementById('stockYaoguChip');
   if (!el) {
     const signalContainer = document.getElementById('stockSignalTags');
@@ -1317,36 +1317,95 @@ async function _renderYaoguChip(code, signals) {
   }
 
   try {
+    const record = await getYaoguRecord(code);
+
+    // close < MA20 直接在渲染層判斷 exit（不依賴 AppState.yaoguStatus 快取）
+    // 原因：AppState.yaoguStatus 由 updateYaoguTracker 寫入，可能是舊狀態
+    // 渲染層直接算，確保跌破月線立即顯示出場確認
+    // candles 由 renderStockSignals 傳入
+    let forceExit = false;
+    if (candles?.length >= 20) {
+      const closes   = candles.map(c => c.close);
+      const ma20arr  = closes.map((_, i) => {
+        if (i < 19) return null;
+        return closes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20;
+      });
+      const lastMA20  = ma20arr[closes.length - 1];
+      const lastClose = closes[closes.length - 1];
+      if (lastMA20 && lastClose < lastMA20 && record) forceExit = true;
+    }
+
+    if (forceExit) {
+      el.innerHTML = `
+        <div class="yaogu-chip" style="border-color:#ef4444;color:#ef4444">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label">🔴 出場確認</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">跌破月線，妖股出場底線，請立刻出場</span>
+          </div>
+        </div>`;
+      return;
+    }
+
     // 優先從 AppState 讀（updateYaoguTracker 跑完後寫入，含最新 streak）
     let ys = AppState.yaoguStatus?.[code] ?? null;
     if (!ys) {
-      const record = await getYaoguRecord(code);
       const streak = record?.streak ?? null;
       ys = getYaoguStatus(code, signals, record, streak);
     }
 
     if (!ys) { el.innerHTML = ''; return; }
+    const exitBtn = '';  // 重置按鈕已移除
 
-    // 有 DB 記錄才顯示重置按鈕
-    const record = await getYaoguRecord(code);
-    const exitBtn = record
-      ? `<button class="yaogu-reset-btn" data-code="${code}" title="重置妖股追蹤記錄">↺ 重置</button>`
+    // 盤中急跌警示（active 狀態下今日跌幅 < -5% 才顯示）
+    const liveChgPct  = window.__priceCache?.[code]?.chgPct ?? 0;
+    const isBigDrop   = liveChgPct <= -5;
+    const dropWarnHtml = (ys.status === 'active' || ys.status === 'watching') && isBigDrop
+      ? `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(239,83,80,.3)">
+           <span class="yaogu-chip-label" style="color:#ef5350">⚠️ 今日急跌 ${liveChgPct.toFixed(1)}%</span>
+           <span class="yaogu-chip-desc" style="color:#ef5350">注意風險，留意是否觸發出貨警示</span>
+         </div>`
       : '';
 
-    el.innerHTML = `
-      <div class="yaogu-chip" style="border-color:${ys.color};color:${ys.color}">
-        <span class="yaogu-chip-label">${ys.label}</span>
-        <span class="yaogu-chip-desc">${ys.desc ?? ''}</span>
-        ${exitBtn}
-      </div>`;
+    // exit 狀態：紅色單行，最高優先顯示
+    if (ys.status === 'exit' || ys.status === 'exited') {
+      el.innerHTML = `
+        <div class="yaogu-chip" style="border-color:#ef4444;color:#ef4444">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label">🔴 出場確認</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">跌破月線，妖股出場底線，請立刻出場</span>
+          </div>
+        </div>`;
+      return;
+    }
 
-    el.querySelector('.yaogu-reset-btn')?.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      await deleteYaoguRecord(code);
-      delete AppState.yaoguStatus?.[code];
-      _renderYaoguChip(code, signals);
-      console.log(`[yaogu] 手動重置: ${code}`);
-    });
+    // warning 狀態：同時顯示妖股主升段（上行）+ 警示（下行）
+    const isWarning = ys.status === 'warning1' || ys.status === 'warning2';
+    if (isWarning && ys.activeLabel) {
+      el.innerHTML = `
+        <div class="yaogu-chip yaogu-chip-dual" style="border-color:${ys.color}">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label" style="color:#4ade80">${ys.activeLabel}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.activeDesc ?? ''}</span>
+          </div>
+          <div class="yaogu-chip-row-warning">
+            <span class="yaogu-chip-label" style="color:${ys.color}">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:${ys.color}">${ys.desc ?? ''}</span>
+          </div>
+          ${exitBtn}
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="yaogu-chip yaogu-chip-dual${dropWarnHtml ? ' ' : ''}" style="border-color:${ys.color};color:${ys.color}">
+          <div class="yaogu-chip-row-active" style="color:${ys.color}">
+            <span class="yaogu-chip-label">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
+          </div>
+          ${dropWarnHtml}
+          ${exitBtn}
+        </div>`;
+    }
+
+
   } catch (e) {
     console.warn('[yaogu] _renderYaoguChip 失敗:', e.message);
     el.innerHTML = '';

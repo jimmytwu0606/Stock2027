@@ -937,6 +937,25 @@ body.resizing {
 }
 #stockYaoguChip .yaogu-chip-label { font-size: 13px; font-weight: 500; }
 #stockYaoguChip .yaogu-chip-desc  { font-size: 12px; color: var(--muted); }
+
+/* 雙行 warning chip */
+#stockYaoguChip .yaogu-chip-dual {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 11px;
+}
+#stockYaoguChip .yaogu-chip-row-active,
+#stockYaoguChip .yaogu-chip-row-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+#stockYaoguChip .yaogu-chip-row-warning {
+  padding-top: 3px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
 #stockYaoguChip .yaogu-reset-btn {
   margin-left: 2px;
   font-size: 11px;

@@ -17,7 +17,7 @@ if (!localStorage.getItem('__devMode')) {
 // ────────────────────────────────────────────────────────────
 
 import { AppState, updateWatchlistPrice } from './state.js';
-import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore, preloadBundles } from './api.js';
+import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore, preloadBundles, fetchSnapshot } from './api.js';
 import {
   initCharts, renderChartData, setSubChartsActive,
   getMainChart, getCandleSeries, getMainChartEl,
@@ -64,11 +64,12 @@ import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
 import { initStrategyPanel, getSignalPeriod, refreshStrategyCards, calcSignalLamps, STRATEGIES } from './strategy.js';
 import { initStrategyModal, renderStrategyGrid } from './modal-strategy.js';
-import { initPortfolio } from './portfolio-ui.js';
+import { initPortfolio, refreshHealthFromPrice } from './portfolio-ui.js';
 import { initPatternDraw, updateScreenerCount } from './pattern-draw.js';
 import { initScreenerHub } from './screener-hub.js';
 import { initStrategyLab } from './strategy-lab.js';
 import { initMarketMini } from './market-mini.js';
+import { initMarketPulse } from './market-pulse.js';
 import { initHotgroup }  from './market.js';
 import { initTheme, reloadThemes } from './theme.js';
 import { renderThemePanel } from './theme-ui.js';
@@ -84,7 +85,7 @@ import { initWatchlist, reloadWatchlist, addStockToGroup, getDefaultGroupId, upd
 import * as PriceHub from './price-hub.js';
 import { initLayout }    from './layout.js';
 // screener-result-store 的 UI 邏輯已整合進 screener-ui.js，不需在此 import
-import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache } from './signal-scan.js';
+import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache, scanOneCode } from './signal-scan.js';
 
 // ── Firebase Auth UI（新增）──
 import { initAuthUI } from './auth-ui.js';
@@ -1469,7 +1470,14 @@ function _initFullscreen() {
 (async function init() {
   // 1. 先啟動 IndexedDB 並遷移舊資料
   await initDB();
-  await migrateFromLocalStorage();
+  // ⚠️ 踩雷備忘：migrate 在「乾淨新機」可能丟錯（預期的舊 localStorage 不存在），
+  //   若不 catch → init() 整個 reject → 後面的 bundle 預載 kick 從未註冊 → 新機不下載 K 線包。
+  //   包 try/catch，遷移失敗只記 log，不連累後續初始化。
+  try {
+    await migrateFromLocalStorage();
+  } catch (e) {
+    console.warn('[main] migrateFromLocalStorage 失敗(忽略,不影響後續):', e?.message);
+  }
   // Phase 7.4 — 背景清理過期 K 線快取(不 await,不擋初始化)
   cleanupExpiredKlineCache();
 
@@ -1492,6 +1500,30 @@ function _initFullscreen() {
   //   修法：最早期預載 Firebase names/batch*，loadStock 時 _nameCache 已有資料
   // ⚠️ 存到 window.__namesReady，讓 loadStock 的補刷邏輯可以等它完成
   window.__namesReady = preloadNamesFromFirestore().catch(() => {});
+
+  // 1.6 Snapshot 預載（GAS 每日盤後預算的全市場 condition snapshot）
+  //   背景靜默載入，載入完成後篩選器自動走快速路徑（不需本機算 K 線）
+  //   週末/假日也能正常使用（顯示最近交易日的資料）
+  fetchSnapshot().then(snap => {
+    const el = document.getElementById('screenerSnapshotStatus');
+    if (!el) return;
+    if (!snap) {
+      // 有可能是品質驗算失敗（api.js 回 null + 設 window.__snapshotQualityFail）
+      const qFail = window.__snapshotQualityFail;
+      if (qFail) {
+        el.textContent = `⚠️ 策略快取驗算異常（偏差率 ${qFail.rate}%）・已切換本機模式`;
+        el.style.color   = '#ef5350';
+        el.style.display = '';
+        console.warn('[main] snapshot 品質異常，screener 將走本機 K 線計算');
+      }
+      return;
+    }
+    el.textContent = `⚡ 策略快取已就緒・${snap.date}・共 ${Object.keys(snap.stocks || {}).length} 支`;
+    el.style.color   = '';
+    el.style.display = '';
+    console.log(`[main] snapshot 就緒：${snap.date}`);
+    window.dispatchEvent(new CustomEvent('snapshotReady'));
+  }).catch(() => {});
 
   // 2. 載入設定（async）
   await loadConfig();
@@ -1697,9 +1729,28 @@ function _initFullscreen() {
 
   // 11b. 初次掃描延遲 90 秒：等 loadStock K線穩定完成再掃
   // ⚠️ 踩雷備忘：延遲太短（5秒）會與 loadStock K線並發衝爆 Worker，造成 K線 25 分鐘空白
-  setTimeout(() => {
+  setTimeout(async () => {
     console.log('[main] 初次自動掃描燈號');
     scanWatchlistSignals({ silent: true });
+
+    // ── 每日自動重建 yaogu 記錄：對所有自選清單個股跑 scanOneCode ──────
+    // 確保 activatedAt/warningAt 每天從 K 線重算，不沿用可能錯誤的舊值
+    const today = new Date().toISOString().slice(0, 10);
+    const yaoguRebuildKey = 'yaogu_rebuild_date';
+    if (localStorage.getItem(yaoguRebuildKey) !== today) {
+      try {
+        const groups = AppState.watchlistGroups ?? [];
+        const codes = [...new Set(groups.flatMap(g => g.stocks?.map(s => s.code) ?? []))];
+        console.log(`[main] yaogu 每日重建：${codes.length} 支`);
+        for (const code of codes) {
+          await scanOneCode(code, { force: false }).catch(() => {});
+        }
+        localStorage.setItem(yaoguRebuildKey, today);
+        console.log('[main] yaogu 每日重建完成');
+      } catch(e) {
+        console.warn('[main] yaogu rebuild failed:', e.message);
+      }
+    }
   }, 90 * 1000);
 
   setInterval(() => {
@@ -1795,6 +1846,7 @@ function _initFullscreen() {
   if (first) loadStock(first.code);
 
 initMarketMini();
+initMarketPulse();
 
 // ── 盤中即時報價（mis.twse.com.tw）+ K線定時更新 ───────────────────────────
 // Worker 已加 mis session 管理，可直接打即時 API
@@ -1905,6 +1957,8 @@ initMarketMini();
         await updateStockPrices(allMap);
       }
       console.log(`[main] 自選清單盤中更新完成 ${codes.length} 檔（已存 DB）`);
+      // 報價更新完畢，重算庫存健康度（接入即時價）
+      refreshHealthFromPrice();
     } catch (e) {
       console.warn('[main] _pollWatchlistPrices failed:', e.message);
     } finally {

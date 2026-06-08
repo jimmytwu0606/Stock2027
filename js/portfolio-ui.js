@@ -11,7 +11,7 @@ import {
 } from './portfolio.js';
 import { getChineseName, ensureChineseName, fetchHistoryCached, toYahooSymbol, resolveYahooSymbol, fetchFundamentalsBatch } from './api.js';
 import { getAllGroups, loadHealthCacheBatch, saveHealthCache } from './db.js';
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 
 // 自製 prompt — 取代瀏覽器原生 prompt(避免醜陋的瀏覽器彈窗)
 function pfPrompt(message, defaultValue = '') {
@@ -584,7 +584,7 @@ function _renderHoldingTable() {
         <td class="pf-name">${_esc(name)}</td>
         <td class="pf-code">${item.code}</td>
         <td class="pf-price">${price != null ? price.toFixed(2) : '—'}</td>
-        <td class="pf-health">${healthBadgeDual(health, healthLong, 'pf')}</td>
+        <td class="pf-health">${renderHealthBadge(health, healthLong)}</td>
         <td class="pf-shares">${shares.toLocaleString()}</td>
         <td class="pf-avg">${avgCost > 0 ? avgCost.toFixed(2) : '—'}</td>
         <td class="pf-pl ${plCls}">
@@ -715,7 +715,7 @@ function _renderWatchTable() {
         <td class="pf-name">${_esc(name)}</td>
         <td class="pf-code">${item.code}</td>
         <td class="pf-price">${price != null ? price.toFixed(2) : '—'}</td>
-        <td class="pf-health">${healthBadgeDual(health, healthLong, 'pf')}</td>
+        <td class="pf-health">${renderHealthBadge(health, healthLong)}</td>
         <td class="pf-avg">${item.refPrice > 0 ? item.refPrice.toFixed(2) : '—'}</td>
         <td class="pf-pl ${distCls}">
           ${(price != null && item.refPrice > 0) ? `${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%` : '—'}
@@ -897,7 +897,39 @@ async function _fetchBatch(items) {
         if (last?.close) _priceCache[item.code] = last.close;
         if (candles.length >= 20) {
           const fund = _fundCache[item.code] ?? null;
-          const candlesShort = candles.length > 65 ? candles.slice(-65) : candles;
+          let candlesShort = candles.length > 65 ? candles.slice(-65) : candles;
+
+          // ── 接入今日即時報價（盤中健康度即時化）──────────────────────────
+          const livePrice  = window.__priceCache?.[item.code]?.price;
+          const livePrev   = window.__priceCache?.[item.code]?.prev;
+          const liveVolume = window.__priceCache?.[item.code]?.volume ?? 0;
+          if (livePrice && livePrev && candlesShort.length > 0) {
+            const todayStr = _twDateStr();
+            const lastC    = candlesShort[candlesShort.length - 1];
+            const lastDate = typeof lastC.time === 'string'
+              ? lastC.time.slice(0, 10)
+              : new Date((lastC.time > 1e10 ? lastC.time : lastC.time * 1000)).toISOString().slice(0, 10);
+            if (lastDate < todayStr) {
+              // 最後一根是昨收，接一根今日模擬K
+              candlesShort = [...candlesShort, {
+                time:   Math.floor(Date.now() / 1000),
+                open:   livePrev,
+                high:   Math.max(livePrev, livePrice),
+                low:    Math.min(livePrev, livePrice),
+                close:  livePrice,
+                volume: liveVolume,
+              }];
+            } else {
+              // 最後一根就是今日，更新收盤
+              candlesShort = [...candlesShort.slice(0, -1), {
+                ...lastC,
+                close:  livePrice,
+                high:   Math.max(lastC.high ?? livePrice, livePrice),
+                low:    Math.min(lastC.low  ?? livePrice, livePrice),
+                volume: Math.max(lastC.volume ?? 0, liveVolume),
+              }];
+            }
+          }
           const hShort = calcHealth(candlesShort);
           const hLong  = calcHealthLong(candles, fund);
           _healthCache[item.code]     = hShort;
@@ -1377,4 +1409,11 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
 
 function _esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+}
+
+// ── 盤中健康度觸發入口（由 main.js MIS 更新後呼叫）────────────────────────
+// 有 debounce 保護，多次呼叫只跑一次
+export function refreshHealthFromPrice() {
+  if (!_isTradingNow()) return;
+  _refreshHealthInBackground(false);  // force=false：有快取且有效時跳過
 }

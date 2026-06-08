@@ -29,6 +29,7 @@
   <link rel="stylesheet" href="css/strategy-lab.css" />
   <link rel="stylesheet" href="css/search-card.css" />
   <link rel="stylesheet" href="css/additions.css" />
+  <link rel="stylesheet" href="css/market-pulse.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&display=swap">
   <link rel="stylesheet" href="css/splash.css" />
@@ -179,6 +180,8 @@
       <span class="status-label" id="statusLabel">盤後模式</span>
       <span class="status-label" id="nowTime"></span>
       <span class="data-source">TWSE + Yahoo Finance</span>
+      <!-- 市場溫度計 topbar 入口 -->
+      <div id="mpTopbarSlot"></div>
       <div id="authArea"></div>                                    <!-- ← 新增這行 -->
       <button class="settings-btn" id="settingsBtn" title="設定">⚙</button>
     </div>
@@ -741,6 +744,8 @@
       <div class="hub-body" id="hubBody">
 
     <div class="hub-sub" id="hubSubScreener">
+      <!-- snapshot 狀態列 -->
+      <div id="screenerSnapshotStatus" style="display:none;font-size:11px;color:var(--accent,#58a6ff);padding:4px 10px 0;"></div>
       <div class="screener-wrap hub-screener-wrap">
 
         <!-- 狀態 / 進度（全寬，modal 開始篩選後顯示） -->
@@ -1700,6 +1705,28 @@
 </div>
 
 <!-- 看盤頁右下角懸浮市場總覽 -->
+<!-- 市場溫度計 Modal -->
+<div id="mpModal" role="dialog" aria-modal="true" aria-label="市場溫度計">
+  <div class="mp-modal">
+    <div class="mp-modal-hd">
+      <i class="ti ti-activity" style="font-size:17px;color:var(--down)" aria-hidden="true"></i>
+      <span class="mp-modal-title">市場溫度計</span>
+      <span class="mp-modal-date" id="mpModalDate"></span>
+      <button class="mp-modal-close" id="mpModalClose" aria-label="關閉">✕</button>
+    </div>
+    <div class="mp-tab-bar">
+      <button class="mp-tab active" data-tab="auto">盤面分析</button>
+      <button class="mp-tab" data-tab="ai">AI 深度分析</button>
+      <button class="mp-tab" data-tab="import">匯入分析</button>
+    </div>
+    <div class="mp-modal-body">
+      <div id="mpPanel_auto"  class="mp-tab-panel" style="display:flex;flex-direction:column;gap:11px"></div>
+      <div id="mpPanel_ai"    class="mp-tab-panel" style="display:none;flex-direction:column;gap:11px"></div>
+      <div id="mpPanel_import" class="mp-tab-panel" style="display:none;flex-direction:column;gap:11px"></div>
+    </div>
+  </div>
+</div>
+
 <button id="marketMiniBtn" class="mm-fab" title="市場總覽">📊</button>
 
 <div id="marketMiniPanel" class="mm-panel">

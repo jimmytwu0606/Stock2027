@@ -21,7 +21,7 @@ import { runSeedScan, abortSeedScan, runSingleSeedScan } from './seed-scan.js';
 import { getGroups, addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { getAllSeedSets, saveSeedSet, deleteSeedSet, getAllSignalsCache } from './db.js';
 import { getChineseName } from './api.js';
-import { calcHealth, calcHealthFast, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
 import { scanOneCode } from './signal-scan.js';
 
 // 排序狀態
@@ -862,8 +862,8 @@ function _renderResults(items) {
       <td class="sr-tbl-td"><span class="sr-tbl-name">${item.name}</span></td>
       <td class="sr-tbl-td"><span class="sr-tbl-price">${priceVal.toFixed(priceVal >= 100 ? 0 : 1)}</span></td>
       <td class="sr-tbl-td"><span class="sr-tbl-chg ${chgCls}">${chgStr}</span></td>
-      <td class="sr-tbl-td">${healthBadge(hs, 'hg')}</td>
-      <td class="sr-tbl-td">${healthBadge(hl, 'hg')}</td>
+      <td class="sr-tbl-td">${renderHealthBadge(hs, null, { compact: true })}</td>
+      <td class="sr-tbl-td">${renderHealthBadge(hl, null, { compact: true })}</td>
       <td class="sr-tbl-td">${yg ? ['X2','X1','X6','X5'].filter(id => yg[id.toLowerCase()]).map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`).join('') : ''}</td>
       <td class="sr-tbl-td"><canvas class="sr-mini-chart" height="36" data-code="${item.code}"></canvas></td>
       <td class="sr-tbl-td">

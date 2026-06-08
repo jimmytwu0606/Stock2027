@@ -23,7 +23,7 @@ import { scanOneCode } from './signal-scan.js';
 let _prFundCache = {};
 // 妖股快取（掃描結果存這裡，重繪時用）
 let _prYaoguMap = new Map();
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 
 // 排序狀態
 let _prSortKey = 'score';
@@ -416,8 +416,8 @@ function _renderAllResults() {
       <td class="pr-td pr-td-score" style="color:${scoreColor}">${item.score.toFixed(1)}%</td>
       <td class="pr-td"><span class="pr-row-price">${priceVal > 0 ? priceVal.toFixed(priceVal >= 100 ? 0 : 1) : '—'}</span></td>
       <td class="pr-td"><span class="pr-row-chg ${chgCls}">${chgStr}</span></td>
-      <td class="pr-td">${healthBadge(healthShort, 'hg')}</td>
-      <td class="pr-td">${healthBadge(healthLong, 'hg')}</td>
+      <td class="pr-td">${renderHealthBadge(healthShort, null, { compact: true })}</td>
+      <td class="pr-td">${renderHealthBadge(healthLong, null, { compact: true })}</td>
       <td class="pr-td">${yg ? ['X2','X1','X6','X5'].filter(id=>yg[id.toLowerCase()]).map(id=>'<span class="th-yaogu-pill th-yaogu-pill--'+id.toLowerCase()+'">'+id+'</span>').join('') : ''}</td>
       <td class="pr-td"><canvas class="pr-mini-chart" width="100" height="36" data-code="${item.code}"></canvas></td>
       <td class="pr-td">
