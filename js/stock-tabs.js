@@ -1374,34 +1374,38 @@ function _calcExitLines(record, candles, code) {
   const trailLine = peak  * (1 - TRAIL_PCT / 100);
   const retPct    = (cur / entry - 1) * 100;
 
-  const stopHit  = cur <= stopLine;
-  const trailHit = retPct > 0 && cur <= trailLine;
-  const distStop  = (cur / stopLine  - 1) * 100;
-  const distTrail = (cur / trailLine - 1) * 100;
+  // ── 單一有效防線：兩條取較高者，跌破即出場 ──
+  //   守本金:  進場價 × 0.80（固定）
+  //   鎖獲利:  高點 × 0.75（高點創新高就跟著上移，超過成本後接管防線）
+  const guardLine  = Math.max(stopLine, trailLine);
+  const guardMode  = trailLine > stopLine ? 'profit' : 'capital';   // 防線目前守什麼
+  const guardHit   = cur <= guardLine;
+  const distGuard  = (cur / guardLine - 1) * 100;
+  // 防線已鎖住的最低出場報酬（profit 模式下）
+  const lockedPct  = (guardLine / entry - 1) * 100;
 
   const fmt = v => v >= 100 ? v.toFixed(0) : v.toFixed(2);
-  let html, breach = stopHit || trailHit;
+  let html, breach = guardHit;
+  const lineData = { guardLine, guardMode };
 
-  if (stopHit) {
+  if (guardHit) {
+    const why = guardMode === 'profit'
+      ? `高點 ${fmt(peak)} 已回落 ${(100 - cur / peak * 100).toFixed(1)}%，該帶著利潤下車了`
+      : `自啟動日 ${retPct.toFixed(1)}%，超出妖股容錯邊界（-${STOP_PCT}%）`;
     html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(239,83,80,.3)">
-      <span class="yaogu-chip-label" style="color:#ef4444">📏 跌破停損線 ${fmt(stopLine)}</span>
-      <span class="yaogu-chip-desc" style="color:#ef4444">自啟動日 ${retPct.toFixed(1)}%，超出妖股容錯邊界（-${STOP_PCT}%），建議出場</span>
-    </div>`;
-  } else if (trailHit) {
-    html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(239,83,80,.3)">
-      <span class="yaogu-chip-label" style="color:#f59e0b">📏 觸發回落停利線 ${fmt(trailLine)}</span>
-      <span class="yaogu-chip-desc" style="color:#f59e0b">高點 ${fmt(peak)} 已回落 ${(100 - cur / peak * 100).toFixed(1)}%（警戒 ${TRAIL_PCT}%），建議鎖住獲利出場</span>
+      <span class="yaogu-chip-label" style="color:#ef4444">📏 跌破出場線 ${fmt(guardLine)}</span>
+      <span class="yaogu-chip-desc" style="color:#ef4444">${why}，建議出場</span>
     </div>`;
   } else {
-    const trailTxt = retPct > 0
-      ? `回落線 ${fmt(trailLine)}（距 ${distTrail >= 0 ? '+' : ''}${distTrail.toFixed(1)}%）`
-      : `回落線未啟用（尚未獲利）`;
+    const modeTxt = guardMode === 'profit'
+      ? `已上移鎖利，出場至少 ${lockedPct >= 0 ? '+' : ''}${lockedPct.toFixed(1)}%`
+      : `守本金 -${STOP_PCT}%，高點再漲會自動上移`;
     html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(255,255,255,.06)">
       <span class="yaogu-chip-label" style="color:var(--muted)">📏 出場線</span>
-      <span class="yaogu-chip-desc" style="color:var(--muted)">停損 ${fmt(stopLine)}（距 +${distStop.toFixed(1)}%）｜高點 ${fmt(peak)}，${trailTxt}</span>
+      <span class="yaogu-chip-desc" style="color:var(--muted)">${fmt(guardLine)}（跌破出場，距 +${distGuard.toFixed(1)}%）· ${modeTxt}</span>
     </div>`;
   }
-  return { html, breach };
+  return { html, breach, lineData };
 }
 
 async function _renderYaoguChip(code, signals, candles = null) {
@@ -1434,6 +1438,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
     }
 
     if (forceExit) {
+      import('./chart-exit-lines.js').then(m => m.clearExitLines()).catch(() => {});
       el.innerHTML = `
         <div class="yaogu-chip" style="border-color:#ef4444;color:#ef4444">
           <div class="yaogu-chip-row-active">
@@ -1450,13 +1455,23 @@ async function _renderYaoguChip(code, signals, candles = null) {
     // _onYaoguUpdated 重繪時 AppState 已有值，才真正顯示
     const ys = AppState.yaoguStatus?.[code] ?? null;
 
-    if (!ys) { el.innerHTML = ''; return; }
+    if (!ys) {
+      el.innerHTML = '';
+      import('./chart-exit-lines.js').then(m => m.clearExitLines()).catch(() => {});
+      return;
+    }
     const exitBtn = '';  // 重置按鈕已移除
 
     // 三線出場監控（停損線/回落停利線，X2 實證參數 20/25）
     const exitLines = (ys.status === 'active' || ys.status === 'watching' || ys.status === 'warning1' || ys.status === 'warning2')
       ? _calcExitLines(record, candles, code)
       : null;
+
+    // 同步畫到 K 線圖（紅虛線=停損 / 橘虛線=回落停利，lazy import 避免循環依賴）
+    import('./chart-exit-lines.js').then(m => {
+      if (exitLines?.lineData) m.setExitLines(exitLines.lineData);
+      else m.clearExitLines();
+    }).catch(() => {});
 
     // 盤中急跌警示（active 狀態下今日跌幅 < -5% 才顯示）
     const liveChgPct  = window.__priceCache?.[code]?.chgPct ?? 0;

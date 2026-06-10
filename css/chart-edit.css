@@ -1390,45 +1390,9 @@ body.fullscreen-chart .fullscreen-esc-hint { display: inline-flex; }
   .ca-dh-score { font-size: 16px; }
 }
 
-/* ══════════════════════════════════════════════
- * Advanced 5 — 副圖容器樣式
- * dmiChart / psyChart / rciChart / hvChart
- * 與現有 kdChart / rsiChart / macdChart 同一套規則
- * ══════════════════════════════════════════════ */
-
-#dmiChart, #psyChart, #rciChart, #hvChart {
-  display: none;          /* 預設隱藏，開關控制 */
-  width: 100%;
-  flex-shrink: 0;
-  position: relative;
-}
-
-/* 開關啟用時顯示 */
-#dmiChart.active,
-#psyChart.active,
-#rciChart.active,
-#hvChart.active {
-  display: block;
-}
-
-/* 副圖標籤（左上角小字） */
-#dmiChart::before  { content: 'DMI'; }
-#psyChart::before  { content: 'PSY'; }
-#rciChart::before  { content: 'RCI'; }
-#hvChart::before   { content: 'HV';  }
-
-#dmiChart::before,
-#psyChart::before,
-#rciChart::before,
-#hvChart::before {
-  position: absolute;
-  top: 4px; left: 6px;
-  font-size: 10px;
-  color: rgba(255,255,255,0.25);
-  pointer-events: none;
-  z-index: 1;
-  letter-spacing: 0.05em;
-}
+/* 0610: 原 Advanced 5 副圖容器鷹架規則已移除 —
+   #dmiChart 等四個 div 被 display:none + .active 切換設計藏死，
+   但實際程式走 psyPanel.style.display 切換，.active 從未被加上 → 副圖永遠空白 */
 
 /* ── 指標開關按鈕群（toolbar 內）── */
 .ind-toggle-group {

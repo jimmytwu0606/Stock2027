@@ -919,27 +919,26 @@ function _calcExitBadge(code, curPrice) {
   if (!entry) return null;
 
   const peak = Math.max(...closes.slice(Math.max(0, entryIdx)), curPrice);
-  const stopLine  = entry * 0.80;
-  const trailLine = peak * 0.75;
+  // 單一有效出場線 = max(守本金線 entry×0.80, 鎖利線 peak×0.75)，跌破即出場
+  const guardLine = Math.max(entry * 0.80, peak * 0.75);
+  const isProfit  = peak * 0.75 > entry * 0.80;
   const retPct = (curPrice / entry - 1) * 100;
+  const dist = (curPrice / guardLine - 1) * 100;
 
-  if (curPrice <= stopLine) {
+  if (curPrice <= guardLine) {
+    const why = isProfit
+      ? `高點 ${_formatPrice(peak)} 已回落 ${(100 - curPrice / peak * 100).toFixed(1)}%，建議帶利下車`
+      : `自啟動日 ${retPct.toFixed(1)}%，超出妖股容錯 -20%`;
     return {
       breach: true,
-      html: `<span class="wl-exit-badge wl-exit-stop" title="自啟動日 ${retPct.toFixed(1)}%，跌破停損線 ${_formatPrice(stopLine)}（-20%）">破停損</span>`,
+      html: `<span class="wl-exit-badge wl-exit-stop" title="跌破出場線 ${_formatPrice(guardLine)}：${why}">破出場線</span>`,
     };
   }
-  if (retPct > 0 && curPrice <= trailLine) {
-    return {
-      breach: true,
-      html: `<span class="wl-exit-badge wl-exit-trail" title="高點 ${_formatPrice(peak)} 已回落 ${(100 - curPrice / peak * 100).toFixed(1)}%（警戒 25%），建議鎖利出場">破回落線</span>`,
-    };
-  }
-  // 接近回落線（3% 內）→ 黃色預警
-  if (retPct > 0 && curPrice <= trailLine * 1.03) {
+  // 距出場線 3% 內 → 黃色預警
+  if (dist <= 3) {
     return {
       breach: false,
-      html: `<span class="wl-exit-badge wl-exit-near" title="高點 ${_formatPrice(peak)}，回落線 ${_formatPrice(trailLine)}，距 ${(curPrice / trailLine * 100 - 100).toFixed(1)}%">近回落線</span>`,
+      html: `<span class="wl-exit-badge wl-exit-near" title="出場線 ${_formatPrice(guardLine)}（${isProfit ? '鎖利' : '守本'}），僅距 ${dist.toFixed(1)}%">近出場線</span>`,
     };
   }
   return null;
