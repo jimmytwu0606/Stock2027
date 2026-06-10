@@ -50,6 +50,7 @@ const _SPARK_PAD = 4;                   // 上下留邊
 
 let _groups    = [];
 let _siInfoCache = {};  // code → stockInfo（有 forward 時顯示邊框）
+let _yaoguRecCache = {};  // code → yaogu record（出場線計算用，背景批次載入）
 let _collapsed = new Set();
 let _sortState = {};                    // { [groupId]: { key: string|null, dir: 1|-1 } }
 // ★ 無 FinMind token → 強制鎖定 '40d'，完全不打 Yahoo 5m（引信：訂閱後填 token 自動開通）
@@ -394,6 +395,10 @@ function _updateSparkDom(code) {
 function _kickoffSparkLoads() {
   const allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
 
+  // 指數膠囊：獨立載入 40 日 K（與走勢圖模式無關）
+  const idxCodes = allCodes.filter(code => code.startsWith('^'));
+  if (idxCodes.length) _loadIdxSparks(idxCodes);
+
   // ★ bar 模式快速通道：不需要 drain lock，直接同步掃一遍
   //   有 OHLC → 立刻畫；沒有 → 等下次 MIS 輪詢 push 後 renderWatchlist 重跑
   if (_sparkMode === 'bar') {
@@ -599,6 +604,18 @@ export function renderWatchlist() {
 
   // ── 背景批次讀 stockInfo（有 JSON 的個股顯示邊框）──
   const _allCodes = [...new Set(_groups.flatMap(g => g.stocks.map(s => s.code)))];
+
+  // ── 背景批次讀 yaogu record（出場線徽章用，仿 _siInfoCache 模式）──
+  const _yaoguCodes = _allCodes.filter(code => AppState.yaoguStatus?.[code]);
+  Promise.all(_yaoguCodes.map(code => getYaoguRecord(code).then(r => [code, r]).catch(() => [code, null])))
+    .then(pairs => {
+      let changed = false;
+      for (const [code, rec] of pairs) {
+        if (rec && !_yaoguRecCache[code]) changed = true;
+        if (rec) _yaoguRecCache[code] = rec;
+      }
+      if (changed) renderWatchlist();
+    });
   Promise.all(_allCodes.map(c => loadStockInfo(c).then(info => [c, info]).catch(() => [c, null])))
     .then(pairs => {
       const newCache = {};
@@ -627,7 +644,7 @@ export function renderWatchlist() {
   if (_cacheUpdated) _scheduleMisFlush();
 
   _groups.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  container.innerHTML = _renderSparkModeBar() + _groups.map(g => _renderGroup(g)).join('');
+  container.innerHTML = _renderIndicesStrip() + _renderSparkModeBar() + _groups.map(g => _renderGroup(g)).join('');
   _bindGroupEvents();
 
   // DOM 重建後，立即把已快取的 sparkline 同步畫上去（解決 drain race condition）
@@ -639,6 +656,75 @@ export function renderWatchlist() {
 
   // v3: 下一 tick 啟動 sparkline 載入（DOM 已就緒才可查 getElementById）
   setTimeout(_kickoffSparkLoads, 0);
+}
+
+/** 指數膠囊迷你線：52×16 自帶 viewBox，固定畫 40 日收盤（不跟走勢圖模式連動） */
+function _idxSparkSvg(code, color) {
+  const closes = _kline40Cache.get(code);
+  if (!closes || closes.length < 2) {
+    return '<span class="wl-spark-ph" style="width:52px;height:16px"></span>';
+  }
+  const min = Math.min(...closes), max = Math.max(...closes);
+  const range = max - min || 1;
+  const n = closes.length;
+  const pts = closes.map((v, i) =>
+    `${(i / (n - 1) * 52).toFixed(1)},${(14 - (v - min) / range * 12).toFixed(1)}`
+  ).join(' ');
+  return `<svg width="52" height="16" viewBox="0 0 52 16" style="display:block">
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.2"
+              stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+/** 背景載入指數 40 日 K（獨立於 _sparkQueue，任何走勢圖模式下都跑） */
+async function _loadIdxSparks(codes) {
+  for (const code of codes) {
+    if (_kline40Cache.has(code)) continue;
+    try {
+      const candles = await _readKline40(code);
+      const closes = candles.slice(-40).map(x => x.close).filter(v => v != null);
+      if (closes.length >= 2) {
+        _kline40Cache.set(code, closes);
+        // 直接更新膠囊 DOM（不重繪整個清單）
+        const s = _groups.flatMap(g => g.stocks).find(x => x.code === code);
+        const color = (s?.chgPct ?? 0) >= 0 ? '#ef5350' : '#26a69a';
+        document.querySelectorAll(`.wl-idx-pill[data-code="${CSS.escape(code)}"] .wl-idx-spark`)
+          .forEach(el => { el.innerHTML = _idxSparkSvg(code, color); });
+      }
+    } catch (_) {}
+  }
+}
+
+/** 指數帶：所有 ^ 開頭的市場指數壓成一行膠囊（從各群組抽出） */
+function _renderIndicesStrip() {
+  const seen = new Set();
+  const indices = [];
+  for (const g of _groups) {
+    for (const s of g.stocks) {
+      if (!s.code.startsWith('^') || seen.has(s.code)) continue;
+      seen.add(s.code);
+      indices.push(s);
+    }
+  }
+  if (indices.length === 0) return '';
+
+  const pills = indices.map(s => {
+    const isUp  = (s.chgPct ?? 0) >= 0;
+    const color = isUp ? '#ef5350' : '#26a69a';
+    const name  = (_MARKET_OPTIONS.find(m => m.code === s.code)?.name ?? s.name ?? s.code)
+      .replace('指數', '').replace('費城半導體', '費半').replace('日經225', '日經');
+    const chg   = s.chgPct != null ? `${isUp ? '+' : ''}${s.chgPct.toFixed(2)}%` : '—';
+    const price = s.price != null ? _formatPrice(s.price) : '—';
+    // ⚠️ 不掛 .wl-item class（會被多檔 CSS 的 grid 規則覆蓋），樣式全 inline 必勝
+    return `<div class="wl-idx-pill" data-code="${s.code}" data-action="select-stock"
+                 title="${_esc(name)} ${price}"
+                 style="flex:1 1 64px;max-width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 5px;min-height:42px;box-sizing:border-box;border-radius:6px;background:rgba(255,255,255,.04);cursor:pointer">
+      <span style="font-size:9px;color:#8b8d93;white-space:nowrap;line-height:1.2">${_esc(name)}</span>
+      <span class="wl-idx-spark" style="height:16px;display:flex;align-items:center">${_idxSparkSvg(s.code, color)}</span>
+      <span style="font-size:11px;font-weight:500;line-height:1.2;color:${color}">${chg}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="wl-indices-strip" style="display:flex;flex-wrap:wrap;flex-shrink:0;gap:5px;padding:7px 8px;min-height:56px;height:auto;box-sizing:border-box;border-bottom:0.5px solid rgba(255,255,255,.06);background:rgba(255,255,255,.03)">${pills}</div>`;
 }
 
 /** 走勢圖切換 bar（今日 / 40日） */
@@ -775,8 +861,16 @@ function _renderStock(stock, groupId) {
     }
   }
 
+  // 指數已抽到頂部指數帶，群組內不重複渲染
+  if (stock.code.startsWith('^')) return '';
+
+  // 出場線徽章（三線監控：停損 -20% / 高點回落 25%，X2 全市場實證）
+  const exitBadge = _calcExitBadge(stock.code, stock.price);
+  const exitCls = exitBadge?.breach ? ' wl-exit-breach' : '';
+
+  // ── 原版大卡 ──
   return `
-<div class="wl-item ${_siBorderCls}" data-code="${stock.code}" data-group-id="${groupId}"
+<div class="wl-item ${_siBorderCls}${exitCls}" data-code="${stock.code}" data-group-id="${groupId}"
      draggable="true" data-action="select-stock">
   <button class="wl-remove-btn" data-action="remove-stock"
           data-code="${stock.code}" data-group-id="${groupId}" title="移除">×</button>
@@ -786,6 +880,7 @@ function _renderStock(stock, groupId) {
       <span class="wl-code">${_esc(stock.code)}</span>
       ${dupBadge}
       ${_siPillHtml}
+      ${exitBadge?.html ?? ''}
     </div>
     <div class="wl-name-row" style="font-size:12px;color:#8a8f99;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
       <span class="wl-name">${_esc(displayName)}</span>
@@ -799,6 +894,55 @@ function _renderStock(stock, groupId) {
 
   <div class="wl-item-right">${sparkHtml}</div>
 </div>`;
+}
+
+/**
+ * 出場線徽章（清單層三線監控精簡版）
+ * 資料：_yaoguRecCache（啟動日）+ _kline40Cache（40日收盤）+ 即時價
+ * 線：停損 = entry×0.80（固定）、回落 = peak×0.75（動態）— X2 全市場實證參數
+ * 回傳 null（無妖股狀態/資料不足）或 { html, breach }
+ */
+function _calcExitBadge(code, curPrice) {
+  const ys = AppState.yaoguStatus?.[code];
+  if (!ys || ys.status === 'watching') return null;
+  const rec = _yaoguRecCache[code];
+  const closes = _kline40Cache.get(code);
+  if (!rec?.activatedAt || !closes?.length || curPrice == null) return null;
+
+  // 啟動日在 40 根內的位置：用 streak 天數回推（近似），超出範圍取第一根
+  const streak = Math.min(rec.streak ?? 1, closes.length);
+  // 啟動至今的自然日 → 交易日近似（×5/7），上限 40
+  const daysSince = Math.floor((Date.now() - rec.activatedAt) / 86400000);
+  const tradingDays = Math.min(Math.max(Math.round(daysSince * 5 / 7), streak, 1), closes.length);
+  const entryIdx = closes.length - tradingDays;
+  const entry = closes[Math.max(0, entryIdx)];
+  if (!entry) return null;
+
+  const peak = Math.max(...closes.slice(Math.max(0, entryIdx)), curPrice);
+  const stopLine  = entry * 0.80;
+  const trailLine = peak * 0.75;
+  const retPct = (curPrice / entry - 1) * 100;
+
+  if (curPrice <= stopLine) {
+    return {
+      breach: true,
+      html: `<span class="wl-exit-badge wl-exit-stop" title="自啟動日 ${retPct.toFixed(1)}%，跌破停損線 ${_formatPrice(stopLine)}（-20%）">破停損</span>`,
+    };
+  }
+  if (retPct > 0 && curPrice <= trailLine) {
+    return {
+      breach: true,
+      html: `<span class="wl-exit-badge wl-exit-trail" title="高點 ${_formatPrice(peak)} 已回落 ${(100 - curPrice / peak * 100).toFixed(1)}%（警戒 25%），建議鎖利出場">破回落線</span>`,
+    };
+  }
+  // 接近回落線（3% 內）→ 黃色預警
+  if (retPct > 0 && curPrice <= trailLine * 1.03) {
+    return {
+      breach: false,
+      html: `<span class="wl-exit-badge wl-exit-near" title="高點 ${_formatPrice(peak)}，回落線 ${_formatPrice(trailLine)}，距 ${(curPrice / trailLine * 100 - 100).toFixed(1)}%">近回落線</span>`,
+    };
+  }
+  return null;
 }
 
 /** 股價格式化 */

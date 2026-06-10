@@ -371,15 +371,18 @@
 ───────────────────────────────────────── */
 @media (max-width: 768px) {
 
-  /* App layout → 全寬單欄 */
+  /* App layout → v2 flex，不需要 grid 覆蓋 */
   .app {
-    grid-template-columns: 1fr;
-    grid-template-rows: 48px 1fr;
-    padding-bottom: 56px; /* Tab Bar 高度 */
+    padding-bottom: 56px;
   }
 
-  /* Sidebar 桌面版隱藏 */
-  .sidebar { display: none; }
+  /* 手機版 .main 左右 padding 縮回 0 */
+  .main {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* sidebar 是 absolute 抽屜，不需要 display:none */
 
   /* Topbar 精簡 */
   .search-box { max-width: none; }
@@ -432,6 +435,9 @@
    響應式：平板 (769px – 1024px)
 ───────────────────────────────────────── */
 @media (min-width: 769px) and (max-width: 1024px) {
-  .app { grid-template-columns: 200px 1fr; }
+  .main {
+    padding-left: 160px;
+    padding-right: 160px;
+  }
   .settings-drawer { width: 300px; }
 }

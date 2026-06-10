@@ -37,6 +37,7 @@ export async function initStrategyLab() {
   _lazyBind('mc',       () => import('./lab-mc.js'),       m => m.bindMCRun());
   _lazyBind('compare',  () => import('./lab-compare.js'),  m => m.bindCompareRun());
   _lazyBind('experiment', () => import('./lab-experiment.js'), m => m.bindExperimentRun());
+  _lazyBind('backtest', () => import('./lab-backtest.js'), m => m.bindBacktestRun());
 
   window.addEventListener('authReady', () => _applyTierUI());
 }
@@ -90,6 +91,7 @@ function _switchSub(sub) {
     single: 'labPanelSingle', industry: 'labPanelIndustry',
     mc: 'labPanelMC', compare: 'labPanelCompare',
     experiment: 'labPanelExperiment',
+    backtest: 'labPanelBacktest',
   };
   Object.entries(panels).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -100,6 +102,7 @@ function _switchSub(sub) {
     single: 'labControlsSingle', industry: 'labControlsIndustry',
     mc: 'labControlsMC', compare: 'labControlsCompare',
     experiment: 'labControlsExperiment',
+    backtest: 'labControlsBacktest',
   };
   Object.entries(controls).forEach(([key, id]) => {
     const el = document.getElementById(id);

@@ -147,6 +147,8 @@ export function initSettingsDrawer() {
   // 從基本面面板的「設定 FinMind Token →」連結觸發
   document.addEventListener('openSettings', openSettings);
 
+  // 帳號區（登入/登出/序號/雲端同步）由 auth-ui.js 渲染進 #settingsAuthArea
+
   // AI 圓桌人格管理已移至 personas-panel.js
 }
 

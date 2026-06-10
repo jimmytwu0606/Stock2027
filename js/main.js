@@ -496,10 +496,9 @@ function _bridgeWlButtons() {
 }
 
 function _toggleMobileSidebar(show) {
-  const sb = document.querySelector('.sidebar') ?? document.getElementById('sidebar');
-  const mn = document.querySelector('.main');
-  if (sb) sb.style.display = show ? 'flex' : '';
-  if (mn) mn.style.display = show ? 'none' : '';
+  // v2：sidebar 改為抽屜式，由 layout.js 統一管理開關
+  if (show) window.__drawerOpen?.();
+  else      window.__drawerClose?.();
 }
 
 // ─────────────────────────────────────────────

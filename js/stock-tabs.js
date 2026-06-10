@@ -1342,6 +1342,68 @@ export async function renderStockSignals(candles, code) {
  * v2.8 個股頁妖股狀態 chip（明確提示版）
  * 插入到 #stockYaoguChip 容器（若無則自動插入到 stockSignalTags 之前）
  */
+/**
+ * 三線出場監控（X2 全市場實證參數：停損 -20% / 高點回落 25%）
+ * 進場基準 = 妖股啟動日收盤價（record.activatedAt）
+ * 回傳 null（資料不足）或 { html, breach }
+ */
+function _calcExitLines(record, candles, code) {
+  if (!record?.activatedAt || !candles?.length) return null;
+
+  const STOP_PCT  = 20;   // 2026-06-10 全市場 1950 檔回測實證
+  const TRAIL_PCT = 25;
+
+  // 找啟動日對應的 K 棒（取 ≥ activatedAt 的第一根；K 線 time 多為秒級或 'YYYY-MM-DD'）
+  const actTs = Math.floor(record.activatedAt / 1000);
+  let entryIdx = -1;
+  for (let i = 0; i < candles.length; i++) {
+    const t = typeof candles[i].time === 'number'
+      ? candles[i].time
+      : Math.floor(new Date(candles[i].time + 'T00:00:00+08:00').getTime() / 1000);
+    if (t >= actTs - 86400) { entryIdx = i; break; }
+  }
+  if (entryIdx < 0) entryIdx = Math.max(0, candles.length - (record.streak ?? 1));
+
+  const closes = candles.map(c => c.close);
+  const entry  = closes[entryIdx];
+  if (!entry) return null;
+
+  const cur   = window.__priceCache?.[code]?.price ?? closes[closes.length - 1];
+  const peak  = Math.max(...closes.slice(entryIdx), cur);
+  const stopLine  = entry * (1 - STOP_PCT / 100);
+  const trailLine = peak  * (1 - TRAIL_PCT / 100);
+  const retPct    = (cur / entry - 1) * 100;
+
+  const stopHit  = cur <= stopLine;
+  const trailHit = retPct > 0 && cur <= trailLine;
+  const distStop  = (cur / stopLine  - 1) * 100;
+  const distTrail = (cur / trailLine - 1) * 100;
+
+  const fmt = v => v >= 100 ? v.toFixed(0) : v.toFixed(2);
+  let html, breach = stopHit || trailHit;
+
+  if (stopHit) {
+    html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(239,83,80,.3)">
+      <span class="yaogu-chip-label" style="color:#ef4444">📏 跌破停損線 ${fmt(stopLine)}</span>
+      <span class="yaogu-chip-desc" style="color:#ef4444">自啟動日 ${retPct.toFixed(1)}%，超出妖股容錯邊界（-${STOP_PCT}%），建議出場</span>
+    </div>`;
+  } else if (trailHit) {
+    html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(239,83,80,.3)">
+      <span class="yaogu-chip-label" style="color:#f59e0b">📏 觸發回落停利線 ${fmt(trailLine)}</span>
+      <span class="yaogu-chip-desc" style="color:#f59e0b">高點 ${fmt(peak)} 已回落 ${(100 - cur / peak * 100).toFixed(1)}%（警戒 ${TRAIL_PCT}%），建議鎖住獲利出場</span>
+    </div>`;
+  } else {
+    const trailTxt = retPct > 0
+      ? `回落線 ${fmt(trailLine)}（距 ${distTrail >= 0 ? '+' : ''}${distTrail.toFixed(1)}%）`
+      : `回落線未啟用（尚未獲利）`;
+    html = `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(255,255,255,.06)">
+      <span class="yaogu-chip-label" style="color:var(--muted)">📏 出場線</span>
+      <span class="yaogu-chip-desc" style="color:var(--muted)">停損 ${fmt(stopLine)}（距 +${distStop.toFixed(1)}%）｜高點 ${fmt(peak)}，${trailTxt}</span>
+    </div>`;
+  }
+  return { html, breach };
+}
+
 async function _renderYaoguChip(code, signals, candles = null) {
   let el = document.getElementById('stockYaoguChip');
   if (!el) {
@@ -1391,6 +1453,11 @@ async function _renderYaoguChip(code, signals, candles = null) {
     if (!ys) { el.innerHTML = ''; return; }
     const exitBtn = '';  // 重置按鈕已移除
 
+    // 三線出場監控（停損線/回落停利線，X2 實證參數 20/25）
+    const exitLines = (ys.status === 'active' || ys.status === 'watching' || ys.status === 'warning1' || ys.status === 'warning2')
+      ? _calcExitLines(record, candles, code)
+      : null;
+
     // 盤中急跌警示（active 狀態下今日跌幅 < -5% 才顯示）
     const liveChgPct  = window.__priceCache?.[code]?.chgPct ?? 0;
     const isBigDrop   = liveChgPct <= -5;
@@ -1426,6 +1493,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
             <span class="yaogu-chip-label" style="color:${ys.color}">${ys.label}</span>
             <span class="yaogu-chip-desc" style="color:${ys.color}">${ys.desc ?? ''}</span>
           </div>
+          ${exitLines?.html ?? ''}
           ${exitBtn}
         </div>`;
     } else {
@@ -1436,6 +1504,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
             <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
           </div>
           ${dropWarnHtml}
+          ${exitLines?.html ?? ''}
           ${exitBtn}
         </div>`;
     }

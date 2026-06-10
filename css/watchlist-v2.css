@@ -576,3 +576,94 @@
 .wl-item.wl-si-stale::before {
   animation-duration: 1.2s;
 }
+
+/* ════════════════════════════════════════════════════════════
+   v4 緊湊模式 + 指數帶 + 出場線徽章（2026-06-10）
+   ════════════════════════════════════════════════════════════ */
+
+/* ─── 指數帶（^ 開頭市場指數壓成一行膠囊）────────────────── */
+.wl-indices-strip {
+  display: flex;
+  gap: 5px;
+  padding: 7px 8px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.06);
+  background: var(--wl-header-bg, rgba(255, 255, 255, 0.03));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wl-indices-strip::-webkit-scrollbar { display: none; }
+
+.wl-idx-pill {
+  flex: 1;
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  border: 0.5px solid transparent;
+}
+.wl-idx-pill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.wl-idx-name {
+  font-size: 9px;
+  color: #8b8d93;
+  white-space: nowrap;
+}
+.wl-idx-chg {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+.wl-idx-spark {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.wl-idx-spark .wl-spark-ph {
+  width: 52px;
+  height: 16px;
+}
+
+/* ─── 出場線徽章（三線監控清單層）────────────────────────── */
+.wl-exit-badge {
+  font-size: 9px;
+  border-radius: 6px;
+  padding: 1px 5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: help;
+}
+.wl-exit-stop {
+  color: #ef4444;
+  border: 0.5px solid rgba(239, 68, 68, 0.7);
+  background: rgba(239, 68, 68, 0.1);
+  animation: wl-exit-pulse 1.2s ease-in-out infinite;
+}
+.wl-exit-trail {
+  color: #f97316;
+  border: 0.5px solid rgba(249, 115, 22, 0.7);
+  background: rgba(249, 115, 22, 0.1);
+  animation: wl-exit-pulse 1.2s ease-in-out infinite;
+}
+.wl-exit-near {
+  color: #f59e0b;
+  border: 0.5px solid rgba(245, 158, 11, 0.5);
+}
+@keyframes wl-exit-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* 破線的股：紅色左框（緊湊+舒適通用） */
+.wl-item.wl-exit-breach {
+  border-left: 2px solid #ef4444 !important;
+  border-radius: 0;
+}
