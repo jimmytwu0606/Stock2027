@@ -15,12 +15,12 @@
  *   deleteSavedSet(name)            → async
  */
 
-import { fetchTWSEPrices, fetchScreenerData, fetchScreenerDataFinMind, fetchFundamentals, fetchForeignBuyDays, getChineseName, getAllKnownCodes } from './api.js';
+import { fetchTWSEPrices, fetchScreenerData, fetchScreenerDataFinMind, fetchFundamentals, fetchForeignBuyDays, getChineseName, getAllKnownCodes, fetchCondHistory, toYahooSymbol } from './api.js';
 import { calcKD, calcRSI, calcMACD, calcMA, calcBollinger, calcBBWidth,
          calcEMA, calcGMMA, calcBias, calcPSY, calcRCI, calcDMI, calcSAR, calcHV,
          calcIchimoku } from './indicators.js';
 import { Config, getFinMindToken } from './config.js';
-import { getAllScreenerSets, saveScreenerSet, deleteScreenerSet } from './db.js';
+import { getAllScreenerSets, saveScreenerSet, deleteScreenerSet, getKlineCache } from './db.js';
 import { getPeersOf } from './industry-groups.js';
 
 // ─────────────────────────────────────────────
@@ -238,6 +238,63 @@ function _calcConditionTriggerHistory(conditions, candles, twseRow, candleMap, l
     isNew:            streak === 1,
     totalTriggers,
   };
+}
+
+// ── 從 cond 歷史序列算 triggerHistory（O(1) 查表，不重算指標）──────────────
+// condSeq: window.__condHistory.stocks[code]  → { len, seq: [trueCondIds[]] }（由舊到新）
+// condIds: 本次篩選的 Phase1+2 condition id（從序列查每根是否全部命中）
+// candles: 對應的 K 線（用來換算 firstTriggerDate 的時間戳）
+function _triggerHistoryFromCondSeq(condIds, condEntry, candles) {
+  if (!condEntry?.seq?.length || !condIds.length) return null;
+  const seq = condEntry.seq;
+  const N   = seq.length;
+  // 每根判斷：本次所有 condId 是否都在該根的 trueIds 裡
+  const _matchAt = (idx) => {
+    const trueIds = seq[idx];
+    if (!Array.isArray(trueIds)) return false;
+    const set = new Set(trueIds);
+    return condIds.every(id => set.has(id));
+  };
+  const todayIdx = N - 1;
+  if (!_matchAt(todayIdx)) return null;  // 今天沒全中（理論上不該發生，命中才進來）
+
+  let streak = 1, firstTriggerIdx = todayIdx, totalTriggers = 1, broken = false;
+  for (let back = 1; back < N; back++) {
+    const idx = todayIdx - back;
+    if (idx < 0) break;
+    if (_matchAt(idx)) {
+      totalTriggers++;
+      if (!broken) { streak++; firstTriggerIdx = idx; }
+    } else {
+      broken = true;
+    }
+  }
+
+  // firstTriggerDate：用 candles 對應位置的時間戳
+  // seq 與 candles 末端對齊（seq 取最近 120 根，candles 也是末端）
+  let firstDate = null;
+  if (candles?.length) {
+    const offset = candles.length - N;  // candles 比 seq 長的部分
+    const cIdx   = firstTriggerIdx + offset;
+    if (cIdx >= 0 && cIdx < candles.length) {
+      firstDate = candles[cIdx].time ?? null;
+    }
+  }
+  // 無 candles（IDB 缺 K 線）→ 用今天往回數 (streak-1) 個交易日反推 firstTriggerDate
+  // 避免「今天新觸發 · —」日期空白
+  if (firstDate == null) {
+    const back = streak - 1;
+    let d = new Date();
+    let counted = 0;
+    while (counted < back) {
+      d.setDate(d.getDate() - 1);
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) counted++;  // 跳過週末
+    }
+    firstDate = Math.floor(d.getTime() / 1000);  // 秒級時間戳，對齊 candle.time
+  }
+
+  return { streak, firstTriggerDate: firstDate, isNew: streak === 1, totalTriggers };
 }
 
 /**
@@ -2736,7 +2793,8 @@ export async function* runScreener(conditions) {
           chgPct:       row.chgPct,
           volume:       row.volume,
           indicators:   {},
-          matchedConds: conditions.map(c => _formatCondLabel(c)),
+          matchedConds:    conditions.map(c => _formatCondLabel(c)),
+          matchedCondIds:  conditions.map(c => c.def.id),
         },
       };
     }
@@ -2754,6 +2812,20 @@ export async function* runScreener(conditions) {
   //   必須跟 CONDITION_DEFS 的 match 邏輯對齊，不能直接當 bool 用
   //   → 數值型 condition 仍讓 match(row, value) 對齊，boolean 型直接查 snapshot
   const snap = window.__snapshot?.stocks ?? null;
+  // 預載條件歷史序列（算 snapshot 命中股票的 triggerHistory，不重算指標）
+  const condHist = snap ? await fetchCondHistory().catch(() => null) : null;
+  const condHistStocks = condHist?.stocks ?? null;
+  // 本次篩選的 Phase1+2 condition id（供 cond 序列查 streak）
+  // cond 序列只存「以固定閾值算成 boolean true」的技術 condition id（gain_10d/vol_surge_long/rsi_min 等）
+  // 純價格區間（price_min/price_max/chg_min/chg_max/vol_min/vol_max）不存在於序列 → 排除
+  // ⚠️ 不能用 def.type 判斷：這些技術 condition 的 type 也是 'number'（UI 輸入閾值用）
+  //    要看的是「該 id 是否會出現在 cond 序列裡」，用明確黑名單排除價格區間類
+  const _PRICE_RANGE_IDS = new Set([
+    'price_min', 'price_max', 'chg_min', 'chg_max', 'vol_min', 'vol_max',
+  ]);
+  const _histCondIds = conditions
+    .filter(c => c.def.phase !== 3 && !_PRICE_RANGE_IDS.has(c.def.id))
+    .map(c => c.def.id);
   const snapCodes   = new Set();  // snapshot 命中的 code（跳過 K 線）
   const needKline   = [];         // 需要 K 線的 code
 
@@ -2798,22 +2870,48 @@ export async function* runScreener(conditions) {
     // 把 sc 的 key 對應到 indicators（供 UI 顯示用，不影響篩選結果）
     const indicators = { ...sc };
 
+    // 價格來源：snapshot 命中 = 當天 R2 bundle 收盤（GAS 盤後抓），比可能過期的 __priceCache 可靠
+    // 盤後 fetchTWSEPrices 失敗時 twsePrices fallback 到舊 __priceCache（前一交易日）→ row.price 是昨收
+    // → snapshot 路徑優先用 sc.price_min（當天 R2），row.price 僅作為 sc 缺值時的 fallback
+    const _snapPrice = typeof sc.price_min === 'number' ? sc.price_min : (row?.price ?? null);
+    const _snapChg   = typeof sc.chg_min   === 'number' ? sc.chg_min   : (row?.chgPct ?? null);
+    const _snapVol   = typeof sc.vol_min   === 'number' ? sc.vol_min   : (row?.volume ?? null);
+
+    // 從 IDB 撈 candles（走勢圖用）：bundle 已灌進 IDB，O(1) 本地讀取，不打網路
+    let _snapCandles = null;
+    try {
+      const sym1 = toYahooSymbol(code);
+      const hit1 = await getKlineCache(sym1, '1y').catch(() => null);
+      const hit  = hit1 || await getKlineCache(
+        sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW'), '1y'
+      ).catch(() => null);
+      if (hit?.candles?.length) _snapCandles = hit.candles;
+    } catch (_) {}
+
+    // triggerHistory：用 cond 歷史序列算 streak（不重算指標）
+    let _snapTrigger = null;
+    if (condHistStocks?.[code] && _histCondIds.length) {
+      _snapTrigger = _triggerHistoryFromCondSeq(_histCondIds, condHistStocks[code], _snapCandles);
+    }
+
     if (!phase3Conds.length || !hasToken) {
       yield {
         type: 'result',
         payload: {
           code,
           name:           getChineseName(code) ?? row?.name ?? code,
-          price:          row?.price ?? sc.price_min ?? null,
-          chgPct:         row?.chgPct ?? sc.chg_min ?? null,
-          volume:         row?.volume ?? sc.vol_min ?? null,
+          price:          _snapPrice,
+          chgPct:         _snapChg,
+          volume:         _snapVol,
           indicators,
+          candles:        _snapCandles,
           matchedConds:   conditions.map(c => _formatCondLabel(c)),
-          triggerHistory: null,
+          matchedCondIds: conditions.map(c => c.def.id),
+          triggerHistory: _snapTrigger,
         },
       };
     } else {
-      phase2Pass.push({ code, row, indicatorsForUI: indicators, triggerHistory: null });
+      phase2Pass.push({ code, row: { ...row, price: _snapPrice, chgPct: _snapChg, volume: _snapVol }, indicatorsForUI: indicators, candles: _snapCandles, triggerHistory: _snapTrigger });
     }
   }
 
@@ -2896,13 +2994,14 @@ export async function* runScreener(conditions) {
           volume:       row?.volume ?? null,
           indicators:   indicatorsForUI,
           candles,      // ← 供 screener-ui.js calcHealth / calcHealthLong 使用
-          matchedConds: conditions.map(c => _formatCondLabel(c)),
+          matchedConds:   conditions.map(c => _formatCondLabel(c)),
+          matchedCondIds: conditions.map(c => c.def.id),
           triggerHistory,  // v2.7+ { streak, firstTriggerDate, isNew, totalTriggers } | null
         },
       };
     } else {
       // 有 Phase C → 先存起來，等下批次打基本面
-      phase2Pass.push({ code, row, indicatorsForUI, triggerHistory });
+      phase2Pass.push({ code, row, indicatorsForUI, triggerHistory, candles });
     }
   }
 
@@ -2914,7 +3013,7 @@ export async function* runScreener(conditions) {
     const CONCURRENCY = 3;
     for (let i = 0; i < phase2Pass.length; i += CONCURRENCY) {
       const batch = phase2Pass.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(batch.map(async ({ code, row, indicatorsForUI, triggerHistory }) => {
+      await Promise.allSettled(batch.map(async ({ code, row, indicatorsForUI, triggerHistory, candles: _pcCandles }) => {
         try {
           // fetchFundamentals 有 IndexedDB 快取（智慧更新點判斷），不會重複打 API
           const symbol = `${code}.TW`;
@@ -2951,8 +3050,9 @@ export async function* runScreener(conditions) {
                 revenueGrowth: fund.revenueGrowth,
                 earningsGrowth: fund.earningsGrowth,
               },
-              candles,      // ← 供 screener-ui.js calcHealth / calcHealthLong 使用
-              matchedConds: conditions.map(c => _formatCondLabel(c)),
+              candles:        _pcCandles,  // snapshot 從 IDB 撈、K線路徑直接帶，供走勢圖/健康度
+              matchedConds:   conditions.map(c => _formatCondLabel(c)),
+              matchedCondIds: conditions.map(c => c.def.id),
               triggerHistory,  // v2.7+ Phase 2 階段已預算,延用到 Phase 3
             },
           });

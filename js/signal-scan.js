@@ -434,7 +434,7 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
   const hasW5  = sigIds.has('W5');
 
   // K 線輔助判斷（由 scanOneCode 預算傳入）
-  const { belowMA10, kdHighDeadCross, testMA20, warningPeak, warningPeakDrop } = klineCtx;
+  const { belowMA10, kdHighDeadCross, testMA20, warningPeak, warningPeakDrop, z6Triggered, isLimitDown } = klineCtx;
 
   // 弱妖（warning1）K 線條件：
   // 1. KD 從高位（K>70）死叉
@@ -486,6 +486,21 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
   const warningDays  = record?.warningAt ? _tradingDaysSince(record.warningAt) : null;
   const warningLabel = warningDays != null ? ` · 第 ${warningDays} 天` : streakLabel;
 
+  // ── Z6 + 跌停板 → 直接 exit（主力確定出貨）──
+  if (z6Triggered && isLimitDown && record) {
+    return {
+      status:   'exit',
+      label:    '🔴 出場確認',
+      color:    '#ef4444',
+      desc:     'Z6 高位連跌 + 跌停板，主力出貨確認，請立刻出場',
+      strength,
+      streak,
+      streakLabel,
+      activatedAt: record?.activatedAt ?? null,
+      z6Exit: true,
+    };
+  }
+
   // ── 底線：跌破 MA20 → 有記錄才出場確認 ──
   if ((hasW1 || hasW18) && record) {
     return {
@@ -521,12 +536,15 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
   }
 
   // ── 有記錄：依訊號層次判斷 ──
-  if (hasW5 || hasKlineWarn2) {
+  if (hasW5 || hasKlineWarn2 || z6Triggered) {
     return {
       status:      'warning2',
       label:       `🟠 出貨警示${warningLabel}`,
       color:       '#f97316',
-      desc:        `${_strengthTag[record.strength ?? strength]} W5 急跌訊號出現，主力可能出貨，建議縮倉`,
+      desc:        `${_strengthTag[record.strength ?? strength]} ${
+        z6Triggered ? 'Z6 高位連跌爆量，出貨警示，建議縮倉或出場' :
+        'W5 急跌訊號出現，主力可能出貨，建議縮倉'
+      }`,
       strength:    record.strength ?? strength,
       streak,
       streakLabel,
@@ -720,7 +738,32 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         warningPeak = Math.max(...highs.slice(wIdx));
       }
 
-      return { belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop };
+      // Z6：高位連跌 2 根 + 爆量（近 20 日新高後連跌 2 根）
+      let z6Triggered = false;
+      let isLimitDown  = false;
+      if (n >= 23 && prev) {
+        // 連跌 2 根（last 和 prev 都收黑）
+        const lastBlack = last.close < last.open;
+        const prevBlack = prev.close  < prev.open;
+        if (lastBlack && prevBlack) {
+          // 近 20 日高點（排除最後 2 根）
+          const high20 = Math.max(...highs.slice(Math.max(0, n - 22), n - 2));
+          // prev 的最高觸及近 20 日高點
+          if (high20 > 0 && (prev.high ?? prev.close) >= high20 * 0.98) {
+            // 今日爆量（>= 10 日均量 × 1.3）
+            const vols    = candles.map(c => c.volume ?? 0);
+            const avgVol10 = vols.slice(n - 11, n - 1).reduce((s, v) => s + v, 0) / 10;
+            if (avgVol10 > 0 && (last.volume ?? 0) >= avgVol10 * 1.3) {
+              z6Triggered = true;
+            }
+          }
+        }
+        // 跌停判斷（跌幅 ≥ 9.5% 且收盤 = 最低）
+        const chg = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+        isLimitDown = chg <= -9.5 && Math.abs(last.close - (last.low ?? last.close)) < 0.01;
+      }
+
+      return { belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop, z6Triggered, isLimitDown };
     })();
 
     // close < MA20 直接強制 exit（不依賴 screener W1 策略條件）
@@ -774,6 +817,11 @@ export async function updateYaoguTracker(code, signals, candles = null) {
       };
       await putYaoguRecord(newRecord);
       console.log(`[yaogu] 🟢 新妖股啟動: ${code} activatedAt=${new Date(activatedAt).toISOString().slice(0,10)} streak=${activatedStreak}`);
+      // isNew 路徑也要寫 AppState，否則 _renderYaoguChip 拿不到 ys
+      if (typeof AppState !== 'undefined') {
+        if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
+        AppState.yaoguStatus[code] = status;
+      }
       return status;
     }
 
@@ -781,6 +829,10 @@ export async function updateYaoguTracker(code, signals, candles = null) {
       const updated = { ...record, status: 'exited', exitedAt: now, lastUpdated: now };
       await putYaoguRecord(updated);
       console.log(`[yaogu] 🔴 妖股出場確認: ${code}`);
+      if (typeof AppState !== 'undefined') {
+        if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
+        AppState.yaoguStatus[code] = status;
+      }
       return status;
     }
 

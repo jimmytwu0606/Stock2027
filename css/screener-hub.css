@@ -107,6 +107,8 @@
   gap: 4px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0;
+  flex: 1;          /* 撐開 header 內剩餘空間，避免 tab 被壓到換行 */
+  min-width: 0;
 }
 
 /* ── 條件摘要列 ──────────────────────────────────────── */

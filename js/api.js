@@ -2615,6 +2615,39 @@ export async function fetchVerifyData(code) {
 }
 
 // ── signals snapshot（GAS 每日預算，全市場 condition boolean）────────────
+// ─── fetchHealthSnapshot：載入全市場健康度快照（GAS 每日算好）─────────────
+// 存 window.__healthSnapshot = { date, data: { code: { ll: number } } }
+// health.js calcHealthLong 優先讀快照，快照缺才本機算
+
+let _healthSnapshotLoading = null;
+
+export async function fetchHealthSnapshot({ force = false } = {}) {
+  if (!force && window.__healthSnapshot) return window.__healthSnapshot;
+  if (_healthSnapshotLoading) return _healthSnapshotLoading;
+
+  _healthSnapshotLoading = (async () => {
+    try {
+      const url = `${_WORKER_ORIGIN}/health-snapshot`;
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+      });
+      if (!res.ok) throw new Error(`health-snapshot ${res.status}`);
+      const data = await res.json();
+      window.__healthSnapshot = data;
+      console.log(`[health-snapshot] 載入完成：${Object.keys(data.data || {}).length} 支，日期 ${data.date}`);
+      return data;
+    } catch (e) {
+      console.warn('[health-snapshot] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _healthSnapshotLoading = null;
+    }
+  })();
+
+  return _healthSnapshotLoading;
+}
+
 // 存 window.__snapshot = { date, stocks: { code: { condId: true/number } } }
 // 前端用來做預設策略快速篩（不需要本機 K 線運算）
 
@@ -2660,6 +2693,55 @@ export async function fetchSnapshot({ force = false } = {}) {
   })();
 
   return _snapshotLoading;
+}
+
+let _condHistoryLoading = null;
+
+// ── 載入條件歷史序列（signals:cond:part:1~7）→ window.__condHistory ──────────
+// 格式：{ stocks: { code: { len, seq: [trueCondIds[]] } } }，seq 由舊到新
+// 供 screener snapshot 路徑算 triggerHistory（streak），不需重算指標
+export async function fetchCondHistory({ force = false } = {}) {
+  if (!force && window.__condHistory) return window.__condHistory;
+  if (_condHistoryLoading) return _condHistoryLoading;
+
+  _condHistoryLoading = (async () => {
+    try {
+      const merged = { date: null, stocks: {} };
+      // 7 個 part 並行載入
+      const parts = await Promise.allSettled(
+        [1,2,3,4,5,6,7].map(async (p) => {
+          const url = `${_WORKER_ORIGIN}/cond-raw?part=${p}`;
+          const res = await fetch(url, {
+            cache: 'no-store',
+            headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+          });
+          if (!res.ok) throw new Error(`cond part${p} ${res.status}`);
+          return res.json();
+        })
+      );
+      let okCount = 0;
+      parts.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value?.stocks) {
+          if (!merged.date) merged.date = r.value.date;
+          Object.assign(merged.stocks, r.value.stocks);
+          okCount++;
+        } else {
+          console.warn(`[cond-hist] part${i+1} 載入失敗`);
+        }
+      });
+      if (okCount === 0) { window.__condHistory = null; return null; }
+      window.__condHistory = merged;
+      console.log(`[cond-hist] 載入完成：${Object.keys(merged.stocks).length} 支（${okCount}/7 part），日期 ${merged.date}`);
+      return merged;
+    } catch (e) {
+      console.warn('[cond-hist] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _condHistoryLoading = null;
+    }
+  })();
+
+  return _condHistoryLoading;
 }
 
 // 用 snapshot 跑預設策略篩選，回傳 { strategyId: [{ code, name, price, chgPct, vol }] }

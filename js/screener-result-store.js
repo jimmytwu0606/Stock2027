@@ -117,6 +117,7 @@ export async function saveResult(name, results, meta = {}) {
     name:       name.trim() || `篩選結果 ${_formatDate(Date.now())}`,
     savedAt:    Date.now(),
     strategy:   meta.strategy   ?? null,
+    strategyId: meta.strategyId ?? null,
     condLabels: meta.condLabels ?? [],
     results,
   };

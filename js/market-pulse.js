@@ -151,6 +151,12 @@ function _bindModal() {
 
 function _openModal() {
   if (!_pulse) return;
+  // 匯入分析 Tab 只有 VVVIP 才能看到
+  const isVvvip = (window.__userTier === 'vvvip');
+  const importTab = document.querySelector('.mp-tab[data-tab="import"]');
+  if (importTab) importTab.style.display = isVvvip ? '' : 'none';
+  // 非 VVVIP 若目前在 import tab，切回 ai tab
+  if (!isVvvip && _currentTab === 'import') _currentTab = 'ai';
   document.getElementById('mpModal')?.classList.add('active');
   _renderCurrentTab();
 }
@@ -254,8 +260,19 @@ function _renderAiTab() {
   const panel = document.getElementById('mpPanel_ai');
   if (!panel) return;
 
+  // 若本地沒有結果，先嘗試從 R2 讀取共享分析
   if (!_aiResult) {
-    panel.innerHTML = `<div class="mp-empty">尚未匯入 AI 分析<br><span style="font-size:12px;color:var(--hint)">請至「匯入分析」頁面操作</span></div>`;
+    panel.innerHTML = `<div class="mp-empty">載入中...</div>`;
+    _loadAiResultFromR2().then(r2Result => {
+      if (r2Result) {
+        _aiResult = r2Result;
+        localStorage.setItem('mp_ai_result', JSON.stringify(r2Result));
+        _renderAiTab();  // 重新渲染
+      } else {
+        const isVvvip = window.__userTier === 'vvvip';
+        panel.innerHTML = `<div class="mp-empty">尚未有 AI 分析<br><span style="font-size:12px;color:var(--hint)">${isVvvip ? '請至「匯入分析」頁面操作' : '等待每日 VVVIP 更新'}</span></div>`;
+      }
+    });
     return;
   }
 
@@ -273,28 +290,26 @@ function _renderAiTab() {
     </div>`).join('');
 
   const watchHtml = (ai.watchSignals ?? []).map(id => {
-    const name = STRATEGY_NAMES[id] ?? '';
-    // 截短名稱：超過5字只取前5字
-    const shortName = name.length > 5 ? name.slice(0, 5) + '..' : name;
+    const name = STRATEGY_NAMES[id] ?? id;  // 有中文名用中文，沒有才顯示 id
     const isBear = id.startsWith('W');
     const color = isBear ? 'var(--up)' : 'var(--down)';
-    return `<span style="font-size:11px;padding:2px 8px;border-radius:5px;background:var(--bg3);color:${color};border:1px solid var(--border);white-space:nowrap">${id}${shortName ? ' · ' + shortName : ''}</span>`;
+    return `<span title="${id}" style="font-size:11px;padding:2px 8px;border-radius:5px;background:var(--bg3);color:${color};border:1px solid var(--border);white-space:nowrap">${name}</span>`;
   }).join('');
 
   // key_signals HTML
   const ksHtml = ai.key_signals ? `
     <div style="display:flex;gap:8px;margin-bottom:9px">
       ${ai.key_signals.bull ? `<div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
-        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:3px">最強多頭</div>
-        <div style="font-size:13px;font-weight:700;color:var(--down)">${_esc(ai.key_signals.bull.id)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${_esc(ai.key_signals.bull.name ?? '')}</div>
-        <div style="font-size:11px;color:var(--text);line-height:1.5">${_esc(ai.key_signals.bull.meaning ?? '')}</div>
+        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:3px">📈 多頭主訊號</div>
+        <div style="font-size:13px;font-weight:700;color:var(--down)">${_esc(ai.key_signals.bull.name ?? ai.key_signals.bull.id)}</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.5;margin-top:3px">${_esc(ai.key_signals.bull.meaning ?? '')}</div>
+        <div style="font-size:10px;color:var(--hint);margin-top:4px">${_fmtN(ai.key_signals.bull.count ?? 0)} 支命中</div>
       </div>` : ''}
       ${ai.key_signals.bear ? `<div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 10px">
-        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:3px">最強空頭</div>
-        <div style="font-size:13px;font-weight:700;color:var(--up)">${_esc(ai.key_signals.bear.id)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${_esc(ai.key_signals.bear.name ?? '')}</div>
-        <div style="font-size:11px;color:var(--text);line-height:1.5">${_esc(ai.key_signals.bear.meaning ?? '')}</div>
+        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:3px">📉 空頭主訊號</div>
+        <div style="font-size:13px;font-weight:700;color:var(--up)">${_esc(ai.key_signals.bear.name ?? ai.key_signals.bear.id)}</div>
+        <div style="font-size:11px;color:var(--text);line-height:1.5;margin-top:3px">${_esc(ai.key_signals.bear.meaning ?? '')}</div>
+        <div style="font-size:10px;color:var(--hint);margin-top:4px">${_fmtN(ai.key_signals.bear.count ?? 0)} 支命中</div>
       </div>` : ''}
     </div>` : '';
 
@@ -409,10 +424,61 @@ function _handleImport() {
   _aiResult = parsed;
   localStorage.setItem('mp_ai_result', JSON.stringify(parsed));
 
+  // VVVIP：匯入成功後寫入 R2，讓所有用戶共享
+  if (window.__userTier === 'vvvip') {
+    _writeAiResultToR2(parsed).then(() => {
+      console.log('[market-pulse] AI 分析已寫入 R2 共享');
+    }).catch(e => console.warn('[market-pulse] R2 寫入失敗:', e.message));
+  }
+
   if (verify.warn) {
     el.innerHTML = `<div class="mp-verify-result-blk warn">驗算通過，有警告<br>${verify.rows.filter(r=>r.warn).map(r=>'△ '+r.text+' · '+r.result).join('<br>')}<br>已匯入，可切換至「AI 深度分析」查看</div>`;
   } else {
     el.innerHTML = `<div class="mp-verify-result-blk ok">驗算通過，已匯入<br>情緒：${parsed.sentiment} · 強度：${parsed.strength}/5<br>切換至「AI 深度分析」查看完整內容</div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// R2 共享 AI 分析結果
+// ═══════════════════════════════════════════════════════
+const _AI_R2_KEY    = 'signals:market:ai_analysis';
+const _WORKER_BASE  = 'https://stock-2027.luffy0606.workers.dev';
+const _PROXY_TOKEN  = 'e99ecdc813d9a203d1951613de68e7a22f83e5b22ffd458f';
+
+/** VVVIP 匯入後寫入 R2，供所有用戶共享 */
+async function _writeAiResultToR2(parsed) {
+  const payload = JSON.stringify({
+    ...parsed,
+    _sharedAt: new Date().toISOString(),
+    _sharedDate: new Date().toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' }).replace(/\//g, '-'),
+  });
+  const res = await fetch(_WORKER_BASE + '/r2put', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Proxy-Token': _PROXY_TOKEN },
+    body: JSON.stringify([{ key: _AI_R2_KEY, value: payload }]),
+  });
+  if (!res.ok) throw new Error('R2 write failed: ' + res.status);
+}
+
+/** 從 R2 讀取共享 AI 分析結果（今日有效才使用）*/
+async function _loadAiResultFromR2() {
+  try {
+    const res = await fetch(_WORKER_BASE + '/market-ai', {
+      headers: { 'X-Proxy-Token': _PROXY_TOKEN },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || !data.sentiment) return null;
+    // 只用今日的分析
+    const today = new Date().toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' }).replace(/\//g, '-');
+    if (data._sharedDate && data._sharedDate !== today) {
+      console.log('[market-pulse] R2 AI 分析是昨日的，仍使用（未有今日更新）');
+    }
+    return data;
+  } catch(e) {
+    console.warn('[market-pulse] 讀取 R2 AI 分析失敗:', e.message);
+    return null;
   }
 }
 
@@ -636,15 +702,23 @@ function _verifyAiResult(ai) {
     }
   }
 
-  // 4. watchSignals 覆蓋度
+  // 4. watchSignals 覆蓋度（必須包含 key_signals 的 bull/bear id）
   const watched = ai.watchSignals ?? [];
-  const topBearInWatch = topBear && watched.includes(topBear.id);
-  const topBullInWatch = topBull && watched.includes(topBull.id);
-  if (topBearInWatch && topBullInWatch) {
+  const keyBullId = ai.key_signals?.bull?.id;
+  const keyBearId = ai.key_signals?.bear?.id;
+  const keyBullInWatch = keyBullId && watched.includes(keyBullId);
+  const keyBearInWatch = keyBearId && watched.includes(keyBearId);
+  if (keyBullInWatch && keyBearInWatch) {
     rows.push({ pass:true, warn:false, text:'觀察清單覆蓋主訊號', result:'多空主訊號均已列入' });
-  } else if (!topBearInWatch && topBear && topBear.count > (_pulse.total ?? 0) * 0.3) {
-    rows.push({ pass:false, warn:true, text:`${topBear.id} 未列入觀察`, result:`命中 ${_fmtN(topBear.count)} 支（${((topBear.count/(_pulse.total??1))*100).toFixed(0)}%）建議加入` });
-    hasWarn = true;
+  } else {
+    if (!keyBullInWatch && keyBullId) {
+      rows.push({ pass:false, warn:true, text:`${keyBullId} 未列入觀察`, result:`為 key_signals.bull，應加入 watchSignals` });
+      hasWarn = true;
+    }
+    if (!keyBearInWatch && keyBearId) {
+      rows.push({ pass:false, warn:true, text:`${keyBearId} 未列入觀察`, result:`為 key_signals.bear，應加入 watchSignals` });
+      hasWarn = true;
+    }
   }
 
   // 5. riskScore 合理性
@@ -719,7 +793,7 @@ function _buildPrompt() {
     "bull": { "id": "訊號id", "name": "訊號名稱", "count": 0, "meaning": "此訊號的市場意義，20字內" },
     "bear": { "id": "訊號id", "name": "訊號名稱", "count": 0, "meaning": "此訊號的市場意義，20字內" }
   },
-  "watchSignals": ["值得持續觀察的訊號id，3-5個"],
+  "watchSignals": ["必須包含 key_signals.bull.id 和 key_signals.bear.id，再加1-3個值得追蹤的訊號id，共3-5個"],
   "outlook": "未來1-3日展望，50字內",
   "riskScore": 1-5,
   "consensus": "整體評估一句話結論，20字內",

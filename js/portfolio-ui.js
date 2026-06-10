@@ -5,12 +5,13 @@
 import {
   loadLists, listAll, getList,
   createList, renameList, deleteList,
+  ensureDefaultList, dedupEmptyLists,
   holdingAddTx, holdingUpdateTx, holdingRemoveTx, holdingRemoveCode,
   watchAddCode, watchUpdate, watchRemoveCode,
   calcHoldingItem, calcHoldingPL, calcListTotals, calcWatchDistance,
 } from './portfolio.js';
 import { getChineseName, ensureChineseName, fetchHistoryCached, toYahooSymbol, resolveYahooSymbol, fetchFundamentalsBatch } from './api.js';
-import { getAllGroups, loadHealthCacheBatch, saveHealthCache } from './db.js';
+import { getAllGroups, loadHealthCacheBatch, saveHealthCache, deletePortfolioList } from './db.js';
 import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 
 // 自製 prompt — 取代瀏覽器原生 prompt(避免醜陋的瀏覽器彈窗)
@@ -243,9 +244,9 @@ function _priceOf(code) {
 
 /** 確保至少有一個 holding 和一個 watch 清單（在 sync 之後才呼叫）*/
 async function _ensureDefaultLists() {
-  const { listAll: la, createList: cl } = await import('./portfolio.js');
-  if (!la('holding').length) await cl('holding', '主要持股');
-  if (!la('watch').length)   await cl('watch',   '潛力股');
+  // 用固定 id（holding_default / watch_default），存在則不重建 → 根治繁殖
+  await ensureDefaultList('holding');
+  await ensureDefaultList('watch');
 }
 
 
@@ -256,7 +257,11 @@ export async function initPortfolio() {
   // skipDefaults=true：等 syncCloudToLocal 完成後才補建預設清單，
   // 避免空殼預設清單被 syncLocalToCloud 上傳覆蓋雲端資料
   await loadLists({ skipDefaults: true });
-  // sync 後若本地仍空，補建預設清單（確保 UI 不報錯）
+  // sync 後先清理重複空清單（含同步刪雲端），再補預設清單
+  try {
+    const removed = await dedupEmptyLists();
+    for (const id of removed) deletePortfolioList(id).catch(() => {});  // 同步刪雲端
+  } catch (e) { console.warn('[portfolio] dedup 失敗:', e.message); }
   await _ensureDefaultLists();
   _autoSelectFirstList();
   _bindKindTabs();
@@ -268,7 +273,16 @@ export async function initPortfolio() {
   window.__portfolioAPI = {
     getWatchLists: () => listAll('watch'),
     isInWatch: (code) => listAll('watch').some(l => l.items?.some(it => it.code === code)),
-    reload: async () => { await loadLists({ skipDefaults: true }); await _ensureDefaultLists(); render(); },
+    reload: async () => {
+      await loadLists({ skipDefaults: true });
+      // sync 後重新 dedup（清掉雲端拉回的重複空清單，含同步刪雲端）
+      try {
+        const removed = await dedupEmptyLists();
+        for (const id of removed) deletePortfolioList(id).catch(() => {});
+      } catch (e) { console.warn('[portfolio] reload dedup 失敗:', e.message); }
+      await _ensureDefaultLists();
+      render();
+    },
   };
 
   document.querySelector('.main-tab[data-tab="portfolio"]')?.addEventListener('click', () => {
@@ -931,7 +945,7 @@ async function _fetchBatch(items) {
             }
           }
           const hShort = calcHealth(candlesShort);
-          const hLong  = calcHealthLong(candles, fund);
+          const hLong  = calcHealthLong(candles, fund, item.code);
           _healthCache[item.code]     = hShort;
           _healthLongCache[item.code] = hLong;
           // ── 存回 IndexedDB + Firestore（fire-and-forget）──

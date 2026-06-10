@@ -807,8 +807,8 @@ function _renderResults(items) {
       av = calcHealth(_s(a.miniCandles)) ?? -1;
       bv = calcHealth(_s(b.miniCandles)) ?? -1;
     } else if (_srSortKey === 'hl') {
-      av = (a.miniCandles?.length >= 120 ? calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null) : null) ?? -1;
-      bv = (b.miniCandles?.length >= 120 ? calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null) : null) ?? -1;
+      av = (a.miniCandles?.length >= 120 ? calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null, a.code) : null) ?? -1;
+      bv = (b.miniCandles?.length >= 120 ? calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null, b.code) : null) ?? -1;
     } else if (_srSortKey === 'yaogu') {
       const _yv = c => { const yg = _srYaoguMap.get(c); if (!yg) return 0; return yg.x2?3:yg.x1?2:yg.x5?1:0; };
       av = _yv(a.code); bv = _yv(b.code);
@@ -851,7 +851,7 @@ function _renderResults(items) {
   for (const item of sorted) {
     const _candlesShort = item.miniCandles?.length > 65 ? item.miniCandles.slice(-65) : item.miniCandles;
     const hs = _candlesShort?.length >= 20 ? calcHealth(_candlesShort) : null;
-    const hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null) : null;
+    const hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null, item.code) : null;
     const yg = _srYaoguMap.get(item.code);
     const chgCls = item.chgPct >= 0 ? 'up' : 'down';
     const chgStr = (item.chgPct >= 0 ? '+' : '') + (item.chgPct ?? 0).toFixed(2) + '%';

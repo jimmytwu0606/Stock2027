@@ -8,7 +8,8 @@
  */
 
 import { fetchTWSEPrices, fetchHistory, fetchHistoryCached, resolveYahooSymbol, toYahooSymbol, getChineseName, getAllKnownCodes } from './api.js';
-import { findBestMatch, normalizeSeries, pearsonPrefilter } from './pattern.js';
+import { calcSimilarity, normalizeSeries, pearsonPrefilter } from './pattern.js';
+import { getKlineCache } from './db.js';
 import { AppState } from './state.js';
 import { Config } from './config.js';
 
@@ -128,46 +129,63 @@ export async function* runPatternScan(templateCandles, opts = {}) {
   let results     = [];
   let consecutive429 = 0;   // 連續 429 次數，用於動態退避
 
-  for (let i = 0; i < codes.length; i += concurrency) {
+  // bundle 預載後幾乎全 cache hit（IDB 本地讀取 + DTW 純計算）→ 可大幅並發
+  // cache miss（要打 Worker）才需限流；用較高並發批次，批內並行跑
+  // CONCURRENCY 提高：IDB 讀取的非同步等待可 overlap，cache hit 不 sleep
+  const HIT_CONCURRENCY = 12;  // cache hit 批次並發數（純本地，可拉高）
+
+  for (let i = 0; i < codes.length; i += HIT_CONCURRENCY) {
     if (signal.aborted) {
       yield { type: 'aborted', message: '掃描已取消', results };
       return;
     }
 
-    const batch = codes.slice(i, i + concurrency);
+    const batch = codes.slice(i, i + HIT_CONCURRENCY);
 
-    // 逐一（非並發）執行，更容易控制速率
-    for (const code of batch) {
-      if (signal.aborted) break;
+    // 批內並行：Promise.all 讓 IDB 讀取等待 overlap（DTW 仍序列但 I/O 不阻塞）
+    const batchResults = await Promise.all(
+      batch.map(code =>
+        signal.aborted ? Promise.resolve(null) :
+        _scanOneWithRetry(
+          code, templateCandles,
+          { windowSize, featureMode, period, signal, priceMap },
+          consecutive429
+        )
+      )
+    );
 
-      const result = await _scanOneWithRetry(
-        code, templateCandles,
-        { windowSize, featureMode, period, signal, priceMap },
-        consecutive429
-      );
-
+    let batchHas429 = false;
+    let batchHasMiss = false;
+    for (const result of batchResults) {
       done++;
-
       if (result === '429') {
+        batchHas429 = true;
         consecutive429++;
-        yield { type: 'progress', phase: 'scan', message: `掃描中（rate limit，放慢中）…`, done, total };
       } else {
         consecutive429 = Math.max(0, consecutive429 - 1);
         if (result && result.score >= similarity) {
           results.push(result);
           yield { type: 'result', item: result, done, total };
         }
-        yield { type: 'progress', phase: 'scan', message: `掃描中…`, done, total };
+        if (result?.fromCache === false) batchHasMiss = true;
       }
-
-      const isCacheHit = result?.fromCache === true;
-      const baseDelay  = result === '429' ? 800 : isCacheHit ? 0 : 200;
-      const extraDelay = Math.min(consecutive429 * 1000, 8000);
-      if (baseDelay + extraDelay > 0) await _sleep(baseDelay + extraDelay);
-
-      // 每 10 筆強制讓出主執行緒，避免 DTW 計算連續佔用導致畫面凍結
-      if (done % 10 === 0) await _yieldToUI();
     }
+
+    yield {
+      type: 'progress', phase: 'scan',
+      message: batchHas429 ? '掃描中（rate limit，放慢中）…' : '掃描中…',
+      done, total,
+    };
+
+    // 限流：整批若有 429 或 cache miss（打了 Worker）才 sleep；全 hit 不等待
+    if (batchHas429) {
+      await _sleep(800 + Math.min(consecutive429 * 1000, 8000));
+    } else if (batchHasMiss) {
+      await _sleep(200);  // 批次有打 Worker → 保護 proxy
+    }
+
+    // 讓出主執行緒，避免連續 DTW 凍結畫面
+    await _yieldToUI();
   }
 
   results.sort((a, b) => b.score - a.score);
@@ -207,31 +225,76 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
       //   proxy 立刻被打爆，大量 502 → 全部 return null → 結果 0。
       //   型態比對用 toYahooSymbol + fetchHistoryCached 即可，上櫃比例少且 R2 有快取。
       const symbol = toYahooSymbol(code);
+      const tLen    = templateCandles.length;
+      const scanLen = Math.max(tLen, windowSize);
+
+      // ── 打 Worker 前先看 IDB 既有快取根數 ──────────────────────────────────
+      //   新上市股（如 7803 只有 15 根）K 線不足 scanLen，比對本來就比不了。
+      //   但 fetchHistoryCached 會因「根數 < period 60%」判定快取不足 → 重打 Worker
+      //   → 盤後 Yahoo 502/400 噴一堆 error 又拖速度。
+      //   先檢查 IDB：有快取但根數不足 scanLen → 直接跳過，不打 Worker。
+      try {
+        const sym2 = symbol.endsWith('.TW') ? symbol.replace('.TW', '.TWO') : symbol.replace('.TWO', '.TW');
+        const idbHit = await getKlineCache(symbol, '1y').catch(() => null)
+                    || await getKlineCache(sym2, '1y').catch(() => null);
+        if (idbHit?.candles && idbHit.candles.length < scanLen) {
+          return null;  // IDB 有資料但根數不足 → 新股/資料太短，跳過不打 Worker
+        }
+      } catch (_) {}
+
       const _t0 = Date.now();
-      const candles = await fetchHistoryCached(symbol, FETCH_PERIOD);
+      // ⚠️ allowStale:true — 批次掃描接受「差一天」的快取，不為最近一根重打 Worker。
+      //   上櫃股快取常缺今天那根（GAS 寫入時序），無 allowStale 會每支 fall through
+      //   打 Worker 1.5 秒 → 整批龜速。型態比對用截尾資料結果等同。
+      const candles = await fetchHistoryCached(symbol, FETCH_PERIOD, { allowStale: true });
       const fromCache = (Date.now() - _t0) < 30;
 
-      const scanLen = Math.max(templateCandles.length, windowSize);
       if (!candles || candles.length < scanLen) return null;
 
-      const recent = candles.slice(-scanLen);
+      // ── 比對段固定為「最新 tLen 根」（貼齊右端，找正在形成此型態的股票）──
+      // 不做歷史滑動：比對段永遠是最近 tLen 根，畫圖時藍框貼右端、最後一根=今天
+      const matchSegment = candles.slice(-tLen);
 
+      // 粗篩：最新 tLen 根降採樣 Pearson，快速剔除明顯不像（省 DTW）
       const templateNorm = normalizeSeries(templateCandles.map(c => c.close));
-      const recentNorm   = normalizeSeries(recent.map(c => c.close));
-      if (!pearsonPrefilter(templateNorm, recentNorm, 0.2)) return null;
+      const matchNorm    = normalizeSeries(matchSegment.map(c => c.close));
+      if (!pearsonPrefilter(templateNorm, matchNorm, 0.1)) return null;
 
-      const { score } = findBestMatch(templateCandles, recent);
+      // 直接比對最新 tLen 根 vs 範本
+      const score = calcSimilarity(templateCandles, matchSegment, featureMode);
+
+      // 畫圖用：前面補一些 context（灰線），藍框=最新 tLen 根貼右端
+      // drawCandles = 最新 (tLen + context) 根，匹配段在最右側 tLen 根
+      const CONTEXT = Math.min(20, candles.length - tLen);  // 前置 context 根數
+      const drawCandles = candles.slice(-(tLen + CONTEXT));
+      // 匹配段（最新 tLen 根）在 drawCandles 裡的座標：[CONTEXT, drawCandles.length-1]
+      const drawStartIdx = CONTEXT;
+      const drawEndIdx   = drawCandles.length - 1;
 
       const pd = priceMap?.[code] ?? {};
+      // 價格來源：priceMap 優先（當日收盤）；上櫃股 priceMap 常無 price（=0）
+      //   → 用已抓到的 K 線最後一根補（今收），漲跌幅用最後兩根算
+      // 避免上櫃股在型態結果列表顯示「—」
+      let _price  = isFinite(pd.price)  && pd.price  > 0 ? pd.price  : null;
+      let _chgPct = isFinite(pd.chgPct) && pd.chgPct !== 0 ? pd.chgPct : null;
+      if (_price == null && candles.length >= 1) {
+        const last = candles[candles.length - 1];
+        _price = last?.close ?? null;
+        if (_chgPct == null && candles.length >= 2) {
+          const prev = candles[candles.length - 2];
+          if (prev?.close > 0) _chgPct = (last.close - prev.close) / prev.close * 100;
+        }
+      }
+
       return {
         code,
         name:        getChineseName(code) ?? pd.name ?? '',
         score:       Math.round(score * 10) / 10,
-        price:       isFinite(pd.price)  ? pd.price  : 0,
-        chgPct:      isFinite(pd.chgPct) ? pd.chgPct : 0,
-        startIdx:    0,
-        endIdx:      windowSize - 1,
-        candles:     recent,
+        price:       _price  ?? 0,
+        chgPct:      _chgPct ?? 0,
+        startIdx:    drawStartIdx,    // 匹配段在 drawCandles 裡的起點
+        endIdx:      drawEndIdx,      // 匹配段終點（貼齊最新）
+        candles:     drawCandles,     // 含 context + 匹配段，畫到今天
         fullCandles: candles,
         fromCache,
       };

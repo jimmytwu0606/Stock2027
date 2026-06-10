@@ -36,6 +36,7 @@ export async function initStrategyLab() {
   });
   _lazyBind('mc',       () => import('./lab-mc.js'),       m => m.bindMCRun());
   _lazyBind('compare',  () => import('./lab-compare.js'),  m => m.bindCompareRun());
+  _lazyBind('experiment', () => import('./lab-experiment.js'), m => m.bindExperimentRun());
 
   window.addEventListener('authReady', () => _applyTierUI());
 }
@@ -88,6 +89,7 @@ function _switchSub(sub) {
   const panels = {
     single: 'labPanelSingle', industry: 'labPanelIndustry',
     mc: 'labPanelMC', compare: 'labPanelCompare',
+    experiment: 'labPanelExperiment',
   };
   Object.entries(panels).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -97,6 +99,7 @@ function _switchSub(sub) {
   const controls = {
     single: 'labControlsSingle', industry: 'labControlsIndustry',
     mc: 'labControlsMC', compare: 'labControlsCompare',
+    experiment: 'labControlsExperiment',
   };
   Object.entries(controls).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -125,4 +128,8 @@ function _applyTierUI() {
 
   const mcRunBtn = document.getElementById('labRunMC');
   if (mcRunBtn) mcRunBtn.disabled = !isVVVIP;
+
+  // 真實驗室：只有 vvvip 才顯示
+  const expBtn = document.getElementById('labBtnExperiment');
+  if (expBtn) expBtn.style.display = isVVVIP ? '' : 'none';
 }

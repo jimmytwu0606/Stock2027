@@ -500,7 +500,7 @@
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 9px 0;
+  padding: 9px 6px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
@@ -508,6 +508,7 @@
   font-family: inherit;
   transition: color 0.15s, border-color 0.15s;
   margin-bottom: -1px;
+  white-space: nowrap;   /* 避免「自訂條件」擠成兩行 */
 }
 .sc-left-tab:hover  { color: var(--text); }
 .sc-left-tab.active { color: var(--text); border-bottom-color: var(--accent); }

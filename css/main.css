@@ -470,6 +470,31 @@ html, body {
   min-height: auto;
 }
 
+/* Touch scroll fix：讓 K線圖區域可以縱向捲動頁面
+ * LightweightCharts 會在 canvas 加 touch-action:none，
+ * 攔截所有 touch 事件導致無法縱向滑動頁面。
+ * 在外層容器加 pan-y，告知瀏覽器縱向滑動優先。
+ * 注意：此設定讓 K線圖橫向拖拉仍正常（canvas 本身仍攔截橫向）。
+ */
+#tabChart {
+  touch-action: pan-y;
+}
+#tabChart * {
+  touch-action: pan-y;
+}
+/* LightweightCharts canvas 需要橫向操作，不完全限制 */
+#mainChart > div,
+#mainChart canvas,
+.ind-panel > div,
+.ind-panel canvas {
+  touch-action: pan-y;
+}
+/* 技術分析面板 canvas 只需縱向滾動 */
+#analysisPanel canvas,
+.ca-panel canvas {
+  touch-action: pan-y;
+}
+
 .chart-area {
   height: var(--chart-area-h, 520px);   /* 預設值 = MAIN_H(360) + 1 副圖(160) */
   flex: 0 0 auto;

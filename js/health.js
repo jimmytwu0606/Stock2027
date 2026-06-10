@@ -259,7 +259,11 @@ export function calcHealth(candles, signals = []) {
 // 需要 ≥120 根日K（建議 1y ≥240 根）
 // fund 為 fetchFundamentals 回傳物件（可 null，基本面維度會跳過）
 // ═══════════════════════════════════════════════════════
-export function calcHealthLong(candles, fund = null) {
+export function calcHealthLong(candles, fund = null, code = null) {
+  // 優先讀 GAS 預算快照（window.__healthSnapshot），快照有值就直接回傳
+  if (code && window.__healthSnapshot?.data?.[code]?.ll != null) {
+    return window.__healthSnapshot.data[code].ll;
+  }
   if (!candles || candles.length < 60) return null;
 
   const closes  = candles.map(c => c.close);
@@ -603,14 +607,18 @@ function _longCls(score) {
  * @param {Object}      fund     基本面資料（選填，供 calcHealthLong 用）
  * @returns {{ short: number|null, long: number|null }}
  */
-export function getHealthScore(candles, row = null, signals = [], fund = null) {
+export function getHealthScore(candles, row = null, signals = [], fund = null, code = null) {
   const short = (candles && candles.length >= 20)
     ? calcHealth(candles, signals)
     : (row ? calcHealthFast(row) : null);
 
-  const long = (candles && candles.length >= 120)
-    ? calcHealthLong(candles, fund)
-    : null;
+  // 長線健康：優先讀 GAS 預算快照（window.__healthSnapshot），快照缺才本機算
+  let long = null;
+  if (code && window.__healthSnapshot?.data?.[code]?.ll != null) {
+    long = window.__healthSnapshot.data[code].ll;
+  } else if (candles && candles.length >= 120) {
+    long = calcHealthLong(candles, fund);
+  }
 
   return { short, long };
 }

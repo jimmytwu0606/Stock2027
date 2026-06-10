@@ -1210,7 +1210,37 @@ export async function renderStockSignals(candles, code) {
   let signals;
   // ── 妖股補強：不管快取或重算，都要補強 ──
   // isFresh 快取中沒有妖股補強，要每次進個股都補
-  const _yaoguRecord = await getYaoguRecord(code).catch(() => null);
+  let _yaoguRecord = await getYaoguRecord(code).catch(() => null);
+
+  // 篩選器來源且是 X 系列策略，但 IDB 無記錄 → 建 stub record 讓 updateYaoguTracker 能進入主流程
+  // 根因：篩選器用 snapshot/65根算到 X 系列，但個股頁重算時可能不足再次觸發 X
+  // strategyId 優先；舊存檔只有 strategyName，用名稱 fallback
+  if (fromScreener && !_yaoguRecord) {
+    const sid   = AppState.screenerContext?.strategyId ?? null;
+    const sname = AppState.screenerContext?.strategyId  // 先看 id
+      ? null  // id 存在，不需 name fallback
+      : (AppState.screenerContext?.matchedConds ?? []).join(',');  // matchedConds 不含策略名稱，略過
+    // strategyId 直接比對；沒有 id 時看 matchedConds 有無 X 系列策略名稱
+    const X_ID_MAP = { X1: 'steady', X2: 'medium', X5: 'early', X6: 'medium' };
+    const X_NAME_MAP = { '黃金比例': 'steady', '天黑請閉眼': 'medium', '潛龍勿用': 'early', '見龍在田': 'medium' };
+    let xStrength = null;
+    if (sid && X_ID_MAP[sid]) {
+      xStrength = X_ID_MAP[sid];
+    } else {
+      // 舊存檔：從 screenerContext.strategyName（新存的）或 matchedConds 掃
+      const ctxStratName = AppState.screenerContext?.strategyName ?? '';
+      if (X_NAME_MAP[ctxStratName]) {
+        xStrength = X_NAME_MAP[ctxStratName];
+      }
+    }
+    if (xStrength) {
+      _yaoguRecord = { code, status: 'active', strength: xStrength, activatedAt: Date.now(), streak: 1, lastUpdated: Date.now() };
+    } else {
+      // strategyId/strategyName 都沒有（舊 screenerContext 或快速篩未更新）
+      // 仍建 stub，strength 暫用 medium，updateYaoguTracker 內部會用 K 線重算
+      _yaoguRecord = { code, status: 'active', strength: 'medium', activatedAt: Date.now(), streak: 1, lastUpdated: Date.now() };
+    }
+  }
 
   if (isFresh) {
     // 今天已掃過（非篩選器來源）→ 直接用，但仍補強妖股標籤
@@ -1272,6 +1302,12 @@ export async function renderStockSignals(candles, code) {
   // 監聽 updateYaoguTracker 算完的事件，streak 算好後重繪一次
   const _onYaoguUpdated = async (e) => {
     if (e.detail?.code !== code) return;
+    const evtYs = e.detail?.ys;
+    // 只有 ys 有實質內容（status 不是 null/watching+無 streak）才認為是最終結果
+    // 避免 stock-tabs 自己的 updateYaoguTracker（signals 無 X，回 null/watching）
+    // 先到並移除監聽，導致後來 signal-scan.js 的完整結果收不到
+    const isSubstantial = evtYs && (evtYs.status === 'active' || evtYs.status === 'warning1' || evtYs.status === 'warning2' || evtYs.status === 'exit' || evtYs.status === 'exited');
+    if (!isSubstantial) return;  // 繼續等更完整的 event
     document.removeEventListener('yaoguUpdated', _onYaoguUpdated);
 
     // streak 寫進 DB 後，重新 inject 確保 X 系列 chip 拿到最新保留訊號
@@ -1347,11 +1383,10 @@ async function _renderYaoguChip(code, signals, candles = null) {
     }
 
     // 優先從 AppState 讀（updateYaoguTracker 跑完後寫入，含最新 streak）
-    let ys = AppState.yaoguStatus?.[code] ?? null;
-    if (!ys) {
-      const streak = record?.streak ?? null;
-      ys = getYaoguStatus(code, signals, record, streak);
-    }
+    // 第一次呼叫時 AppState 可能無值，先顯示空白；
+    // renderStockSignals 的 updateYaoguTracker 完成後 dispatch yaoguUpdated，
+    // _onYaoguUpdated 重繪時 AppState 已有值，才真正顯示
+    const ys = AppState.yaoguStatus?.[code] ?? null;
 
     if (!ys) { el.innerHTML = ''; return; }
     const exitBtn = '';  // 重置按鈕已移除

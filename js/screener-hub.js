@@ -318,11 +318,26 @@ function _renderQuickScanResult(stockHits, strategies) {
     </table>`;
   container.style.display = '';
 
-  // 點擊個股 → 開 K 線
+  // 點擊個股 → 開 K 線，同時設定 screenerContext 讓個股頁知道來源策略
   container.querySelectorAll('.qs-row').forEach(tr => {
     tr.addEventListener('click', () => {
       const code = tr.dataset.code;
-      if (code) window.__loadStock?.(code);
+      if (!code) return;
+      // 取這支股票命中的第一個 X 系列策略（優先 X2 > X1 > X5 > X6）
+      const hitStrats = stockHits[code] ?? [];
+      const X_PRIORITY = ['X2','X1','X5','X6'];
+      const xStrat = X_PRIORITY.find(id => hitStrats.includes(id)) ?? null;
+      const stratObj = xStrat ? stratMap[xStrat] : (hitStrats[0] ? stratMap[hitStrats[0]] : null);
+      // dispatch stockSelect（同 screener-ui.js），讓 main.js 設定 screenerContext
+      document.dispatchEvent(new CustomEvent('stockSelect', {
+        detail: {
+          code,
+          matchedConds:  hitStrats.map(id => stratMap[id]?.name ?? id),
+          strategyId:    stratObj?.id   ?? null,
+          strategyName:  stratObj?.name ?? null,
+          fromScreener:  true,
+        }
+      }));
     });
   });
 

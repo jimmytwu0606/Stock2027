@@ -110,6 +110,55 @@ export async function createList(kind, name) {
   return list;
 }
 
+// 補建預設清單：用固定 id（holding_default / watch_default），存在則不重建
+// 根治繁殖：原本 _ensureDefaultLists 每次 createList 用 Date.now() 新 id，
+// sync 把空清單拉回又只 put 不 delete → 累積數十個同名空清單
+export async function ensureDefaultList(kind) {
+  if (!_lists) await loadLists({ skipDefaults: true });
+  // 已有同 kind 清單（任何 id）→ 不補
+  if (_lists.some(l => l.kind === kind)) return null;
+  const fixedId = `${kind}_default`;
+  // 固定 id 已存在（理論上前一條已擋掉，雙保險）→ 不重建
+  if (_lists.some(l => l.id === fixedId)) return getList(fixedId);
+  const list = {
+    id:        fixedId,
+    kind,
+    name:      kind === 'holding' ? '主要持股' : '潛力股',
+    items:     [],
+    order:     0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  _lists.push(list);
+  await dbPut(STORE, list);
+  return list;
+}
+
+// 清理重複空清單：每 kind 只保留「有 items 的」+「最早一個空的」，其餘空清單刪除
+// 回傳刪除的 id 陣列（供呼叫端同步刪雲端）
+export async function dedupEmptyLists() {
+  if (!_lists) await loadLists({ skipDefaults: true });
+  const toDelete = [];
+  for (const kind of ['holding', 'watch']) {
+    const sameKind = _lists.filter(l => l.kind === kind);
+    const nonEmpty = sameKind.filter(l => (l.items?.length ?? 0) > 0);
+    const empties  = sameKind
+      .filter(l => (l.items?.length ?? 0) === 0)
+      .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+    // 有非空清單 → 空清單全刪；無非空 → 保留最早一個空的
+    const keepEmpty = nonEmpty.length > 0 ? [] : empties.slice(0, 1);
+    const dropEmpty = empties.filter(l => !keepEmpty.includes(l));
+    for (const l of dropEmpty) toDelete.push(l.id);
+  }
+  if (toDelete.length) {
+    const dropSet = new Set(toDelete);
+    _lists = _lists.filter(l => !dropSet.has(l.id));
+    for (const id of toDelete) await dbDelete(STORE, id);
+    console.log(`[portfolio] dedup 清理 ${toDelete.length} 個重複空清單`);
+  }
+  return toDelete;
+}
+
 export async function renameList(id, newName) {
   const list = getList(id);
   if (!list) return null;

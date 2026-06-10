@@ -907,6 +907,10 @@
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11V4h3v7M5 11V2h3v9M9 11V6h3v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             策略比較
           </button>
+          <button class="lab-sub-btn" data-lab="experiment" id="labBtnExperiment" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 1v5L2 12h10L9 6V1M5 1h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            真實驗室
+          </button>
         </div>
         <div class="lab-toolbar-spacer"></div>
         <!-- 單股回測控制 -->
@@ -971,6 +975,35 @@
           <span style="font-size:11px;color:var(--muted)">多股空格分隔，最多5支</span>
           <button class="lab-run-btn" id="labRunCompare">▶ 全策略分析</button>
         </div>
+        <!-- 真實驗室控制 -->
+        <div class="lab-controls" id="labControlsExperiment" style="display:none;flex-wrap:wrap;gap:6px">
+          <select class="lab-select" id="expHoldSelect">
+            <option value="5">5日</option>
+            <option value="10" selected>10日</option>
+            <option value="20">20日</option>
+          </select>
+          <button class="lab-run-btn" id="labRunExperiment" style="background:linear-gradient(135deg,#26a69a,#00796b)">🗺️ 全市場掃描</button>
+          <button class="lab-run-btn" id="labRunSeq" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);margin-left:4px">⛓️ 序列回測</button>
+          <button class="lab-run-btn" id="labRunExit" style="background:linear-gradient(135deg,#d97706,#92400e);margin-left:4px">🎯 出場比較</button>
+          <button class="lab-abort-btn" id="labExpAbortBtn" style="display:none">■ 停止</button>
+          <button class="lab-copy-btn" id="labExpCopyBtn" style="display:none;font-size:12px;padding:3px 10px">📋 複製結果</button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;margin-left:6px" title="需先執行 GAS test-lab.gs 存入 2Y K 線">
+            <input type="checkbox" id="expUse2Y" style="accent-color:#26a69a">2Y K線
+          </label>
+          <button class="lab-copy-btn" id="labExpClearCacheBtn" style="font-size:11px;padding:2px 7px;color:var(--muted)" title="清除 2Y IDB 快取">↺</button>
+          <span style="color:var(--muted);font-size:11px;align-self:center">或</span>
+          <select class="lab-select" id="expStrategySelect" style="width:150px">
+            <option value="">選擇策略</option>
+            <option value="Z1">Z1 飛龍在天反轉</option>
+            <option value="Z2">Z2 亢龍有悔進場</option>
+            <option value="Z3">Z3 死亡交叉確認</option>
+            <option value="Z4">Z4 跌停板確認</option>
+            <option value="Z5">Z5 妖股退潮</option>
+            <option value="Z6">Z6 高檔放量收黑</option>
+          </select>
+          <input class="lab-code-input" id="expCodeInput" type="text" placeholder="代號（單股）" maxlength="10" style="width:110px">
+          <button class="lab-copy-btn" id="labExpSingleBtn" style="font-size:12px;padding:3px 10px">▶ 單股</button>
+        </div>
       </div>
 
       <!-- ── Lab 進度條 ── -->
@@ -1026,6 +1059,19 @@
           <div class="lab-mc-result" id="labMCResult" style="display:none"></div>
         </div>
 
+        <!-- 真實驗室面板 -->
+        <div class="lab-panel" id="labPanelExperiment" style="display:none">
+          <div class="lab-empty-state" id="labExpEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M16 4v14L8 36h28L28 18V4M16 4h12" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="22" cy="28" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>🧪 真實驗室 — VVVIP 專屬</p>
+            <p class="hint">實驗中策略，尚未正式導入系統。選擇 Z 系列策略，輸入代號開始回測</p>
+          </div>
+          <div id="labExpResult" style="display:none"></div>
+        </div>
+
         <!-- 策略比較面板 -->
         <div class="lab-panel" id="labPanelCompare" style="display:none">
           <div class="lab-empty-state" id="labCompareEmpty">
@@ -1059,15 +1105,15 @@
       <div class="seed-modal" id="screenerModal">
         <div class="seed-modal-header">
           <div class="sc-left-tabs">
-            <button class="sc-left-tab active" data-left-tab="custom">自訂條件</button>
-            <button class="sc-left-tab" data-left-tab="strategy">策略庫</button>
+            <button class="sc-left-tab" data-left-tab="custom">自訂條件</button>
+            <button class="sc-left-tab active" data-left-tab="strategy">策略庫</button>
           </div>
           <button class="seed-modal-close" id="screenerModalClose">✕</button>
         </div>
         <div class="seed-modal-body" id="screenerModalBody">
 
           <!-- 自訂條件 tab -->
-          <div id="scPanelCustom">
+          <div id="scPanelCustom" style="display:none">
             <div class="seed-modal-section">
               <div id="strategyActiveBanner"></div>
               <div class="sc-cond-list" id="screenerConditionsModal">
@@ -1084,7 +1130,7 @@
           </div>
 
           <!-- 策略庫 tab -->
-          <div id="scPanelStrategy" style="display:none">
+          <div id="scPanelStrategy">
             <div class="seed-modal-section">
               <div class="sc-strategy-list" id="strategyList"></div>
             </div>
