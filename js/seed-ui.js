@@ -958,10 +958,31 @@ function _drawMiniChart(canvas, candles) {
   const range  = max - min || 1;
   const n      = closes.length;
 
+  const xAt = i => (i / (n - 1)) * w;
+  const yAt = v => h - ((v - min) / range) * h * 0.85 - h * 0.075;
+
+  // ── MA20 灰線（疊底層；miniCandles 有 240 根，前 19 根當暖機）──
+  if (n >= 20) {
+    ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    let sum = 0, started = false;
+    for (let i = 0; i < n; i++) {
+      sum += closes[i];
+      if (i >= 20) sum -= closes[i - 20];
+      if (i < 19) continue;
+      const ma = sum / 20;
+      const x = xAt(i), y = yAt(Math.max(min, Math.min(max, ma)));
+      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      started = true;
+    }
+    ctx.stroke();
+  }
+
   ctx.beginPath();
   for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * w;
-    const y = h - ((closes[i] - min) / range) * h * 0.85 - h * 0.075;
+    const x = xAt(i);
+    const y = yAt(closes[i]);
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   const lastUp = closes[closes.length - 1] >= closes[0];

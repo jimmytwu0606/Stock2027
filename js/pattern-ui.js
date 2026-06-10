@@ -434,7 +434,7 @@ function _renderAllResults() {
     // Canvas 在 row 附加到 DOM 後才有尺寸，用 requestAnimationFrame 畫
     const canvas = row.querySelector('.pr-mini-chart');
     if (canvas && item.candles?.length) {
-      requestAnimationFrame(() => _drawMiniChart(canvas, item.candles, item.startIdx, item.endIdx));
+      requestAnimationFrame(() => _drawMiniChart(canvas, item.candles, item.startIdx, item.endIdx, item.fullCandles));
     }
 
     row.addEventListener('click', () => {
@@ -466,7 +466,7 @@ function _renderAllResults() {
   }
 }
 
-function _drawMiniChart(canvas, candles, startIdx, endIdx) {
+function _drawMiniChart(canvas, candles, startIdx, endIdx, fullCandles = null) {
   const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
@@ -499,6 +499,39 @@ function _drawMiniChart(canvas, candles, startIdx, endIdx) {
 
   const xAt = i => (n > 1 ? (i / (n - 1)) * (w - 2) + 1 : w / 2);
   const yAt = v => h - 2 - v * (h - 4);
+
+  // ── MA20 均線（疊在最底層，與題材小卡同風格的灰線）──
+  //   用 fullCandles 算才有前 19 根暖機資料；正規化沿用 closes 的 min/max，
+  //   超出可視範圍的值 clamp 在邊緣。
+  if (fullCandles && fullCandles.length >= 20 && n > 1) {
+    const all    = fullCandles.map(c => c.close);
+    const offset = all.length - n;          // drawCandles 在 fullCandles 的起點
+    const min    = Math.min(...closes);
+    const max    = Math.max(...closes);
+    const range  = (max - min) || 1;
+
+    ctx.strokeStyle = 'rgba(148,163,184,0.45)';
+    ctx.lineWidth   = 1;
+    ctx.lineJoin    = 'round';
+    ctx.beginPath();
+    let started = false;
+    let sum = 0;
+    // 先累積 offset 之前的視窗
+    const firstIdx = Math.max(0, offset - 19);
+    for (let g = firstIdx; g < offset && g < all.length; g++) sum += all[g];
+    for (let i = 0; i < n; i++) {
+      const g = offset + i;                 // fullCandles 全域索引
+      sum += all[g];
+      if (g >= 20) sum -= all[g - 20];
+      if (g < 19) continue;                 // 不足 20 根，無 MA 值
+      const ma = sum / 20;
+      const v  = Math.max(0, Math.min(1, (ma - min) / range));
+      const x = xAt(i), y = yAt(v);
+      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      started = true;
+    }
+    ctx.stroke();
+  }
 
   // 前置 context 段（匹配段之前）先畫淡灰線
   if (startIdx != null && startIdx > 0) {
