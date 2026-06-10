@@ -29,6 +29,7 @@
   <link rel="stylesheet" href="css/strategy-lab.css" />
   <link rel="stylesheet" href="css/search-card.css" />
   <link rel="stylesheet" href="css/additions.css" />
+  <link rel="stylesheet" href="css/market-pulse.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400&display=swap">
   <link rel="stylesheet" href="css/splash.css" />
@@ -45,6 +46,81 @@
 
   <link rel="stylesheet" href="css/main-inline.css" />
   <link rel="stylesheet" href="css/monte-carlo.css">
+
+  <!-- v2 layout override：最後載入，確保蓋過所有外部 CSS -->
+  <style>
+    .tab-panel        { display: none !important; }
+    .tab-panel.active { display: flex !important; flex-direction: column; flex: 1; }
+
+    /* sidebar 抽屜：position 被 watchlist-v2 等後載 CSS 蓋掉，這裡強制鎖定 */
+    .sidebar {
+      position: absolute !important;
+      top: 48px !important;
+      left: 0 !important;
+      height: calc(100vh - 48px) !important;
+      max-height: calc(100vh - 48px) !important;
+      width: var(--sidebar-w, 240px) !important;
+      z-index: 200 !important;
+      transform: translateX(-100%);
+      transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+      overflow: hidden !important;
+    }
+    .sidebar.drawer-open {
+      transform: translateX(0);
+      box-shadow: 4px 0 24px rgba(0, 0, 0, .35);
+    }
+
+    /* 設定抽屜內的帳號區 */
+    .auth-user-drawer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 0 10px;
+    }
+    .auth-user-drawer .auth-user-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .auth-user-drawer .auth-name {
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .auth-drawer-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .auth-drawer-btn {
+      flex: 1;
+      min-width: 90px;
+      padding: 7px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border2);
+      background: none;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all .15s;
+    }
+    .auth-drawer-btn:hover {
+      color: var(--text);
+      background: var(--bg3);
+    }
+    .auth-drawer-btn-signout:hover {
+      color: var(--down);
+      border-color: var(--down);
+    }
+    #settingsAuthArea .auth-signin-btn {
+      width: 100%;
+      justify-content: center;
+    }
+  </style>
 </head>
 <body>
 
@@ -154,6 +230,7 @@
 
 <!-- ── Topbar ── -->
   <header class="topbar">
+    <button class="drawer-toggle-btn" id="drawerToggleBtn" title="自選清單" aria-label="開啟自選清單">☰</button>
     <div class="logo">
       <svg class="logo-dots" width="22" height="22" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
         <circle cx="32" cy="32" r="8" fill="#ff6b6b"><animate attributeName="opacity" values="1;0.4;1" dur="2s" begin="0s" repeatCount="indefinite"/><animate attributeName="r" values="8;6.5;8" dur="2s" begin="0s" repeatCount="indefinite"/></circle>
@@ -174,17 +251,21 @@
       <button class="search-btn" title="查詢">&#9906;</button>
       <div class="search-dropdown" id="searchDropdown"></div>
     </div>
-    <div class="topbar-right">
+    <!-- 置中區：盤中狀態 + 時間 + 市場溫度計 -->
+    <div class="topbar-center">
       <div class="status-dot"></div>
       <span class="status-label" id="statusLabel">盤後模式</span>
       <span class="status-label" id="nowTime"></span>
-      <span class="data-source">TWSE + Yahoo Finance</span>
-      <div id="authArea"></div>                                    <!-- ← 新增這行 -->
+      <div id="mpTopbarSlot"></div>
+    </div>
+    <div class="topbar-right">
+      <div id="authArea"></div>
       <button class="settings-btn" id="settingsBtn" title="設定">⚙</button>
     </div>
   </header>
 
-  <!-- ── Sidebar ── -->
+  <!-- ── Sidebar（抽屜式） ── -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <span>自選清單</span>
@@ -194,8 +275,6 @@
       </div>
     </div>
     <div id="watchlistContainer"></div>
-    <!-- 拖曳分隔線（貼在 sidebar 右邊緣，不佔 flex 子元素位置） -->
-    <div id="sidebarResizer" aria-hidden="true"></div>
   </aside>
 
   <!-- ── Main ── -->
@@ -741,6 +820,8 @@
       <div class="hub-body" id="hubBody">
 
     <div class="hub-sub" id="hubSubScreener">
+      <!-- snapshot 狀態列 -->
+      <div id="screenerSnapshotStatus" style="display:none;font-size:11px;color:var(--accent,#58a6ff);padding:4px 10px 0;"></div>
       <div class="screener-wrap hub-screener-wrap">
 
         <!-- 狀態 / 進度（全寬，modal 開始篩選後顯示） -->
@@ -902,6 +983,18 @@
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11V4h3v7M5 11V2h3v9M9 11V6h3v5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             策略比較
           </button>
+          <button class="lab-sub-btn" data-lab="experiment" id="labBtnExperiment" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 1v5L2 12h10L9 6V1M5 1h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            真實驗室
+          </button>
+          <button class="lab-sub-btn" data-lab="backtest" id="labBtnBacktest">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 13h12M2 10l3-4 2 2 4-6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            組合回測
+          </button>
+          <button class="lab-sub-btn" data-lab="discovered" id="labBtnDiscovered" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3l2 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            系統發現
+          </button>
         </div>
         <div class="lab-toolbar-spacer"></div>
         <!-- 單股回測控制 -->
@@ -960,11 +1053,32 @@
           </select>
           <button class="lab-run-btn" id="labRunMC">▶ 執行模擬</button>
         </div>
+        <!-- 真實驗室控制 -->
+        <div class="lab-controls" id="labControlsExperiment" style="display:none;flex-wrap:wrap;gap:6px">
+          <button class="lab-run-btn" id="labRunExperiment" style="background:linear-gradient(135deg,#26a69a,#00796b)">🗺️ 全市場掃描</button>
+          <button class="lab-run-btn" id="labRunSeq" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);margin-left:4px">⛓️ 序列回測</button>
+          <button class="lab-run-btn" id="labRunExit" style="background:linear-gradient(135deg,#d97706,#92400e);margin-left:4px">🎯 出場比較</button>
+          <button class="lab-abort-btn" id="labExpAbortBtn" style="display:none">■ 停止</button>
+          <button class="lab-copy-btn" id="labExpCopyBtn" style="display:none;font-size:12px;padding:3px 10px">📋 複製結果</button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;margin-left:6px" title="需先執行 GAS test-lab.gs 存入 2Y K 線">
+            <input type="checkbox" id="expUse2Y" style="accent-color:#26a69a">2Y K線
+          </label>
+          <button class="lab-copy-btn" id="labExpClearCacheBtn" style="font-size:11px;padding:2px 7px;color:var(--muted)" title="清除 2Y IDB 快取">↺</button>
+          <select class="lab-select" id="expStrategySelect" style="width:190px">
+            <option value="">選擇策略（系統發現）</option>
+          </select>
+        </div>
         <!-- 策略比較控制 -->
         <div class="lab-controls" id="labControlsCompare" style="display:none">
           <input class="lab-code-input" id="labCompareCodeInput" type="text" placeholder="2330 2454 6116" maxlength="40" style="width:180px">
           <span style="font-size:11px;color:var(--muted)">多股空格分隔，最多5支</span>
           <button class="lab-run-btn" id="labRunCompare">▶ 全策略分析</button>
+        </div>
+        <!-- 真實驗室控制 -->
+        <!-- 系統發現策略控制 -->
+        <div class="lab-controls" id="labControlsDiscovered" style="display:none">
+          <span style="font-size:11px;color:var(--muted)">GAS 每日 18:00 後自動搜尋跑贏大盤的條件組合</span>
+          <button class="lab-run-btn" id="labRunDiscovered">🔄 重新載入</button>
         </div>
       </div>
 
@@ -1021,6 +1135,8 @@
           <div class="lab-mc-result" id="labMCResult" style="display:none"></div>
         </div>
 
+        <!-- 真實驗室面板 -->
+
         <!-- 策略比較面板 -->
         <div class="lab-panel" id="labPanelCompare" style="display:none">
           <div class="lab-empty-state" id="labCompareEmpty">
@@ -1032,6 +1148,29 @@
           </div>
           <div class="lab-compare-result" id="labCompareResult" style="display:none"></div>
         </div>
+
+
+        <!-- 真實驗室面板 -->
+        <div class="lab-panel" id="labPanelExperiment" style="display:none">
+          <div class="lab-empty-state" id="labExpEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M16 4v14L8 36h28L28 18V4M16 4h12" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="22" cy="28" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>🧪 真實驗室 — VVVIP 專屬</p>
+            <p class="hint">系統發現策略的單股 / 全市場驗證場。策略清單來自每日搜尋名人堂</p>
+          </div>
+          <div id="labExpResult" style="display:none"></div>
+        </div>
+        <!-- ── 組合回測（內容由 lab-backtest.js 動態生成）── -->
+        <div class="lab-panel" id="labPanelBacktest" style="display:none"></div>
+        <div class="lab-controls" id="labControlsBacktest" style="display:none"></div>
+
+        <!-- ── 系統發現策略（VVVIP，內容由 lab-discovered.js 動態生成）── -->
+        <div class="lab-panel" id="labPanelDiscovered" style="display:none">
+          <div id="labDiscoveredResult"></div>
+        </div>
+
 
       </div><!-- /lab-body -->
 
@@ -1054,15 +1193,15 @@
       <div class="seed-modal" id="screenerModal">
         <div class="seed-modal-header">
           <div class="sc-left-tabs">
-            <button class="sc-left-tab active" data-left-tab="custom">自訂條件</button>
-            <button class="sc-left-tab" data-left-tab="strategy">策略庫</button>
+            <button class="sc-left-tab" data-left-tab="custom">自訂條件</button>
+            <button class="sc-left-tab active" data-left-tab="strategy">策略庫</button>
           </div>
           <button class="seed-modal-close" id="screenerModalClose">✕</button>
         </div>
         <div class="seed-modal-body" id="screenerModalBody">
 
           <!-- 自訂條件 tab -->
-          <div id="scPanelCustom">
+          <div id="scPanelCustom" style="display:none">
             <div class="seed-modal-section">
               <div id="strategyActiveBanner"></div>
               <div class="sc-cond-list" id="screenerConditionsModal">
@@ -1079,7 +1218,7 @@
           </div>
 
           <!-- 策略庫 tab -->
-          <div id="scPanelStrategy" style="display:none">
+          <div id="scPanelStrategy">
             <div class="seed-modal-section">
               <div class="sc-strategy-list" id="strategyList"></div>
             </div>
@@ -1550,6 +1689,12 @@
   </div>
   <div class="drawer-body">
 
+    <!-- 帳號（登入/登出/序號/雲端同步，由 auth-ui.js 渲染） -->
+    <div class="drawer-section">
+      <div class="drawer-section-title">帳號</div>
+      <div id="settingsAuthArea"></div>
+    </div>
+
     <!-- 資料來源 -->
     <div class="drawer-section">
       <div class="drawer-section-title">資料來源</div>
@@ -1700,6 +1845,28 @@
 </div>
 
 <!-- 看盤頁右下角懸浮市場總覽 -->
+<!-- 市場溫度計 Modal -->
+<div id="mpModal" role="dialog" aria-modal="true" aria-label="市場溫度計">
+  <div class="mp-modal">
+    <div class="mp-modal-hd">
+      <i class="ti ti-activity" style="font-size:17px;color:var(--down)" aria-hidden="true"></i>
+      <span class="mp-modal-title">市場溫度計</span>
+      <span class="mp-modal-date" id="mpModalDate"></span>
+      <button class="mp-modal-close" id="mpModalClose" aria-label="關閉">✕</button>
+    </div>
+    <div class="mp-tab-bar">
+      <button class="mp-tab active" data-tab="auto">盤面分析</button>
+      <button class="mp-tab" data-tab="ai">AI 深度分析</button>
+      <button class="mp-tab" data-tab="import">匯入分析</button>
+    </div>
+    <div class="mp-modal-body">
+      <div id="mpPanel_auto"  class="mp-tab-panel" style="display:flex;flex-direction:column;gap:11px"></div>
+      <div id="mpPanel_ai"    class="mp-tab-panel" style="display:none;flex-direction:column;gap:11px"></div>
+      <div id="mpPanel_import" class="mp-tab-panel" style="display:none;flex-direction:column;gap:11px"></div>
+    </div>
+  </div>
+</div>
+
 <button id="marketMiniBtn" class="mm-fab" title="市場總覽">📊</button>
 
 <div id="marketMiniPanel" class="mm-panel">

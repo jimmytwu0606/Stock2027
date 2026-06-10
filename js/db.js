@@ -114,6 +114,10 @@ export async function initDB() {
       if (!db.objectStoreNames.contains('industry_cache')) {
         db.createObjectStore('industry_cache', { keyPath: 'key' });
       }
+      // ⭐ 策略名人堂（系統發現 → 1Y/2Y 驗證後晉升，2026-06-10）
+      if (!db.objectStoreNames.contains('strategy_hall')) {
+        db.createObjectStore('strategy_hall', { keyPath: 'key' });
+      }
     };
 
     req.onblocked = () => {
@@ -134,7 +138,8 @@ export async function initDB() {
   // ── 自動補建缺失的 store(處理 DB 升版沒跑到 onupgradeneeded 的情況)
   const required = ['watchlistGroups','screenerSets','screenerResults','seedSets','config',
                     'annotations','kline_cache','signals_cache','stockInfo','portfolio','portfolio_lists',
-                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes','industry_cache'];
+                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes','industry_cache',
+                    'strategy_hall'];
   const missing  = required.filter(s => !_db.objectStoreNames.contains(s));
   if (missing.length > 0) {
     console.warn('[db] 缺失 stores:', missing, '→ 自動升版補建');
@@ -178,6 +183,8 @@ export async function initDB() {
             st.createIndex('order', 'order', { unique: false });
           } else if (s === 'industry_cache') {
             db.createObjectStore('industry_cache', { keyPath: 'key' });
+          } else if (s === 'strategy_hall') {
+            db.createObjectStore('strategy_hall', { keyPath: 'key' });
           } else {
             db.createObjectStore(s, { keyPath: 'id' });
           }
@@ -337,8 +344,9 @@ export async function getAllGroups() {
 }
 
 export async function saveGroup(group) {
-  await dbPut('watchlistGroups', group);
-  _fsPushOne('watchlistGroups', group);
+  const g = { ...group, updatedAt: Date.now() };
+  await dbPut('watchlistGroups', g);
+  _fsPushOne('watchlistGroups', g);
 }
 
 export async function deleteGroup(id) {
@@ -353,8 +361,9 @@ export async function getAllScreenerSets() {
 }
 
 export async function saveScreenerSet(set) {
-  await dbPut('screenerSets', set);
-  _fsPushOne('screenerSets', set);
+  const s = { ...set, updatedAt: Date.now() };
+  await dbPut('screenerSets', s);
+  _fsPushOne('screenerSets', s);
 }
 
 export async function deleteScreenerSet(id) {
@@ -369,10 +378,11 @@ export async function getAllScreenerResults() {
 }
 
 export async function saveScreenerResult(record) {
-  await dbPut('screenerResults', record);
+  const r = { ...record, updatedAt: Date.now() };
+  await dbPut('screenerResults', r);
   // Firestore 只存 metadata，不含 results（避免超過 1MB 限制）
-  const { results: _omit, ...meta } = record;
-  meta.resultCount = Array.isArray(record.results) ? record.results.length : 0;
+  const { results: _omit, ...meta } = r;
+  meta.resultCount = Array.isArray(r.results) ? r.results.length : 0;
   _fsPushOne('screenerResults', meta);
 }
 
@@ -394,8 +404,9 @@ export async function getAllHoldings() {
 }
 
 export async function saveHolding(holding) {
-  await dbPut('portfolio', holding);
-  _fsPushOne('portfolio', holding);
+  const h = { ...holding, updatedAt: Date.now() };
+  await dbPut('portfolio', h);
+  _fsPushOne('portfolio', h);
 }
 
 export async function deleteHolding(code) {
@@ -410,8 +421,9 @@ export async function getAllPortfolioLists() {
 }
 
 export async function savePortfolioList(list) {
-  await dbPut('portfolio_lists', list);
-  _fsPushOne('portfolio_lists', list);
+  const l = { ...list, updatedAt: Date.now() };
+  await dbPut('portfolio_lists', l);
+  _fsPushOne('portfolio_lists', l);
 }
 
 export async function deletePortfolioList(id) {
@@ -420,8 +432,9 @@ export async function deletePortfolioList(id) {
 }
 
 export async function saveSeedSet(set) {
-  await dbPut('seedSets', set);
-  _fsPushOne('seedSets', set);
+  const s = { ...set, updatedAt: Date.now() };
+  await dbPut('seedSets', s);
+  _fsPushOne('seedSets', s);
 }
 
 export async function deleteSeedSet(id) {
@@ -448,12 +461,14 @@ export async function loadAnnotation(code) {
  */
 export async function saveAnnotation(code, data) {
   if (!code) return;
+  const now = Date.now();
   // annotations 用 code 當 keyPath；同時設 id=code 讓 _fsPushOne 能正常雲端同步
   const payload = {
     ...data,
     code,
     id: code,
-    last_modified: Date.now(),
+    last_modified: now,
+    updatedAt: now,
   };
   await dbPut('annotations', payload);
   _fsPushOne('annotations', payload);
@@ -481,6 +496,18 @@ export async function getAllAnnotations() {
  * @param {string} period  '5d' | '1mo' | '3mo' | '6mo' | '1y' | '2y'
  * @returns {object|null}  { key, symbol, period, candles, cachedAt, validUntil } 或 null
  */
+/**
+ * kline_cache 總筆數（bundle 自癒檢查用，count 不撈資料、極快）
+ */
+export async function countKlineCache() {
+  try {
+    await initDB();
+    return await wrap(tx('kline_cache').count());
+  } catch (e) {
+    return -1;  // 查不到視為未知，不觸發重灌
+  }
+}
+
 export async function getKlineCache(symbol, period) {
   if (!symbol || !period) return null;
   const key = `${symbol}_${period}`;
@@ -513,6 +540,45 @@ export async function setKlineCache(symbol, period, candles, validUntil) {
     });
   } catch (e) {
     console.warn('[db] setKlineCache failed:', e?.message);
+  }
+}
+
+/**
+ * 批次寫入 K 線快取（單一 transaction，比逐筆 setKlineCache 快數十倍）
+ * 給 bundle 預載灌入全市場用。
+ * @param {Array<{symbol, period, candles, validUntil}>} entries
+ * @returns {Promise<number>}  成功寫入筆數
+ */
+export async function bulkSetKlineCache(entries) {
+  if (!Array.isArray(entries) || !entries.length) return 0;
+  await initDB();
+  try {
+    const store = tx('kline_cache', 'readwrite');
+    const now   = Date.now();
+    let n = 0;
+    for (const e of entries) {
+      if (!e || !e.symbol || !e.period || !Array.isArray(e.candles)) continue;
+      store.put({
+        key:        `${e.symbol}_${e.period}`,
+        symbol:     e.symbol,
+        period:     e.period,
+        candles:    e.candles,
+        cachedAt:   now,
+        validUntil: e.validUntil,
+      });
+      n++;
+    }
+    // 等整個 transaction 完成（一次 commit）
+    await new Promise((res, rej) => {
+      store.transaction.oncomplete = () => res();
+      store.transaction.onerror    = (ev) => rej(ev.target.error);
+      store.transaction.onabort    = (ev) => rej(ev.target.error || new Error('tx abort'));
+    });
+    return n;
+  } catch (e) {
+    if (e.code === 'STORE_NOT_FOUND') { console.warn(e.message); return 0; }
+    console.warn('[db] bulkSetKlineCache failed:', e?.message);
+    return 0;
   }
 }
 
@@ -703,12 +769,13 @@ export async function getAllYaoguRecords() {
  * @param {object} record  { code, activatedAt, status, lastUpdated, exitedAt? }
  */
 export async function putYaoguRecord(record) {
-  await dbPut('yaogu_tracker', record);
+  const r = { ...record, updatedAt: Date.now() };
+  await dbPut('yaogu_tracker', r);
   // 雲端同步（已登入時）
   if (currentUser) {
-    const clean = JSON.parse(JSON.stringify(record, (k, v) => v === undefined ? null : v));
-    fsSet(currentUser.uid, 'yaogu', record.code, clean).catch(err =>
-      console.warn(`[db] yaogu Firestore sync failed (${record.code}):`, err)
+    const clean = JSON.parse(JSON.stringify(r, (k, v) => v === undefined ? null : v));
+    fsSet(currentUser.uid, 'yaogu', r.code, clean).catch(err =>
+      console.warn(`[db] yaogu Firestore sync failed (${r.code}):`, err)
     );
   }
 }

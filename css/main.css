@@ -39,22 +39,19 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Helvetica Neue', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
-  overflow: hidden;
 }
 
 /* ─────────────────────────────────────────
-   App Layout
+   App Layout  (v2 — drawer sidebar)
 ───────────────────────────────────────── */
 .app {
-  display: grid;
-  grid-template-rows: 48px 1fr;
-  grid-template-columns: var(--sidebar-w, 240px) 1fr;
-  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  position: relative;   /* sidebar absolute 定位的基準 */
 }
 
-.topbar  { grid-column: 1 / -1; grid-row: 1; }
-.sidebar { grid-row: 2; }
-.main    { grid-row: 2; }
+.topbar  { flex-shrink: 0; }
 
 /* ─────────────────────────────────────────
    Topbar
@@ -87,7 +84,7 @@ html, body {
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  max-width: 320px;
+  max-width: 224px;   /* 320 → 224，縮短 30% */
   flex: 1;
   margin-left: 8px;
 }
@@ -115,6 +112,18 @@ html, body {
 }
 .search-btn:hover { color: var(--text); }
 
+/* 置中區：盤中狀態 + 時間 + 市場溫度計
+ * 用絕對置中（相對 topbar），不受左右內容寬度影響 */
+.topbar { position: relative; }
+.topbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .topbar-right {
   margin-left: auto;
   display: flex;
@@ -130,25 +139,56 @@ html, body {
 }
 .status-label { font-size: 11px; color: var(--muted); }
 
-.data-source {
-  font-size: 10px;
-  color: var(--hint);
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-}
-
 /* ─────────────────────────────────────────
-   Sidebar
+   Sidebar → Drawer（position:absolute，相對 .app）
 ───────────────────────────────────────── */
 .sidebar {
+  position: absolute;
+  top: 48px;                         /* topbar 高度 */
+  left: 0;
+  height: calc(100% - 48px);
+  width: var(--sidebar-w, 240px);
+  z-index: 200;
   background: var(--bg2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  min-height: 0;
-  max-height: 100%;    /* 不超出 grid row 高度 */
+  transform: translateX(-100%);
+  transition: transform .25s cubic-bezier(.4, 0, .2, 1);
+}
+.sidebar.drawer-open {
+  transform: translateX(0);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, .35);
+}
+
+/* Overlay */
+.sidebar-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  top: 48px;
+  background: rgba(0, 0, 0, .45);
+  z-index: 190;
+}
+.sidebar-overlay.visible { display: block; }
+
+/* 漢堡按鈕 */
+.drawer-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  line-height: 1;
+  transition: color .15s, background .15s;
+  flex-shrink: 0;
+}
+.drawer-toggle-btn:hover {
+  background: var(--bg3);
+  color: var(--text);
 }
 
 .sidebar-head {
@@ -327,8 +367,10 @@ html, body {
 .main {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   background: var(--bg);
+  padding-left:  var(--sidebar-w, 240px);
+  padding-right: var(--sidebar-w, 240px);
+  flex: 1;
   min-height: 0;
 }
 
@@ -468,6 +510,31 @@ html, body {
   flex: 0 0 auto;
   overflow: visible;
   min-height: auto;
+}
+
+/* Touch scroll fix：讓 K線圖區域可以縱向捲動頁面
+ * LightweightCharts 會在 canvas 加 touch-action:none，
+ * 攔截所有 touch 事件導致無法縱向滑動頁面。
+ * 在外層容器加 pan-y，告知瀏覽器縱向滑動優先。
+ * 注意：此設定讓 K線圖橫向拖拉仍正常（canvas 本身仍攔截橫向）。
+ */
+#tabChart {
+  touch-action: pan-y;
+}
+#tabChart * {
+  touch-action: pan-y;
+}
+/* LightweightCharts canvas 需要橫向操作，不完全限制 */
+#mainChart > div,
+#mainChart canvas,
+.ind-panel > div,
+.ind-panel canvas {
+  touch-action: pan-y;
+}
+/* 技術分析面板 canvas 只需縱向滾動 */
+#analysisPanel canvas,
+.ca-panel canvas {
+  touch-action: pan-y;
 }
 
 .chart-area {

@@ -259,7 +259,11 @@ export function calcHealth(candles, signals = []) {
 // 需要 ≥120 根日K（建議 1y ≥240 根）
 // fund 為 fetchFundamentals 回傳物件（可 null，基本面維度會跳過）
 // ═══════════════════════════════════════════════════════
-export function calcHealthLong(candles, fund = null) {
+export function calcHealthLong(candles, fund = null, code = null) {
+  // 優先讀 GAS 預算快照（window.__healthSnapshot），快照有值就直接回傳
+  if (code && window.__healthSnapshot?.data?.[code]?.ll != null) {
+    return window.__healthSnapshot.data[code].ll;
+  }
   if (!candles || candles.length < 60) return null;
 
   const closes  = candles.map(c => c.close);
@@ -581,4 +585,113 @@ function _longCls(score) {
        : score >= 40 ? 'neutral'
        : score >= 20 ? 'mid-weak'
        :               'weak';
+}
+
+// ═══════════════════════════════════════════════════════
+// 2-E 統一 API 層
+// ─ getHealthScore()   統一計算入口
+// ─ getYaoguLevel()    妖股等級分類
+// ─ renderHealthBadge() 統一渲染（取代各模組自訂 prefix）
+// ═══════════════════════════════════════════════════════
+
+/**
+ * 統一健康度計算入口
+ * 自動選擇最佳路徑：
+ *   1. candles >= 20 → calcHealth（完整技術面）
+ *   2. candles < 20  → calcHealthFast（從 row 估算）
+ *   signals 為 X 系列訊號陣列（選填），有才加成
+ *
+ * @param {Array}       candles  日K陣列（可 null）
+ * @param {Object}      row      screener row（calcHealthFast fallback 用）
+ * @param {Array}       signals  X 系列訊號（選填）
+ * @param {Object}      fund     基本面資料（選填，供 calcHealthLong 用）
+ * @returns {{ short: number|null, long: number|null }}
+ */
+export function getHealthScore(candles, row = null, signals = [], fund = null, code = null) {
+  const short = (candles && candles.length >= 20)
+    ? calcHealth(candles, signals)
+    : (row ? calcHealthFast(row) : null);
+
+  // 長線健康：優先讀 GAS 預算快照（window.__healthSnapshot），快照缺才本機算
+  let long = null;
+  if (code && window.__healthSnapshot?.data?.[code]?.ll != null) {
+    long = window.__healthSnapshot.data[code].ll;
+  } else if (candles && candles.length >= 120) {
+    long = calcHealthLong(candles, fund);
+  }
+
+  return { short, long };
+}
+
+/**
+ * 妖股等級分類
+ * 根據命中的 X 系列訊號 id 陣列判斷妖股等級
+ *
+ * 分類邏輯（與 strategy.js X 系列定義對齊）：
+ *   強妖：X2 + X1 同時命中（飆股加速 + 三軸共振）
+ *   中妖：X2 alone / X1 + X5
+ *   穩健型妖：X1 alone
+ *   早期型妖：X5 alone
+ *   無：其他
+ *
+ * @param {string[]} signalIds  命中的策略 id 陣列，例如 ['X1','X5']
+ * @returns {{ level: string, label: string, cls: string } | null}
+ */
+export function getYaoguLevel(signalIds = []) {
+  if (!Array.isArray(signalIds) || signalIds.length === 0) return null;
+  const has = id => signalIds.includes(id);
+
+  if (has('X2') && has('X1')) {
+    return { level: 'strong',  label: '強妖',   cls: 'yaogu-strong'  };
+  }
+  if (has('X2') || (has('X1') && has('X5'))) {
+    return { level: 'mid',     label: '中妖',   cls: 'yaogu-mid'     };
+  }
+  if (has('X1')) {
+    return { level: 'steady',  label: '穩健型', cls: 'yaogu-steady'  };
+  }
+  if (has('X5')) {
+    return { level: 'early',   label: '早期型', cls: 'yaogu-early'   };
+  }
+  return null;
+}
+
+/**
+ * 統一健康度渲染
+ * 不再各模組維護不同 prefix 的 CSS；統一用 hg- class
+ * 舊的 healthBadge(score, prefix) 保留，不動
+ *
+ * @param {number|null} shortScore  短線健康度
+ * @param {number|null} longScore   長線健康度（選填）
+ * @param {Object}      opts
+ * @param {string[]}    opts.signalIds  X 系列訊號 id（選填，顯示妖股 badge）
+ * @param {boolean}     opts.compact    僅顯示短線（不含長線）
+ * @returns {string}  HTML string
+ */
+export function renderHealthBadge(shortScore, longScore = null, opts = {}) {
+  const { signalIds = [], compact = false } = opts;
+
+  const _cls = score =>
+    score >= 80 ? 'strong'
+    : score >= 60 ? 'mid-strong'
+    : score >= 40 ? 'neutral'
+    : score >= 20 ? 'mid-weak'
+    :               'weak';
+
+  const shortHtml = shortScore != null
+    ? `<span class="hg-health-badge ${_cls(shortScore)}">${shortScore}</span>`
+    : `<span class="hg-health-empty">—</span>`;
+
+  if (compact) return shortHtml;
+
+  const longHtml = longScore != null
+    ? `<span class="hg-health-badge-long ${_cls(longScore)}">${longScore}</span>`
+    : `<span class="hg-health-empty">—</span>`;
+
+  const yaogu = getYaoguLevel(signalIds);
+  const yaoguHtml = yaogu
+    ? `<span class="hg-yaogu-badge ${yaogu.cls}">${yaogu.label}</span>`
+    : '';
+
+  return `<span class="hg-health-dual">${shortHtml}<span class="hg-health-sep">│</span>${longHtml}${yaoguHtml}</span>`;
 }

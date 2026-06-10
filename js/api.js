@@ -22,7 +22,7 @@ import { getDataSource, getFinMindToken, getNewsSource } from './config.js';
  *   false 時完全不打 Yahoo 5m，避免 IP 被 Yahoo throttle 連帶影響 K 線 prewarm
  */
 export const FEATURE_INTRADAY_5M = !!getFinMindToken();
-import { getKlineCache, setKlineCache } from './db.js';
+import { getKlineCache, setKlineCache, bulkSetKlineCache, countKlineCache } from './db.js';
 // Advanced 1 — 讀取 Cron Worker 寫入的 Firestore 共享資料
 import { fsGetShared } from './firebase.js';
 
@@ -561,6 +561,9 @@ export async function fetchHistoryCached(symbol, period, opts = {}) {
             const lastCandleTime = cached.candles[cached.candles.length - 1].time * 1000;
             const lastTradingDay = _lastTradingDayTs();
             if (lastTradingDay > 0 && lastCandleTime < lastTradingDay) {
+              // ★ allowStale：批次掃描（篩選器/族群回測）明確接受「差一天」的快取，
+              //   不為了最近一根重抓——避免 GAS 今日尚未更新 R2 時整批打 Worker。
+              if (opts.allowStale) return cached.candles;
               console.log(`[api] kline_cache 資料缺最近交易日 → 重抓 ${symbol}_${period}`,
                 new Date(lastCandleTime).toLocaleDateString('zh-TW'),
                 '應有:', new Date(lastTradingDay).toLocaleDateString('zh-TW'));
@@ -2392,10 +2395,142 @@ export async function fetchScreenerData(codes, {
 }
 
 // ─────────────────────────────────────────────
-// 篩選器 K 線：用 Yahoo Finance 逐檔查詢
-// FinMind 免費版不支援批次多代碼，統一走 Yahoo
-// 過濾非一般股（ETF/權證/特別股），避免無效請求
+// Bundle 預載：開站時抓 GAS 預打包好的全市場 K 線（7 包 gzip），
+// 一次性 bulk 灌入 IndexedDB kline_cache。之後 fetchHistoryCached /
+// fetchScreenerData 照原邏輯跑，發現 IDB 全命中 → 走高速組、0 Worker。
+//
+// bundle 內容：{ "2330.TW": [{t,o,h,l,c,v},...], ... }（key=完整 symbol）
+// 寫進 IDB 的 candle 格式對齊 fetchHistory：{ time,open,high,low,close,volume }
+// 每日只灌一次（localStorage 旗標防重跑）。
 // ─────────────────────────────────────────────
+const _BUNDLE_PARTS  = 7;
+const _WORKER_ORIGIN = SELF_PROXY.replace(/\/\?url=$/, '');  // https://stock-2027.luffy0606.workers.dev
+
+// 明早 09:00 TWT 失效（與盤後快取一致）
+function _bundleValidUntil() {
+  const now = new Date();
+  const tw  = new Date(now.getTime() + 8 * 3600 * 1000);     // → TWT
+  const next = new Date(tw);
+  next.setUTCHours(1, 0, 0, 0);                              // 09:00 TWT = 01:00 UTC
+  if (tw.getUTCHours() >= 1) next.setUTCDate(next.getUTCDate() + 1);
+  return next.getTime();
+}
+
+// 防呆解壓：先試 res.json()（瀏覽器自動解 gzip），失敗再用 DecompressionStream 手動解
+async function _fetchBundlePart(part) {
+  const url = `${_WORKER_ORIGIN}/bundle?part=${part}`;
+  const res = await fetch(url, {
+    headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+    cache:   'no-store',
+  });
+  if (!res.ok) throw new Error(`bundle part${part} HTTP ${res.status}`);
+
+  // 複製一份以便兩種解法都能讀 body
+  const buf = await res.clone().arrayBuffer();
+  // 1) 嘗試當未壓縮 / 已被瀏覽器解壓的 JSON 直接 parse
+  try {
+    const txt = new TextDecoder().decode(buf);
+    return JSON.parse(txt);
+  } catch (_) { /* 落到手動解壓 */ }
+  // 2) 手動 gzip 解壓（瀏覽器沒自動解時）
+  try {
+    const ds  = new DecompressionStream('gzip');
+    const out = new Response(new Blob([buf]).stream().pipeThrough(ds));
+    return await out.json();
+  } catch (e) {
+    throw new Error(`bundle part${part} 解壓/解析失敗: ${e.message}`);
+  }
+}
+
+let _bundlePreloading = null;  // 進行中的 Promise（避免重複觸發）
+
+/**
+ * 預載全市場 K 線 bundle → 灌 IDB。
+ * @param {Object} opts
+ *   @param {boolean} opts.force  跳過每日旗標，強制重灌
+ * @returns {Promise<{seeded:number, skipped:boolean}>}
+ */
+export async function preloadBundles(opts = {}) {
+  if (_bundlePreloading) return _bundlePreloading;
+
+  _bundlePreloading = (async () => {
+    // 每日旗標：今天已灌過就跳過（除非 force）
+    const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+    const flagKey = 'bundle_seeded_date';
+    if (!opts.force) {
+      try {
+        if (localStorage.getItem(flagKey) === today) {
+          // 自癒檢查（2026-06-10）：旗標在但 IDB 可能被重建清空（旗標活在 localStorage 不隨 IDB 死）
+          // kline_cache 筆數遠低於全市場 → 視為空殼，無視旗標重灌
+          const n = await countKlineCache();
+          if (n >= 0 && n < 500) {
+            console.warn(`[bundle] 旗標在但 kline_cache 僅 ${n} 筆（疑似 IDB 重建），無視旗標重灌`);
+          } else {
+            console.log('[bundle] 今日已灌入，跳過');
+            return { seeded: 0, skipped: true };
+          }
+        }
+      } catch (_) {}
+    }
+
+    const validUntil = _bundleValidUntil();
+    let totalSeeded = 0;
+    const t0 = Date.now();
+
+    // 7 包並發抓（各自獨立，一包失敗不影響其他）
+    const parts = await Promise.allSettled(
+      Array.from({ length: _BUNDLE_PARTS }, (_, i) => _fetchBundlePart(i + 1))
+    );
+
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (p.status !== 'fulfilled' || !p.value) {
+        const msg = p.reason?.message || 'no data';
+        console.warn(`[bundle] part${i + 1} 失敗:`, msg);
+        try { window.__bundleError = (window.__bundleError || '') + `part${i+1}:${msg}; `; } catch(_){}
+        continue;
+      }
+      const map = p.value;
+      const entries = [];
+      for (const [symbol, slim] of Object.entries(map)) {
+        if (!Array.isArray(slim) || !slim.length) continue;
+        // {t,o,h,l,c,v} → {time,open,high,low,close,volume}
+        const candles = slim.map(k => ({
+          time:   k.t,
+          open:   k.o,
+          high:   k.h,
+          low:    k.l,
+          close:  k.c,
+          volume: k.v ?? 0,
+        }));
+        entries.push({ symbol, period: '1y', candles, validUntil });
+      }
+      try {
+        const n = await bulkSetKlineCache(entries);
+        totalSeeded += n;
+        console.log(`[bundle] part${i + 1} 灌入 ${n} 檔`);
+      } catch (e) {
+        const msg = e?.message || 'IDB error';
+        console.warn(`[bundle] part${i + 1} IDB 寫入失敗:`, msg);
+        try { window.__bundleError = (window.__bundleError || '') + `part${i+1}-idb:${msg}; `; } catch(_){}
+      }
+    }
+
+    // ⚠️ 只有實際灌入成功才立旗標（2026-06-10）：
+    // 否則 part 全失敗 / IDB 被清空後，旗標殘留導致每天「今日已灌入」永久跳過
+    if (totalSeeded > 0) {
+      try { localStorage.setItem(flagKey, today); } catch (_) {}
+    }
+    console.log(`[bundle] 預載完成：共 ${totalSeeded} 檔，耗時 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    return { seeded: totalSeeded, skipped: false };
+  })();
+
+  try {
+    return await _bundlePreloading;
+  } finally {
+    _bundlePreloading = null;
+  }
+}
 
 function _isNormalStock(code) {
   // 接受 4碼（上市/上櫃）或 5碼（部分上櫃）純數字代號
@@ -2488,4 +2623,166 @@ export async function fetchVerifyData(code) {
     console.warn('[fetchVerifyData] failed:', code, e.message);
     return null;
   }
+}
+
+// ── signals snapshot（GAS 每日預算，全市場 condition boolean）────────────
+// ─── fetchHealthSnapshot：載入全市場健康度快照（GAS 每日算好）─────────────
+// 存 window.__healthSnapshot = { date, data: { code: { ll: number } } }
+// health.js calcHealthLong 優先讀快照，快照缺才本機算
+
+let _healthSnapshotLoading = null;
+
+export async function fetchHealthSnapshot({ force = false } = {}) {
+  if (!force && window.__healthSnapshot) return window.__healthSnapshot;
+  if (_healthSnapshotLoading) return _healthSnapshotLoading;
+
+  _healthSnapshotLoading = (async () => {
+    try {
+      const url = `${_WORKER_ORIGIN}/health-snapshot`;
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+      });
+      if (!res.ok) throw new Error(`health-snapshot ${res.status}`);
+      const data = await res.json();
+      window.__healthSnapshot = data;
+      console.log(`[health-snapshot] 載入完成：${Object.keys(data.data || {}).length} 支，日期 ${data.date}`);
+      return data;
+    } catch (e) {
+      console.warn('[health-snapshot] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _healthSnapshotLoading = null;
+    }
+  })();
+
+  return _healthSnapshotLoading;
+}
+
+// 存 window.__snapshot = { date, stocks: { code: { condId: true/number } } }
+// 前端用來做預設策略快速篩（不需要本機 K 線運算）
+
+let _snapshotLoading = null;
+
+export async function fetchSnapshot({ force = false } = {}) {
+  // 已載入且不強制重取
+  if (!force && window.__snapshot) return window.__snapshot;
+  // 防重複發請求
+  if (_snapshotLoading) return _snapshotLoading;
+
+  _snapshotLoading = (async () => {
+    try {
+      const url = `${_WORKER_ORIGIN}/snapshot`;
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+      });
+      if (!res.ok) throw new Error(`snapshot ${res.status}`);
+      const data = await res.json();
+
+      // ── 防火牆：檢查 GAS 驗算結果 ──────────────────────────────────────
+      const quality = data._quality;
+      if (quality) {
+        if (!quality.pass) {
+          // 驗算失敗：不使用 snapshot，fallback 本機算
+          console.warn(`[snapshot] ⚠️ 品質驗算未通過（偏差率 ${quality.rate}%，原因 ${quality.reason}）→ 導向本機模式`);
+          window.__snapshotQualityFail = quality;
+          return null;  // 讓 main.js 顯示警告，screener 走 needKline
+        }
+        console.log(`[snapshot] 品質驗算通過（偏差率 ${quality.rate}%，抽樣 ${quality.sampled} 支）`);
+      }
+
+      window.__snapshot = data;
+      console.log(`[snapshot] 載入完成：${Object.keys(data.stocks || {}).length} 支，日期 ${data.date}`);
+      return data;
+    } catch (e) {
+      console.warn('[snapshot] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _snapshotLoading = null;
+    }
+  })();
+
+  return _snapshotLoading;
+}
+
+let _condHistoryLoading = null;
+
+// ── 載入條件歷史序列（signals:cond:part:1~7）→ window.__condHistory ──────────
+// 格式：{ stocks: { code: { len, seq: [trueCondIds[]] } } }，seq 由舊到新
+// 供 screener snapshot 路徑算 triggerHistory（streak），不需重算指標
+export async function fetchCondHistory({ force = false } = {}) {
+  if (!force && window.__condHistory) return window.__condHistory;
+  if (_condHistoryLoading) return _condHistoryLoading;
+
+  _condHistoryLoading = (async () => {
+    try {
+      const merged = { date: null, stocks: {} };
+      // 7 個 part 並行載入
+      const parts = await Promise.allSettled(
+        [1,2,3,4,5,6,7].map(async (p) => {
+          const url = `${_WORKER_ORIGIN}/cond-raw?part=${p}`;
+          const res = await fetch(url, {
+            cache: 'no-store',
+            headers: PROXY_TOKEN ? { 'X-Proxy-Token': PROXY_TOKEN } : {},
+          });
+          if (!res.ok) throw new Error(`cond part${p} ${res.status}`);
+          return res.json();
+        })
+      );
+      let okCount = 0;
+      parts.forEach((r, i) => {
+        if (r.status === 'fulfilled' && r.value?.stocks) {
+          if (!merged.date) merged.date = r.value.date;
+          Object.assign(merged.stocks, r.value.stocks);
+          okCount++;
+        } else {
+          console.warn(`[cond-hist] part${i+1} 載入失敗`);
+        }
+      });
+      if (okCount === 0) { window.__condHistory = null; return null; }
+      window.__condHistory = merged;
+      console.log(`[cond-hist] 載入完成：${Object.keys(merged.stocks).length} 支（${okCount}/7 part），日期 ${merged.date}`);
+      return merged;
+    } catch (e) {
+      console.warn('[cond-hist] 載入失敗:', e.message);
+      return null;
+    } finally {
+      _condHistoryLoading = null;
+    }
+  })();
+
+  return _condHistoryLoading;
+}
+
+// 用 snapshot 跑預設策略篩選，回傳 { strategyId: [{ code, name, price, chgPct, vol }] }
+export function runSnapshotScreener(strategies, snapshot) {
+  if (!snapshot?.stocks) return {};
+  const result = {};
+
+  strategies.forEach(strat => {
+    const hits = [];
+    Object.entries(snapshot.stocks).forEach(([code, conds]) => {
+      const match = strat.conditions.every(condDef => {
+        const id  = condDef.id;
+        const val = conds[id];
+        if (val === undefined || val === null) return false;
+
+        // 數值型 condition（chg_min, price_min, price_max, vol_min）
+        if (condDef.type === 'number') {
+          const threshold = condDef.params?.[0]?.value ?? condDef.default ?? 0;
+          if (id === 'price_max' || id === 'chg_max' || id === 'vol_max' || id === 'rsi_max' || id === 'kd_k_max') {
+            return typeof val === 'number' && val <= threshold;
+          }
+          return typeof val === 'number' && val >= threshold;
+        }
+        // boolean condition
+        return val === true;
+      });
+      if (match) hits.push(code);
+    });
+    if (hits.length > 0) result[strat.id] = hits;
+  });
+
+  return result;
 }

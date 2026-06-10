@@ -15,12 +15,12 @@
  *   deleteSavedSet(name)            → async
  */
 
-import { fetchTWSEPrices, fetchScreenerData, fetchScreenerDataFinMind, fetchFundamentals, fetchForeignBuyDays, getChineseName, getAllKnownCodes } from './api.js';
+import { fetchTWSEPrices, fetchScreenerData, fetchScreenerDataFinMind, fetchFundamentals, fetchForeignBuyDays, getChineseName, getAllKnownCodes, fetchCondHistory, toYahooSymbol } from './api.js';
 import { calcKD, calcRSI, calcMACD, calcMA, calcBollinger, calcBBWidth,
          calcEMA, calcGMMA, calcBias, calcPSY, calcRCI, calcDMI, calcSAR, calcHV,
          calcIchimoku } from './indicators.js';
 import { Config, getFinMindToken } from './config.js';
-import { getAllScreenerSets, saveScreenerSet, deleteScreenerSet } from './db.js';
+import { getAllScreenerSets, saveScreenerSet, deleteScreenerSet, getKlineCache } from './db.js';
 import { getPeersOf } from './industry-groups.js';
 
 // ─────────────────────────────────────────────
@@ -238,6 +238,63 @@ function _calcConditionTriggerHistory(conditions, candles, twseRow, candleMap, l
     isNew:            streak === 1,
     totalTriggers,
   };
+}
+
+// ── 從 cond 歷史序列算 triggerHistory（O(1) 查表，不重算指標）──────────────
+// condSeq: window.__condHistory.stocks[code]  → { len, seq: [trueCondIds[]] }（由舊到新）
+// condIds: 本次篩選的 Phase1+2 condition id（從序列查每根是否全部命中）
+// candles: 對應的 K 線（用來換算 firstTriggerDate 的時間戳）
+function _triggerHistoryFromCondSeq(condIds, condEntry, candles) {
+  if (!condEntry?.seq?.length || !condIds.length) return null;
+  const seq = condEntry.seq;
+  const N   = seq.length;
+  // 每根判斷：本次所有 condId 是否都在該根的 trueIds 裡
+  const _matchAt = (idx) => {
+    const trueIds = seq[idx];
+    if (!Array.isArray(trueIds)) return false;
+    const set = new Set(trueIds);
+    return condIds.every(id => set.has(id));
+  };
+  const todayIdx = N - 1;
+  if (!_matchAt(todayIdx)) return null;  // 今天沒全中（理論上不該發生，命中才進來）
+
+  let streak = 1, firstTriggerIdx = todayIdx, totalTriggers = 1, broken = false;
+  for (let back = 1; back < N; back++) {
+    const idx = todayIdx - back;
+    if (idx < 0) break;
+    if (_matchAt(idx)) {
+      totalTriggers++;
+      if (!broken) { streak++; firstTriggerIdx = idx; }
+    } else {
+      broken = true;
+    }
+  }
+
+  // firstTriggerDate：用 candles 對應位置的時間戳
+  // seq 與 candles 末端對齊（seq 取最近 120 根，candles 也是末端）
+  let firstDate = null;
+  if (candles?.length) {
+    const offset = candles.length - N;  // candles 比 seq 長的部分
+    const cIdx   = firstTriggerIdx + offset;
+    if (cIdx >= 0 && cIdx < candles.length) {
+      firstDate = candles[cIdx].time ?? null;
+    }
+  }
+  // 無 candles（IDB 缺 K 線）→ 用今天往回數 (streak-1) 個交易日反推 firstTriggerDate
+  // 避免「今天新觸發 · —」日期空白
+  if (firstDate == null) {
+    const back = streak - 1;
+    let d = new Date();
+    let counted = 0;
+    while (counted < back) {
+      d.setDate(d.getDate() - 1);
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) counted++;  // 跳過週末
+    }
+    firstDate = Math.floor(d.getTime() / 1000);  // 秒級時間戳，對齊 candle.time
+  }
+
+  return { streak, firstTriggerDate: firstDate, isNew: streak === 1, totalTriggers };
 }
 
 /**
@@ -1991,12 +2048,16 @@ export const CONDITION_DEFS = [
       const volOK  = avgVol > 0 && vols[n - 1] >= avgVol * 1.5;
       const prevClose = candles[n - 2].close;
       const chg    = prevClose > 0 ? (candles[n - 1].close - prevClose) / prevClose * 100 : 0;
-      return { volSurgeDropChg: chg, volSurgeDropOK: volOK };
+      // 跌停板判斷
+      const isLimitDown = chg <= -9.5 && Math.abs(candles[n-1].close - (candles[n-1].low ?? candles[n-1].close)) < 0.01;
+      return { volSurgeDropChg: chg, volSurgeDropOK: volOK, isLimitDown };
     },
     match: (indicators, v) =>
-      indicators.volSurgeDropOK === true
+      // 跌停板直接觸發（豁免量能條件）
+      indicators.isLimitDown === true
+      || (indicators.volSurgeDropOK === true
       && indicators.volSurgeDropChg != null
-      && indicators.volSurgeDropChg <= v,
+      && indicators.volSurgeDropChg <= v),
   },
 
   /**
@@ -2155,10 +2216,16 @@ export const CONDITION_DEFS = [
       if (n < 3) return { volSurge10: null };
       const avg = vols.slice(-n - 1, -1).reduce((a, b) => a + b, 0) / n;
       const ratio = avg > 0 ? vols[vols.length - 1] / avg : null;
-      return { volSurge10: ratio };
+      // 漲停板判斷
+      const lastS = candles[candles.length - 1];
+      const prevS = candles[candles.length - 2];
+      const chgPctS = prevS?.close > 0 ? (lastS.close - prevS.close) / prevS.close * 100 : 0;
+      const isLimitUpS = chgPctS >= 9.5 && Math.abs(lastS.close - (lastS.high ?? lastS.close)) < 0.01;
+      return { volSurge10: ratio, isLimitUp: isLimitUpS };
     },
     match: (indicators, v) =>
-      indicators.volSurge10 != null && indicators.volSurge10 >= v,
+      (indicators.volSurge10 != null && indicators.volSurge10 >= v)
+      || indicators.isLimitUp === true,  // 漲停板豁免量能條件
   },
 
   /**
@@ -2195,10 +2262,63 @@ export const CONDITION_DEFS = [
         if (ratio > 0.1) lastVol = lastVol / ratio; // 線性外推全天量
       }
       const surgeRatio = avg > 0 ? lastVol / avg : null;
-      return { volSurge30: surgeRatio };
+      // 漲停板判斷（直接在 calc 裡算，讓 match 可以讀到）
+      const last2 = candles[candles.length - 1];
+      const prev2 = candles[candles.length - 2];
+      const chgPct2 = prev2?.close > 0 ? (last2.close - prev2.close) / prev2.close * 100 : 0;
+      const isLimitUp = chgPct2 >= 9.5 && Math.abs(last2.close - (last2.high ?? last2.close)) < 0.01;
+      return { volSurge30: surgeRatio, isLimitUp };
     },
     match: (indicators, v) =>
-      indicators.volSurge30 != null && indicators.volSurge30 >= v,
+      (indicators.volSurge30 != null && indicators.volSurge30 >= v)
+      || indicators.isLimitUp === true,  // 漲停板豁免量能條件
+  },
+
+  /**
+   * limit_up：今日漲停板（漲幅 ≥ 9.5% 且收盤 = 最高）
+   * 用於豁免 vol_surge 條件，漲停板視為最強量能確認
+   * X1/X2/X5 漲停板時自動觸發（via vol_surge 豁免）
+   */
+  {
+    id:      'limit_up',
+    group:   'price',
+    label:   '漲停板',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      if (candles.length < 2) return { isLimitUp: false };
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+      // 漲停：漲幅 >= 9.5% 且收盤 = 最高價
+      const isLimitUp = chgPct >= 9.5 && Math.abs(last.close - last.high) < 0.01;
+      return { isLimitUp };
+    },
+    match: (indicators) => indicators.isLimitUp === true,
+  },
+
+  /**
+   * limit_down：今日跌停板（跌幅 <= -9.5% 且收盤 = 最低）
+   * Z 系列強空訊號使用
+   */
+  {
+    id:      'limit_down',
+    group:   'price',
+    label:   '跌停板',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      if (candles.length < 2) return { isLimitDown: false };
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+      // 跌停：跌幅 <= -9.5% 且收盤 = 最低價
+      const isLimitDown = chgPct <= -9.5 && Math.abs(last.close - last.low) < 0.01;
+      return { isLimitDown };
+    },
+    match: (indicators) => indicators.isLimitDown === true,
   },
 
   /**
@@ -2673,7 +2793,8 @@ export async function* runScreener(conditions) {
           chgPct:       row.chgPct,
           volume:       row.volume,
           indicators:   {},
-          matchedConds: conditions.map(c => _formatCondLabel(c)),
+          matchedConds:    conditions.map(c => _formatCondLabel(c)),
+          matchedCondIds:  conditions.map(c => c.def.id),
         },
       };
     }
@@ -2681,26 +2802,141 @@ export async function* runScreener(conditions) {
     return;
   }
 
-  // ── Phase B：批次拉 K 線（並發 concurrency=5，比逐一+350ms 快 5 倍）
-  yield { type: 'status', payload: { message: `計算技術指標中（共 ${phase1Pass.length} 檔）…` } };
+  // ── Phase B：技術指標篩選
+  // ⚡ Snapshot 快速路徑：若 window.__snapshot 已載入，直接查 condition boolean，跳過 K 線計算
+  //   命中條件：phase2Conds 的所有 condition id 都存在於 snapshot.stocks[code]
+  //   未命中（基本面、自訂閾值等）→ 走原本 fetchScreenerData 路徑
+  //
+  // ⚠️ 踩雷備忘（2026-06-06）：
+  //   snapshot 的數值型 condition（chg_min/price_min/price_max/vol_min 等）存的是實際值（非 bool）
+  //   必須跟 CONDITION_DEFS 的 match 邏輯對齊，不能直接當 bool 用
+  //   → 數值型 condition 仍讓 match(row, value) 對齊，boolean 型直接查 snapshot
+  const snap = window.__snapshot?.stocks ?? null;
+  // 預載條件歷史序列（算 snapshot 命中股票的 triggerHistory，不重算指標）
+  const condHist = snap ? await fetchCondHistory().catch(() => null) : null;
+  const condHistStocks = condHist?.stocks ?? null;
+  // 本次篩選的 Phase1+2 condition id（供 cond 序列查 streak）
+  // cond 序列只存「以固定閾值算成 boolean true」的技術 condition id（gain_10d/vol_surge_long/rsi_min 等）
+  // 純價格區間（price_min/price_max/chg_min/chg_max/vol_min/vol_max）不存在於序列 → 排除
+  // ⚠️ 不能用 def.type 判斷：這些技術 condition 的 type 也是 'number'（UI 輸入閾值用）
+  //    要看的是「該 id 是否會出現在 cond 序列裡」，用明確黑名單排除價格區間類
+  const _PRICE_RANGE_IDS = new Set([
+    'price_min', 'price_max', 'chg_min', 'chg_max', 'vol_min', 'vol_max',
+  ]);
+  const _histCondIds = conditions
+    .filter(c => c.def.phase !== 3 && !_PRICE_RANGE_IDS.has(c.def.id))
+    .map(c => c.def.id);
+  const snapCodes   = new Set();  // snapshot 命中的 code（跳過 K 線）
+  const needKline   = [];         // 需要 K 線的 code
+
+  if (snap && phase2Conds.length > 0) {
+    for (const code of phase1Pass) {
+      const sc = snap[code];
+      if (!sc) { needKline.push(code); continue; }
+
+      // snapshot 有此股票資料 → 直接用
+      // 數值型 condition：snapshot 可能存 number（實際值）或 boolean（GAS 固定閾值算好）
+      //   - number → 可做精確 >= 比對
+      //   - boolean / 缺失 → 視為 GAS 已用固定閾值判斷，接受 boolean 值
+      // 完全沒有 snapshot 資料（sc 為 null）的才走 K 線
+      snapCodes.add(code);  // 有 sc 就走 snapshot 路徑
+    }
+    console.log(`[screener] snapshot快速路徑：${snapCodes.size} 支命中，${needKline.length} 支需 K 線`);
+  } else {
+    needKline.push(...phase1Pass);
+  }
+
+  // snapshot 命中的：直接用 sc[id] 比對，不跑 calc
+  for (const code of snapCodes) {
+    const sc  = snap[code];
+    const row = twsePrices[code];
+
+    // 比對邏輯：
+    //   數值型（price/chg/vol/rsi/kd_k）且 snapshot 存 number → fakeRow match
+    //   數值型但 snapshot 存 boolean（gain_10d 等 GAS 固定閾值）→ 直接用 boolean
+    //   boolean 型 → sc[id] === true
+    const pass = phase2Conds.every(c => {
+      const id  = c.def.id;
+      const val = sc[id];
+      if (c.def.type === 'number' && typeof val === 'number') {
+        const fakeRow = { price: sc.price_min ?? 0, chgPct: sc.chg_min ?? 0, volume: sc.vol_min ?? 0 };
+        return c.def.match(fakeRow, c.value);
+      }
+      // boolean 型 or 數值型但存的是 boolean（GAS 固定閾值）
+      return val === true;
+    });
+    if (!pass) continue;
+
+    // 把 sc 的 key 對應到 indicators（供 UI 顯示用，不影響篩選結果）
+    const indicators = { ...sc };
+
+    // 價格來源：snapshot 命中 = 當天 R2 bundle 收盤（GAS 盤後抓），比可能過期的 __priceCache 可靠
+    // 盤後 fetchTWSEPrices 失敗時 twsePrices fallback 到舊 __priceCache（前一交易日）→ row.price 是昨收
+    // → snapshot 路徑優先用 sc.price_min（當天 R2），row.price 僅作為 sc 缺值時的 fallback
+    const _snapPrice = typeof sc.price_min === 'number' ? sc.price_min : (row?.price ?? null);
+    const _snapChg   = typeof sc.chg_min   === 'number' ? sc.chg_min   : (row?.chgPct ?? null);
+    const _snapVol   = typeof sc.vol_min   === 'number' ? sc.vol_min   : (row?.volume ?? null);
+
+    // 從 IDB 撈 candles（走勢圖用）：bundle 已灌進 IDB，O(1) 本地讀取，不打網路
+    let _snapCandles = null;
+    try {
+      const sym1 = toYahooSymbol(code);
+      const hit1 = await getKlineCache(sym1, '1y').catch(() => null);
+      const hit  = hit1 || await getKlineCache(
+        sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW'), '1y'
+      ).catch(() => null);
+      if (hit?.candles?.length) _snapCandles = hit.candles;
+    } catch (_) {}
+
+    // triggerHistory：用 cond 歷史序列算 streak（不重算指標）
+    let _snapTrigger = null;
+    if (condHistStocks?.[code] && _histCondIds.length) {
+      _snapTrigger = _triggerHistoryFromCondSeq(_histCondIds, condHistStocks[code], _snapCandles);
+    }
+
+    if (!phase3Conds.length || !hasToken) {
+      yield {
+        type: 'result',
+        payload: {
+          code,
+          name:           getChineseName(code) ?? row?.name ?? code,
+          price:          _snapPrice,
+          chgPct:         _snapChg,
+          volume:         _snapVol,
+          indicators,
+          candles:        _snapCandles,
+          matchedConds:   conditions.map(c => _formatCondLabel(c)),
+          matchedCondIds: conditions.map(c => c.def.id),
+          triggerHistory: _snapTrigger,
+        },
+      };
+    } else {
+      phase2Pass.push({ code, row: { ...row, price: _snapPrice, chgPct: _snapChg, volume: _snapVol }, indicatorsForUI: indicators, candles: _snapCandles, triggerHistory: _snapTrigger });
+    }
+  }
+
+  // ── Phase B：K 線路徑（snapshot 未命中的）────────────────────────────────
+  yield { type: 'status', payload: { message: `計算技術指標中（共 ${needKline.length} 檔）…` } };
   const phase2Pass = [];
   const yield_buf  = [];
   let candleMap = new Map();
-  try {
-    candleMap = await fetchScreenerData(phase1Pass, {
-      period,
-      concurrency,
-      onProgress: (done, total) => {
-        document.dispatchEvent(new CustomEvent('screenerPhase2Progress', {
-          detail: { done, total }
-        }));
-      },
-    });
-  } catch (e) {
-    console.warn('[screener] fetchScreenerData 失敗:', e.message);
+  if (needKline.length > 0) {
+    try {
+      candleMap = await fetchScreenerData(needKline, {
+        period,
+        concurrency,
+        onProgress: (done, total) => {
+          document.dispatchEvent(new CustomEvent('screenerPhase2Progress', {
+            detail: { done, total }
+          }));
+        },
+      });
+    } catch (e) {
+      console.warn('[screener] fetchScreenerData 失敗:', e.message);
+    }
   }
 
-  for (const code of phase1Pass) {
+  for (const code of needKline) {
     const candles = candleMap.get(code);
     if (!candles || candles.length < 30) continue;
 
@@ -2758,13 +2994,14 @@ export async function* runScreener(conditions) {
           volume:       row?.volume ?? null,
           indicators:   indicatorsForUI,
           candles,      // ← 供 screener-ui.js calcHealth / calcHealthLong 使用
-          matchedConds: conditions.map(c => _formatCondLabel(c)),
+          matchedConds:   conditions.map(c => _formatCondLabel(c)),
+          matchedCondIds: conditions.map(c => c.def.id),
           triggerHistory,  // v2.7+ { streak, firstTriggerDate, isNew, totalTriggers } | null
         },
       };
     } else {
       // 有 Phase C → 先存起來，等下批次打基本面
-      phase2Pass.push({ code, row, indicatorsForUI, triggerHistory });
+      phase2Pass.push({ code, row, indicatorsForUI, triggerHistory, candles });
     }
   }
 
@@ -2776,7 +3013,7 @@ export async function* runScreener(conditions) {
     const CONCURRENCY = 3;
     for (let i = 0; i < phase2Pass.length; i += CONCURRENCY) {
       const batch = phase2Pass.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(batch.map(async ({ code, row, indicatorsForUI, triggerHistory }) => {
+      await Promise.allSettled(batch.map(async ({ code, row, indicatorsForUI, triggerHistory, candles: _pcCandles }) => {
         try {
           // fetchFundamentals 有 IndexedDB 快取（智慧更新點判斷），不會重複打 API
           const symbol = `${code}.TW`;
@@ -2813,8 +3050,9 @@ export async function* runScreener(conditions) {
                 revenueGrowth: fund.revenueGrowth,
                 earningsGrowth: fund.earningsGrowth,
               },
-              candles,      // ← 供 screener-ui.js calcHealth / calcHealthLong 使用
-              matchedConds: conditions.map(c => _formatCondLabel(c)),
+              candles:        _pcCandles,  // snapshot 從 IDB 撈、K線路徑直接帶，供走勢圖/健康度
+              matchedConds:   conditions.map(c => _formatCondLabel(c)),
+              matchedCondIds: conditions.map(c => c.def.id),
               triggerHistory,  // v2.7+ Phase 2 階段已預算,延用到 Phase 3
             },
           });

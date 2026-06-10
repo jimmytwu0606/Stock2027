@@ -23,11 +23,12 @@ import { scanOneCode } from './signal-scan.js';
 let _prFundCache = {};
 // 妖股快取（掃描結果存這裡，重繪時用）
 let _prYaoguMap = new Map();
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 
 // 排序狀態
 let _prSortKey = 'score';
 let _prSortAsc = false;
+let _sortHeaderBound = false;  // 排序 header listener 只綁一次的 guard
 let _prResults = [];
 // health cache：掃描時預算，排序時直接讀
 let _prHealthCache = new Map();  // code → { hs, hl }
@@ -416,8 +417,8 @@ function _renderAllResults() {
       <td class="pr-td pr-td-score" style="color:${scoreColor}">${item.score.toFixed(1)}%</td>
       <td class="pr-td"><span class="pr-row-price">${priceVal > 0 ? priceVal.toFixed(priceVal >= 100 ? 0 : 1) : '—'}</span></td>
       <td class="pr-td"><span class="pr-row-chg ${chgCls}">${chgStr}</span></td>
-      <td class="pr-td">${healthBadge(healthShort, 'hg')}</td>
-      <td class="pr-td">${healthBadge(healthLong, 'hg')}</td>
+      <td class="pr-td">${renderHealthBadge(healthShort, null, { compact: true })}</td>
+      <td class="pr-td">${renderHealthBadge(healthLong, null, { compact: true })}</td>
       <td class="pr-td">${yg ? ['X2','X1','X6','X5'].filter(id=>yg[id.toLowerCase()]).map(id=>'<span class="th-yaogu-pill th-yaogu-pill--'+id.toLowerCase()+'">'+id+'</span>').join('') : ''}</td>
       <td class="pr-td"><canvas class="pr-mini-chart" width="100" height="36" data-code="${item.code}"></canvas></td>
       <td class="pr-td">
@@ -444,21 +445,25 @@ function _renderAllResults() {
     });
   }
 
-  // 排序 header 點擊
-  document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(col => {
-    col.addEventListener('click', () => {
-      const key = col.dataset.sort;
-      if (_prSortKey === key) _prSortAsc = !_prSortAsc;
-      else { _prSortKey = key; _prSortAsc = false; }
-      document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(c => {
-        const isActive = c.dataset.sort === _prSortKey;
-        c.classList.toggle('active', isActive);
-        const label = c.dataset.sort === 'score' ? '相似度' : c.dataset.sort === 'hs' ? '短線健康' : '長線健康';
-        c.textContent = isActive ? `${label} ${_prSortAsc ? '↑' : '↓'}` : label;
+  // 排序 header 點擊（只綁一次，避免每次 _renderAllResults 疊加 listener
+  //   → 重複觸發 toggle，偶數次等於沒變 → 升降冪「壞掉」）
+  if (!_sortHeaderBound) {
+    _sortHeaderBound = true;
+    document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(col => {
+      col.addEventListener('click', () => {
+        const key = col.dataset.sort;
+        if (_prSortKey === key) _prSortAsc = !_prSortAsc;
+        else { _prSortKey = key; _prSortAsc = false; }
+        document.getElementById('prListHeader')?.querySelectorAll('.pr-sort-col').forEach(c => {
+          const isActive = c.dataset.sort === _prSortKey;
+          c.classList.toggle('active', isActive);
+          const label = c.dataset.sort === 'score' ? '相似度' : c.dataset.sort === 'hs' ? '短線健康' : '長線健康';
+          c.textContent = isActive ? `${label} ${_prSortAsc ? '↑' : '↓'}` : label;
+        });
+        _renderAllResults();
       });
-      _renderAllResults();
     });
-  });
+  }
 }
 
 function _drawMiniChart(canvas, candles, startIdx, endIdx) {
@@ -475,24 +480,49 @@ function _drawMiniChart(canvas, candles, startIdx, endIdx) {
   ctx.fillStyle = 'rgba(255,255,255,0.03)';
   ctx.fillRect(0, 0, w, h);
 
-  // 高亮比對區間
-  if (startIdx != null && endIdx != null && n > 0) {
+  // 高亮比對區間（匹配的型態段，貼齊右端）：填色 + 左邊界虛線
+  if (startIdx != null && endIdx != null && n > 1) {
     const x1 = (startIdx / (n - 1)) * w;
     const x2 = (endIdx   / (n - 1)) * w;
-    ctx.fillStyle = 'rgba(59,130,246,0.15)';
-    ctx.fillRect(x1, 0, x2 - x1, h);
+    // 填色
+    ctx.fillStyle = 'rgba(59,130,246,0.22)';
+    ctx.fillRect(x1, 0, Math.max(2, x2 - x1), h);
+    // 左邊界虛線（分隔 context 與匹配段）
+    ctx.strokeStyle = 'rgba(59,130,246,0.6)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x1, 0); ctx.lineTo(x1, h);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
-  // 折線
+  const xAt = i => (n > 1 ? (i / (n - 1)) * (w - 2) + 1 : w / 2);
+  const yAt = v => h - 2 - v * (h - 4);
+
+  // 前置 context 段（匹配段之前）先畫淡灰線
+  if (startIdx != null && startIdx > 0) {
+    ctx.strokeStyle = 'rgba(148,163,184,0.7)';
+    ctx.lineWidth = 1.2;
+    ctx.lineJoin  = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= startIdx; i++) {
+      const x = xAt(i), y = yAt(norm[i]);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // 匹配段（最新 tLen 根，貼右端）：實藍粗線
   ctx.strokeStyle = '#3b82f6';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.6;
   ctx.lineJoin  = 'round';
   ctx.beginPath();
-  norm.forEach((v, i) => {
-    const x = n > 1 ? (i / (n - 1)) * (w - 2) + 1 : w / 2;
-    const y = h - 2 - v * (h - 4);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
+  const matchStart = (startIdx != null && startIdx >= 0) ? startIdx : 0;
+  for (let i = matchStart; i < n; i++) {
+    const x = xAt(i), y = yAt(norm[i]);
+    i === matchStart ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
   ctx.stroke();
 }
 

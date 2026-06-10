@@ -70,6 +70,8 @@ function _fmtTWDateTime(unixSec) {
 
 function _chartOptions(height) {
   return {
+    height,   // ⚠️ 0610 修正：原本收了 height 參數卻沒放進 options，
+              // 導致 display:none 容器內建立的副圖(DMI/PSY/RCI/HV)高度鎖死 0
     layout: {
       background: { color: 'transparent' },
       textColor:  'rgba(138,143,153,0.9)',
@@ -249,6 +251,7 @@ function _setupResize(refEl) {
   if (window._chartResize) window.removeEventListener('resize', window._chartResize);
   window._chartResize = () => {
     const w = refEl.parentElement.clientWidth;
+    if (!w) return;  // 0610: 整個 chart-area 隱藏時不要把 width 寫成 0
     Object.values(_charts).forEach(c => c.applyOptions({ width: w }));
   };
   window.addEventListener('resize', window._chartResize);
@@ -983,11 +986,14 @@ export function setSubChartsActive(active) {
 //   - resize 後要重新計算 right，每次 _drawPVD 都更新
 // ══════════════════════════════════════════════════════
 
-const PVD_WIDTH = 72;   // canvas 固定寬度（px）
-const PVD_BINS  = 40;   // 價格分格數
+const PVD_BINS      = 40;     // 價格分格數
+const PVD_MAX_RATIO = 0.15;   // 長條最大寬度 = 主圖寬度 15%（不壓 K 棒）
+const PVD_VA_RATIO  = 0.70;   // Value Area 涵蓋成交量比例
 
-let _pvdCanvas = null;  // canvas DOM
+let _pvdCanvas = null;  // canvas DOM（覆蓋整個 mainChart，長條靠右繪製）
 let _pvdUnsubs = [];    // 清理函式陣列
+let _pvdState  = null;  // 最近一次繪製的 bin 統計，供 hover 查詢
+let _pvdTip    = null;  // hover tooltip DOM
 
 /**
  * 動態取得 LightweightCharts 右側價格軸寬度
@@ -1002,19 +1008,26 @@ function _getPriceAxisWidth() {
 }
 
 /**
- * 清理 PVD canvas + 所有訂閱
+ * 清理 PVD canvas + tooltip + 所有訂閱
  */
 function _clearPVD() {
   if (_pvdCanvas) {
     try { _pvdCanvas.remove(); } catch(e){}
     _pvdCanvas = null;
   }
+  if (_pvdTip) {
+    try { _pvdTip.remove(); } catch(e){}
+    _pvdTip = null;
+  }
+  _pvdState = null;
   _pvdUnsubs.forEach(fn => { try { fn(); } catch(e){} });
   _pvdUnsubs = [];
 }
 
 /**
  * 建立 PVD canvas，附加到 #mainChart
+ * 0610 改版：canvas 覆蓋整個主圖（扣掉價格軸），長條靠右繪製
+ *   → POC 線 / Value Area 帶才能橫貫整張圖
  */
 function _createPVDCanvas() {
   const mainEl = document.getElementById('mainChart');
@@ -1025,8 +1038,8 @@ function _createPVDCanvas() {
   canvas.style.cssText = `
     position: absolute;
     top: 0;
+    left: 0;
     right: ${priceAxisW}px;
-    width: ${PVD_WIDTH}px;
     height: 100%;
     pointer-events: none;
     z-index: 3;
@@ -1039,7 +1052,7 @@ function _createPVDCanvas() {
 }
 
 /**
- * 核心繪製：統計量、多空分色、POC 標線
+ * 核心繪製：可視範圍統計、台股紅漲綠跌買賣力、POC 橫貫線、Value Area 帶
  * @param {Candle[]} candles - 全部 candles（從 AppState.lastCandles 來）
  */
 function _drawPVD(candles) {
@@ -1060,16 +1073,18 @@ function _drawPVD(candles) {
   _pvdCanvas.style.right = priceAxisW + 'px';
 
   // DPR 補償，避免 Retina 模糊
+  const mainEl = document.getElementById('mainChart');
   const dpr  = window.devicePixelRatio || 1;
-  const cssH = _pvdCanvas.offsetHeight || document.getElementById('mainChart')?.clientHeight || 400;
-  _pvdCanvas.width  = Math.round(PVD_WIDTH * dpr);
+  const cssH = _pvdCanvas.offsetHeight || mainEl?.clientHeight || 400;
+  const cssW = (mainEl?.clientWidth || 600) - priceAxisW;
+  _pvdCanvas.width  = Math.round(cssW * dpr);
   _pvdCanvas.height = Math.round(cssH * dpr);
-  _pvdCanvas.style.width  = PVD_WIDTH + 'px';
+  _pvdCanvas.style.width  = cssW + 'px';
   _pvdCanvas.style.height = cssH + 'px';
 
   const ctx = _pvdCanvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, PVD_WIDTH, cssH);
+  ctx.clearRect(0, 0, cssW, cssH);
 
   // 找價格範圍
   const highArr = visibleCandles.map(c => c.high ?? c.close);
@@ -1080,9 +1095,9 @@ function _drawPVD(candles) {
 
   const binSize = (priceHigh - priceLow) / PVD_BINS;
 
-  // 統計各 bin 的多/空成交量
-  const bullVol = new Array(PVD_BINS).fill(0);  // 多頭 K 的量
-  const bearVol = new Array(PVD_BINS).fill(0);  // 空頭 K 的量
+  // 統計各 bin 的收紅/收綠成交量（台股慣例：紅=漲=吃貨，綠=跌=出貨）
+  const upVol   = new Array(PVD_BINS).fill(0);  // 收紅日的量
+  const downVol = new Array(PVD_BINS).fill(0);  // 收綠日的量
 
   for (const c of visibleCandles) {
     const vol  = c.volume || 0;
@@ -1090,7 +1105,7 @@ function _drawPVD(candles) {
     const low  = c.low  ?? c.close;
     const span = high - low;
     if (span <= 0 || vol <= 0) continue;
-    const isBull = (c.close ?? c.open) >= (c.open ?? c.close);
+    const isUp = (c.close ?? c.open) >= (c.open ?? c.close);
     // 把量按 high-low 比例均攤到橫跨的 bin
     for (let b = 0; b < PVD_BINS; b++) {
       const binLow  = priceLow + b * binSize;
@@ -1098,71 +1113,146 @@ function _drawPVD(candles) {
       const overlap = Math.min(high, binHigh) - Math.max(low, binLow);
       if (overlap <= 0) continue;
       const portion = overlap / span;
-      if (isBull) bullVol[b] += vol * portion;
-      else         bearVol[b] += vol * portion;
+      if (isUp) upVol[b]   += vol * portion;
+      else      downVol[b] += vol * portion;
     }
   }
 
-  const totalVol = bullVol.map((v, i) => v + bearVol[i]);
+  const totalVol = upVol.map((v, i) => v + downVol[i]);
+  const sumVol   = totalVol.reduce((a, b) => a + b, 0);
   const maxVol   = Math.max(...totalVol, 1);
 
-  // 找 POC（最大成交量 bin）
+  // POC（最大成交量 bin）
   const pocIdx = totalVol.indexOf(Math.max(...totalVol));
 
-  // 把價格 bin 轉成畫面 y 座標
+  // Value Area：從 POC 向上下擴張（每次納入量較大的鄰 bin），直到涵蓋 70% 總量
+  let vaLo = pocIdx, vaHi = pocIdx, vaSum = totalVol[pocIdx];
+  while (vaSum < sumVol * PVD_VA_RATIO && (vaLo > 0 || vaHi < PVD_BINS - 1)) {
+    const nextLo = vaLo > 0            ? totalVol[vaLo - 1] : -1;
+    const nextHi = vaHi < PVD_BINS - 1 ? totalVol[vaHi + 1] : -1;
+    if (nextHi >= nextLo) { vaHi++; vaSum += Math.max(nextHi, 0); }
+    else                  { vaLo--; vaSum += Math.max(nextLo, 0); }
+  }
+
   const candleSeries = _series.candle;
   if (!candleSeries) return;
 
-  const BAR_MAX = PVD_WIDTH - 2;  // 最大橫向長度
-
-  for (let b = 0; b < PVD_BINS; b++) {
+  const BAR_MAX = Math.max(60, Math.round(cssW * PVD_MAX_RATIO));  // 長條最大長度
+  const binY = (b) => {  // bin → { yTop, barH }
     const binLow  = priceLow + b * binSize;
-    const binHigh = binLow + binSize;
-    const yTop    = candleSeries.priceToCoordinate(binHigh);
-    const yBot    = candleSeries.priceToCoordinate(binLow);
-    if (yTop == null || yBot == null) continue;
+    const yTop = candleSeries.priceToCoordinate(binLow + binSize);
+    const yBot = candleSeries.priceToCoordinate(binLow);
+    if (yTop == null || yBot == null) return null;
+    return { y: Math.min(yTop, yBot), h: Math.max(Math.abs(yBot - yTop) - 1, 1) };
+  };
 
-    const barH   = Math.max(Math.abs(yBot - yTop) - 1, 1);
-    const yDraw  = Math.min(yTop, yBot);
-    const total  = totalVol[b];
+  // 1. Value Area 帶（橫貫整圖，極淡橘）
+  const vaTop = binY(vaHi), vaBot = binY(vaLo);
+  if (vaTop && vaBot) {
+    ctx.fillStyle = 'rgba(251, 146, 60, 0.05)';
+    ctx.fillRect(0, vaTop.y, cssW, (vaBot.y + vaBot.h) - vaTop.y);
+  }
+
+  // 2. 分價量長條：靠右繪製，紅段（收紅量）在外、綠段（收綠量）在內
+  for (let b = 0; b < PVD_BINS; b++) {
+    const total = totalVol[b];
     if (total <= 0) continue;
+    const pos = binY(b);
+    if (!pos) continue;
 
     const totalW = Math.round((total / maxVol) * BAR_MAX);
-    const bullW  = Math.round((bullVol[b] / total) * totalW);
-    const bearW  = totalW - bullW;
+    const upW    = Math.round((upVol[b] / total) * totalW);
+    const downW  = totalW - upW;
+    const alpha  = b === pocIdx ? 0.62 : 0.42;
 
-    // POC — 橘色實心
-    if (b === pocIdx) {
-      ctx.fillStyle = 'rgba(251, 146, 60, 0.85)';
-      ctx.fillRect(0, yDraw, totalW, barH);
-    } else {
-      // 多頭（藍）從左側開始
-      if (bullW > 0) {
-        ctx.fillStyle = 'rgba(59, 130, 246, 0.55)';
-        ctx.fillRect(0, yDraw, bullW, barH);
-      }
-      // 空頭（紅）緊接在多頭後面
-      if (bearW > 0) {
-        ctx.fillStyle = 'rgba(239, 83, 80, 0.55)';
-        ctx.fillRect(bullW, yDraw, bearW, barH);
-      }
+    // 從右緣往左：紅段
+    if (upW > 0) {
+      ctx.fillStyle = `rgba(239, 83, 80, ${alpha})`;
+      ctx.fillRect(cssW - upW, pos.y, upW, pos.h);
+    }
+    // 綠段接續往左
+    if (downW > 0) {
+      ctx.fillStyle = `rgba(38, 166, 154, ${alpha})`;
+      ctx.fillRect(cssW - upW - downW, pos.y, downW, pos.h);
     }
   }
 
-  // POC 橫線（橘色虛線）
-  const pocBinLow  = priceLow + pocIdx * binSize;
-  const pocBinMid  = pocBinLow + binSize / 2;
-  const pocY       = candleSeries.priceToCoordinate(pocBinMid);
+  // 3. POC 橫貫虛線 + 價位標籤
+  const pocMid = priceLow + (pocIdx + 0.5) * binSize;
+  const pocY   = candleSeries.priceToCoordinate(pocMid);
   if (pocY != null) {
-    ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = 'rgba(251, 146, 60, 0.9)';
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.85)';
     ctx.lineWidth   = 1;
     ctx.beginPath();
     ctx.moveTo(0, pocY);
-    ctx.lineTo(PVD_WIDTH, pocY);
+    ctx.lineTo(cssW, pocY);
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.font = '10px sans-serif';
+    ctx.fillStyle = 'rgba(251, 146, 60, 0.95)';
+    ctx.fillText(`POC ${pocMid.toFixed(2)}`, 4, pocY - 4);
   }
+
+  // 暫存統計結果供 hover 查詢
+  _pvdState = { priceLow, binSize, upVol, downVol, totalVol, sumVol, cssW, barZoneW: BAR_MAX, candleSeries };
+}
+
+/**
+ * hover：滑到右側長條區顯示「價位區間 + 張數 + 佔比」
+ * 監聽掛在 mainChart（PVD canvas 維持 pointer-events:none，不干擾圖表互動）
+ */
+function _setupPVDHover() {
+  const mainEl = document.getElementById('mainChart');
+  if (!mainEl) return;
+
+  _pvdTip = document.createElement('div');
+  _pvdTip.className = 'pvd-tooltip';
+  _pvdTip.style.cssText = `
+    position: absolute;
+    display: none;
+    padding: 3px 8px;
+    background: rgba(22, 27, 34, 0.95);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    font-size: 11px;
+    color: #e8eaed;
+    pointer-events: none;
+    z-index: 8;
+    white-space: nowrap;
+  `;
+  mainEl.appendChild(_pvdTip);
+
+  const onMove = (e) => {
+    const st = _pvdState;
+    if (!st || !_pvdTip) return;
+    const rect = mainEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    // 只在右側長條區反應
+    if (x < st.cssW - st.barZoneW || x > st.cssW) { _pvdTip.style.display = 'none'; return; }
+    const price = st.candleSeries.coordinateToPrice?.(y);
+    if (price == null) { _pvdTip.style.display = 'none'; return; }
+    const b = Math.floor((price - st.priceLow) / st.binSize);
+    if (b < 0 || b >= PVD_BINS || st.totalVol[b] <= 0) { _pvdTip.style.display = 'none'; return; }
+
+    const lo = st.priceLow + b * st.binSize;
+    const hi = lo + st.binSize;
+    const lots = Math.round(st.totalVol[b] / 1000);            // 股 → 張
+    const pct  = (st.totalVol[b] / st.sumVol * 100).toFixed(1);
+    _pvdTip.textContent = `${lo.toFixed(2)}–${hi.toFixed(2)} · ${lots.toLocaleString()}張 · ${pct}%`;
+    _pvdTip.style.display = 'block';
+    _pvdTip.style.left = Math.max(4, x - 170) + 'px';
+    _pvdTip.style.top  = Math.max(2, y - 24) + 'px';
+  };
+  const onLeave = () => { if (_pvdTip) _pvdTip.style.display = 'none'; };
+
+  mainEl.addEventListener('mousemove', onMove);
+  mainEl.addEventListener('mouseleave', onLeave);
+  _pvdUnsubs.push(() => {
+    mainEl.removeEventListener('mousemove', onMove);
+    mainEl.removeEventListener('mouseleave', onLeave);
+  });
 }
 
 /**
@@ -1185,6 +1275,7 @@ export function renderPVD(candles) {
   ro.observe(document.getElementById('mainChart') || document.body);
   _pvdUnsubs.push(() => ro.disconnect());
 
+  _setupPVDHover();
   requestAnimationFrame(draw);
 }
 

@@ -10,6 +10,9 @@
  */
 
 import { initScreener, openScreenerModal } from './screener-ui.js';
+import { STRATEGIES } from './strategy.js';
+import { fetchSnapshot, runSnapshotScreener } from './api.js';
+import { getChineseName } from './api.js';
 import { initPatternUI }   from './pattern-ui.js';
 import { initSeedUI }      from './seed-ui.js';
 
@@ -30,6 +33,7 @@ export function initScreenerHub() {
   _bindConfigBtns();
   _bindActionBtns();
   _listenResultEvents();
+  _initSnapshotScreener();  // 快速篩初始化（預載 snapshot）
   // 預設顯示個股篩選（頁面載入時就 init，不等 tab 點擊）
   _switchMode('screener');
   // 橋接：tab 點擊時由 main.js 呼叫，讓 hub 重新 focuse 當前 mode
@@ -198,4 +202,145 @@ function _exportScreenerResults() {
   a.download = `screener_${date}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+
+// ── Snapshot 快速篩（預設策略，雲端預算，秒出結果）──────────────────────
+// 只在「個股篩選」模式下顯示；自訂條件仍走本機運算（screener-ui.js）
+
+let _snapshot     = null;
+let _snapLoading  = false;
+
+function _initSnapshotScreener() {
+  // 背景預載 snapshot（不擋 UI）
+  fetchSnapshot().then(snap => { _snapshot = snap; });
+
+  // 綁定快速篩按鈕（由 index.html 的 hubQuickScanBtn 觸發）
+  document.getElementById('hubQuickScanBtn')?.addEventListener('click', _runQuickScan);
+}
+
+async function _runQuickScan() {
+  const btn = document.getElementById('hubQuickScanBtn');
+  if (btn) btn.disabled = true;
+
+  try {
+    // 確保 snapshot 已載入
+    if (!_snapshot) {
+      if (btn) btn.textContent = '載入中…';
+      _snapshot = await fetchSnapshot();
+    }
+    if (!_snapshot) {
+      alert('雲端策略資料尚未就緒，請稍後再試');
+      return;
+    }
+
+    if (btn) btn.textContent = '計算中…';
+
+    // 只跑有 tier 權限的策略（tier gate 由 strategy.js 控管）
+    const tier = window.__userTier ?? 'free';
+    const tierOrder = { free: 0, pro: 1, vvvip: 2 };
+    const myTier = tierOrder[tier] ?? 0;
+    const tierMap = { free: 0, pro: 1, vvvip: 2 };
+
+    const eligibleStrategies = STRATEGIES.filter(s => {
+      const need = tierMap[s.tier] ?? 0;
+      // 基本面策略（S16~S19）需要 fundamentals，snapshot 沒有 → 跳過
+      if (s.category === '基本面' || s.category === '巴菲特') return false;
+      return myTier >= need;
+    });
+
+    // 跑 snapshot 篩選
+    const hitMap = runSnapshotScreener(eligibleStrategies, _snapshot);
+
+    // 整理結果：每支股票 → 命中哪些策略
+    const stockHits = {};  // { code: [stratId, ...] }
+    Object.entries(hitMap).forEach(([stratId, codes]) => {
+      codes.forEach(code => {
+        if (!stockHits[code]) stockHits[code] = [];
+        stockHits[code].push(stratId);
+      });
+    });
+
+    const totalCodes = Object.keys(stockHits).length;
+    console.log(`[quick-scan] 命中 ${totalCodes} 支`);
+
+    // 渲染結果
+    _renderQuickScanResult(stockHits, eligibleStrategies);
+
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ 快速篩選'; }
+  }
+}
+
+function _renderQuickScanResult(stockHits, strategies) {
+  const container = document.getElementById('hubQuickScanResult');
+  if (!container) return;
+
+  const stratMap = Object.fromEntries(strategies.map(s => [s.id, s]));
+  const codes    = Object.keys(stockHits);
+
+  if (!codes.length) {
+    container.innerHTML = '<div style="color:var(--muted);padding:16px">今日無符合條件個股</div>';
+    container.style.display = '';
+    return;
+  }
+
+  // 依命中策略數排序（多的優先）
+  codes.sort((a, b) => stockHits[b].length - stockHits[a].length);
+
+  const rows = codes.slice(0, 200).map(code => {
+    const strats = stockHits[code].map(id => {
+      const s = stratMap[id];
+      return s ? `<span class="qs-tag" title="${s.name}">${s.icon}${s.id}</span>` : '';
+    }).join('');
+    const snap  = _snapshot.stocks[code] || {};
+    const price = typeof snap.price_min === 'number' ? snap.price_min.toFixed(2) : '—';
+    const chg   = typeof snap.chg_min   === 'number' ? snap.chg_min.toFixed(2)   : '—';
+    const chgCls = typeof snap.chg_min === 'number' ? (snap.chg_min >= 0 ? 'up' : 'dn') : '';
+    return `<tr class="qs-row" data-code="${code}">
+      <td class="qs-code">${code}</td>
+      <td class="qs-name">${getChineseName(code) || ''}</td>
+      <td class="qs-price">${price}</td>
+      <td class="qs-chg ${chgCls}">${chg}%</td>
+      <td class="qs-strats">${strats}</td>
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="qs-header">
+      <span>共 <b>${codes.length}</b> 支命中（顯示前 200）・資料日期 ${_snapshot.date}</span>
+    </div>
+    <table class="qs-table">
+      <thead><tr>
+        <th>代號</th><th>名稱</th><th>收盤</th><th>漲跌</th><th>命中策略</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  container.style.display = '';
+
+  // 點擊個股 → 開 K 線，同時設定 screenerContext 讓個股頁知道來源策略
+  container.querySelectorAll('.qs-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const code = tr.dataset.code;
+      if (!code) return;
+      // 取這支股票命中的第一個 X 系列策略（優先 X2 > X1 > X5 > X6）
+      const hitStrats = stockHits[code] ?? [];
+      const X_PRIORITY = ['X2','X1','X5','X6'];
+      const xStrat = X_PRIORITY.find(id => hitStrats.includes(id)) ?? null;
+      const stratObj = xStrat ? stratMap[xStrat] : (hitStrats[0] ? stratMap[hitStrats[0]] : null);
+      // dispatch stockSelect（同 screener-ui.js），讓 main.js 設定 screenerContext
+      document.dispatchEvent(new CustomEvent('stockSelect', {
+        detail: {
+          code,
+          matchedConds:  hitStrats.map(id => stratMap[id]?.name ?? id),
+          strategyId:    stratObj?.id   ?? null,
+          strategyName:  stratObj?.name ?? null,
+          fromScreener:  true,
+        }
+      }));
+    });
+  });
+
+  // 顯示 action btns
+  _showActionBtns();
 }

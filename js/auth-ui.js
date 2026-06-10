@@ -30,7 +30,7 @@ export function initAuthUI() {
 
   // 監聽登入狀態變化（由 firebase.js 的 onAuthStateChanged 派發）
   window.addEventListener('authStateChanged', async (e) => {
-    const { user } = e.detail;
+    const user = e.detail?.user ?? null;
     _render(user);
 
     if (user) {
@@ -68,36 +68,44 @@ function _handleSignOut() {
   window.dispatchEvent(new CustomEvent('authReady', { detail: { user: null } }));
 }
 
-// ─── UI 渲染 ──────────────────────────────────────────────────────────────
+// ─── UI 渲染（v2：渲染到設定抽屜，topbar 不再顯示 auth UI）──────────────
 
 function _render(user) {
-  const area = document.getElementById('authArea');
+  // topbar 的 authArea 清空（保留節點避免其他 JS 報錯）
+  const topbarArea = document.getElementById('authArea');
+  if (topbarArea) topbarArea.innerHTML = '';
+
+  // 實際渲染目標：設定抽屜的帳號區
+  const area = document.getElementById('settingsAuthArea');
   if (!area) return;
 
   if (user) {
-    // 已登入：顯示頭像 + 名稱 + tier badge + 升級序號 + 同步 + 登出
     const tierLabel = { free: 'Free', pro: '🔒 Pro', vvvip: '👑 VVVIP' }[currentTier] ?? 'Free';
     area.innerHTML = `
-      <div class="auth-user" id="authUserMenu">
+      <div class="auth-user auth-user-drawer" id="authUserMenu">
         ${user.photoURL
           ? `<img class="auth-avatar" src="${user.photoURL}" alt="avatar" referrerpolicy="no-referrer">`
           : `<div class="auth-avatar auth-avatar-placeholder">${_initial(user)}</div>`
         }
-        <span class="auth-name">${user.displayName ?? user.email}</span>
-        <span class="auth-tier-badge auth-tier-${currentTier}">${tierLabel}</span>
-        <button class="auth-key-btn" id="authKeyBtn" title="升級序號">🔑</button>
-        <button class="auth-sync-btn" id="authSyncBtn" title="雲端同步">☁</button>
-        <button class="auth-signout-btn" id="authSignOutBtn" title="登出">登出</button>
+        <div class="auth-user-info">
+          <span class="auth-name">${user.displayName ?? user.email}</span>
+          <span class="auth-tier-badge auth-tier-${currentTier}">${tierLabel}</span>
+        </div>
+      </div>
+      <div class="auth-drawer-actions">
+        <button class="auth-drawer-btn" id="authKeyBtn">🔑 升級序號</button>
+        <button class="auth-drawer-btn" id="authSyncBtn">☁ 雲端同步</button>
+        <button class="auth-drawer-btn auth-drawer-btn-signout" id="authSignOutBtn">登出</button>
       </div>
     `;
     document.getElementById('authSignOutBtn')?.addEventListener('click', async () => {
       await signOutUser();
     });
-    document.getElementById('authSyncBtn')?.addEventListener('click', () => {
-      _showSyncModal();
-    });
     document.getElementById('authKeyBtn')?.addEventListener('click', () => {
       _showKeyModal();
+    });
+    document.getElementById('authSyncBtn')?.addEventListener('click', () => {
+      _showSyncModal();
     });
   } else {
     // 未登入：顯示登入按鈕

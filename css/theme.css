@@ -1158,11 +1158,11 @@
   font-weight: 700;
   white-space: nowrap;
 }
-.hg-health-badge.strong     { background: rgba(38,166,154,.2);  color: #26a69a; }  /* ≥80 強  */
-.hg-health-badge.mid-strong { background: rgba(102,187,106,.15);color: #66bb6a; }  /* ≥60 偏強 */
-.hg-health-badge.neutral    { background: rgba(245,158,11,.12); color: #f59e0b; }  /* ≥40 中性 */
-.hg-health-badge.mid-weak   { background: rgba(255,138,101,.12);color: #ff8a65; }  /* ≥20 偏弱 */
-.hg-health-badge.weak       { background: rgba(239,83,80,.15);  color: #ef5350; }  /* <20  弱  */
+.hg-health-badge.strong     { background: rgba(239,83,80,.2);   color: #ef5350; }  /* ≥80 強（台股紅=漲=健康）  */
+.hg-health-badge.mid-strong { background: rgba(255,138,101,.15);color: #ff8a65; }  /* ≥60 偏強（橙）*/
+.hg-health-badge.neutral    { background: rgba(245,158,11,.12); color: #f59e0b; }  /* ≥40 中性（黃）*/
+.hg-health-badge.mid-weak   { background: rgba(102,187,106,.12);color: #66bb6a; }  /* ≥20 偏弱（淺綠）*/
+.hg-health-badge.weak       { background: rgba(38,166,154,.18); color: #26a69a; }  /* <20  弱（台股綠=跌=不健康）*/
 
 /* 長線 badge（稍微小一點，區分短線） */
 .hg-health-badge-long {
@@ -1174,11 +1174,11 @@
   white-space: nowrap;
   opacity: .85;
 }
-.hg-health-badge-long.strong     { background: rgba(38,166,154,.15);  color: #26a69a; }
-.hg-health-badge-long.mid-strong { background: rgba(102,187,106,.12); color: #66bb6a; }
+.hg-health-badge-long.strong     { background: rgba(239,83,80,.15);   color: #ef5350; }
+.hg-health-badge-long.mid-strong { background: rgba(255,138,101,.12); color: #ff8a65; }
 .hg-health-badge-long.neutral    { background: rgba(245,158,11,.1);   color: #f59e0b; }
-.hg-health-badge-long.mid-weak   { background: rgba(255,138,101,.1);  color: #ff8a65; }
-.hg-health-badge-long.weak       { background: rgba(239,83,80,.12);   color: #ef5350; }
+.hg-health-badge-long.mid-weak   { background: rgba(102,187,106,.1);  color: #66bb6a; }
+.hg-health-badge-long.weak       { background: rgba(38,166,154,.15);  color: #26a69a; }
 
 /* dual 容器 */
 .hg-health-dual {

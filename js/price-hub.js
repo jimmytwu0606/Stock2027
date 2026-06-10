@@ -112,10 +112,14 @@ export function push(map, opts = {}) {
       chgPct,
       volume:  incoming.volume  ?? _cache[code]?.volume  ?? 0,
       name:    mergedName,
-      // open/high/low 只有 Yahoo 有；merge 保留已存在的值，新值優先
-      open:    incoming.open    ?? _cache[code]?.open    ?? null,
-      high:    incoming.high    ?? _cache[code]?.high    ?? null,
-      low:     incoming.low     ?? _cache[code]?.low     ?? null,
+      // open/high/low：MIS 盤中有，Yahoo fetchQuote 有，TWSE 批次/Firestore 無
+      // ⚠️ 必須用 !== undefined（嚴格）：
+      //    JS loose equality: undefined == null → true
+      //    ?? 和 != null 都無法區分兩者，TWSE 批次的 undefined 會蓋掉 MIS 已填的值
+      //    只有 !== undefined 才能正確判斷「來源有無帶此欄位」
+      open:    incoming.open  !== undefined ? incoming.open  : (_cache[code]?.open  ?? null),
+      high:    incoming.high  !== undefined ? incoming.high  : (_cache[code]?.high  ?? null),
+      low:     incoming.low   !== undefined ? incoming.low   : (_cache[code]?.low   ?? null),
       // 記錄最後更新來源與時間（debug）
       _src:    source,
       _ts:     Date.now(),

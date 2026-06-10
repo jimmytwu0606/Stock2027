@@ -5,13 +5,14 @@
 import {
   loadLists, listAll, getList,
   createList, renameList, deleteList,
+  ensureDefaultList, dedupEmptyLists,
   holdingAddTx, holdingUpdateTx, holdingRemoveTx, holdingRemoveCode,
   watchAddCode, watchUpdate, watchRemoveCode,
   calcHoldingItem, calcHoldingPL, calcListTotals, calcWatchDistance,
 } from './portfolio.js';
 import { getChineseName, ensureChineseName, fetchHistoryCached, toYahooSymbol, resolveYahooSymbol, fetchFundamentalsBatch } from './api.js';
-import { getAllGroups, loadHealthCacheBatch, saveHealthCache } from './db.js';
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { getAllGroups, loadHealthCacheBatch, saveHealthCache, deletePortfolioList } from './db.js';
+import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 
 // 自製 prompt — 取代瀏覽器原生 prompt(避免醜陋的瀏覽器彈窗)
 function pfPrompt(message, defaultValue = '') {
@@ -47,6 +48,104 @@ function pfPrompt(message, defaultValue = '') {
     btnClose.addEventListener('click', onCancel);
     input.addEventListener('keydown', onKey);
     modal.addEventListener('click', onBg);
+  });
+}
+
+// ─── 自訂確認泡泡（取代原生 confirm()） ──────────────────────────────────────
+function _pfConfirm(title, body, okLabel = '刪除') {
+  return new Promise(resolve => {
+    // 樣式注入（只注一次，沿用 wl-confirm 設計語言）
+    if (!document.getElementById('pf-confirm-style')) {
+      const s = document.createElement('style');
+      s.id = 'pf-confirm-style';
+      s.textContent = `
+        .pf-confirm-overlay {
+          display: none; position: fixed; inset: 0;
+          background: rgba(0,0,0,.65); z-index: 99999;
+          align-items: center; justify-content: center; padding: 24px;
+        }
+        .pf-confirm-overlay.open { display: flex; }
+        .pf-confirm-modal {
+          background: #252830;
+          border-radius: 16px;
+          border: 0.5px solid rgba(255,255,255,.12);
+          padding: 24px 20px 20px;
+          width: 100%; max-width: 320px;
+          animation: pf-confirm-in .18s ease;
+          box-shadow: 0 16px 48px rgba(0,0,0,.7);
+        }
+        @keyframes pf-confirm-in {
+          from { opacity:0; transform: scale(.94); }
+          to   { opacity:1; transform: scale(1); }
+        }
+        .pf-confirm-title {
+          font-size: 16px; font-weight: 500; color: #e8e8ea;
+          margin: 0 0 8px; line-height: 1.4;
+        }
+        .pf-confirm-body {
+          font-size: 13px; color: #9aa0a6;
+          margin: 0 0 22px; line-height: 1.5;
+        }
+        .pf-confirm-btns { display: flex; gap: 10px; }
+        .pf-confirm-cancel, .pf-confirm-ok {
+          flex: 1; min-height: 48px; border-radius: 10px;
+          border: none; font-size: 15px; font-weight: 500;
+          cursor: pointer; transition: background .15s;
+          -webkit-tap-highlight-color: transparent;
+        }
+        .pf-confirm-cancel {
+          background: rgba(255,255,255,.08); color: #cdd0d4;
+          border: 0.5px solid rgba(255,255,255,.1);
+        }
+        .pf-confirm-cancel:hover  { background: rgba(255,255,255,.13); }
+        .pf-confirm-cancel:active { background: rgba(255,255,255,.06); }
+        .pf-confirm-ok { background: #ef5350; color: #fff; }
+        .pf-confirm-ok:hover  { background: #e53935; }
+        .pf-confirm-ok:active { background: #c62828; }
+      `;
+      document.head.appendChild(s);
+    }
+
+    // 建立或重用 overlay
+    let overlay = document.getElementById('pf-confirm-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'pf-confirm-overlay';
+      overlay.className = 'pf-confirm-overlay';
+      overlay.innerHTML = `
+        <div class="pf-confirm-modal" role="dialog" aria-modal="true">
+          <p class="pf-confirm-title"></p>
+          <p class="pf-confirm-body"></p>
+          <div class="pf-confirm-btns">
+            <button class="pf-confirm-cancel">取消</button>
+            <button class="pf-confirm-ok"></button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+    }
+
+    overlay.querySelector('.pf-confirm-title').textContent = title;
+    overlay.querySelector('.pf-confirm-body').textContent  = body;
+    overlay.querySelector('.pf-confirm-ok').textContent    = okLabel;
+
+    const close = (result) => {
+      overlay.classList.remove('open');
+      overlay.querySelector('.pf-confirm-ok').removeEventListener('click', onOk);
+      overlay.querySelector('.pf-confirm-cancel').removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onBg);
+      document.removeEventListener('keydown', onKey);
+      resolve(result);
+    };
+    const onOk     = () => close(true);
+    const onCancel = () => close(false);
+    const onBg     = (e) => { if (e.target === overlay) close(false); };
+    const onKey    = (e) => { if (e.key === 'Escape') close(false); };
+
+    overlay.querySelector('.pf-confirm-ok').addEventListener('click', onOk);
+    overlay.querySelector('.pf-confirm-cancel').addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBg);
+    document.addEventListener('keydown', onKey);
+    overlay.classList.add('open');
   });
 }
 
@@ -145,9 +244,9 @@ function _priceOf(code) {
 
 /** 確保至少有一個 holding 和一個 watch 清單（在 sync 之後才呼叫）*/
 async function _ensureDefaultLists() {
-  const { listAll: la, createList: cl } = await import('./portfolio.js');
-  if (!la('holding').length) await cl('holding', '主要持股');
-  if (!la('watch').length)   await cl('watch',   '潛力股');
+  // 用固定 id（holding_default / watch_default），存在則不重建 → 根治繁殖
+  await ensureDefaultList('holding');
+  await ensureDefaultList('watch');
 }
 
 
@@ -158,7 +257,11 @@ export async function initPortfolio() {
   // skipDefaults=true：等 syncCloudToLocal 完成後才補建預設清單，
   // 避免空殼預設清單被 syncLocalToCloud 上傳覆蓋雲端資料
   await loadLists({ skipDefaults: true });
-  // sync 後若本地仍空，補建預設清單（確保 UI 不報錯）
+  // sync 後先清理重複空清單（含同步刪雲端），再補預設清單
+  try {
+    const removed = await dedupEmptyLists();
+    for (const id of removed) deletePortfolioList(id).catch(() => {});  // 同步刪雲端
+  } catch (e) { console.warn('[portfolio] dedup 失敗:', e.message); }
   await _ensureDefaultLists();
   _autoSelectFirstList();
   _bindKindTabs();
@@ -170,7 +273,16 @@ export async function initPortfolio() {
   window.__portfolioAPI = {
     getWatchLists: () => listAll('watch'),
     isInWatch: (code) => listAll('watch').some(l => l.items?.some(it => it.code === code)),
-    reload: async () => { await loadLists({ skipDefaults: true }); await _ensureDefaultLists(); render(); },
+    reload: async () => {
+      await loadLists({ skipDefaults: true });
+      // sync 後重新 dedup（清掉雲端拉回的重複空清單，含同步刪雲端）
+      try {
+        const removed = await dedupEmptyLists();
+        for (const id of removed) deletePortfolioList(id).catch(() => {});
+      } catch (e) { console.warn('[portfolio] reload dedup 失敗:', e.message); }
+      await _ensureDefaultLists();
+      render();
+    },
   };
 
   document.querySelector('.main-tab[data-tab="portfolio"]')?.addEventListener('click', () => {
@@ -318,7 +430,7 @@ function _bindListSelector() {
       alert('至少要保留一個清單,無法刪除');
       return;
     }
-    if (!confirm(`確定刪除清單「${cur.name}」?裡面所有資料會一起刪除`)) return;
+    if (!await _pfConfirm('刪除清單', `確定刪除清單「${cur.name}」？裡面所有資料會一起刪除`, '刪除')) return;
     await deleteList(_activeListId);
     _autoSelectFirstList();
     _renderListSelector();
@@ -486,7 +598,7 @@ function _renderHoldingTable() {
         <td class="pf-name">${_esc(name)}</td>
         <td class="pf-code">${item.code}</td>
         <td class="pf-price">${price != null ? price.toFixed(2) : '—'}</td>
-        <td class="pf-health">${healthBadgeDual(health, healthLong, 'pf')}</td>
+        <td class="pf-health">${renderHealthBadge(health, healthLong)}</td>
         <td class="pf-shares">${shares.toLocaleString()}</td>
         <td class="pf-avg">${avgCost > 0 ? avgCost.toFixed(2) : '—'}</td>
         <td class="pf-pl ${plCls}">
@@ -617,7 +729,7 @@ function _renderWatchTable() {
         <td class="pf-name">${_esc(name)}</td>
         <td class="pf-code">${item.code}</td>
         <td class="pf-price">${price != null ? price.toFixed(2) : '—'}</td>
-        <td class="pf-health">${healthBadgeDual(health, healthLong, 'pf')}</td>
+        <td class="pf-health">${renderHealthBadge(health, healthLong)}</td>
         <td class="pf-avg">${item.refPrice > 0 ? item.refPrice.toFixed(2) : '—'}</td>
         <td class="pf-pl ${distCls}">
           ${(price != null && item.refPrice > 0) ? `${distPct >= 0 ? '+' : ''}${distPct.toFixed(2)}%` : '—'}
@@ -799,9 +911,41 @@ async function _fetchBatch(items) {
         if (last?.close) _priceCache[item.code] = last.close;
         if (candles.length >= 20) {
           const fund = _fundCache[item.code] ?? null;
-          const candlesShort = candles.length > 65 ? candles.slice(-65) : candles;
+          let candlesShort = candles.length > 65 ? candles.slice(-65) : candles;
+
+          // ── 接入今日即時報價（盤中健康度即時化）──────────────────────────
+          const livePrice  = window.__priceCache?.[item.code]?.price;
+          const livePrev   = window.__priceCache?.[item.code]?.prev;
+          const liveVolume = window.__priceCache?.[item.code]?.volume ?? 0;
+          if (livePrice && livePrev && candlesShort.length > 0) {
+            const todayStr = _twDateStr();
+            const lastC    = candlesShort[candlesShort.length - 1];
+            const lastDate = typeof lastC.time === 'string'
+              ? lastC.time.slice(0, 10)
+              : new Date((lastC.time > 1e10 ? lastC.time : lastC.time * 1000)).toISOString().slice(0, 10);
+            if (lastDate < todayStr) {
+              // 最後一根是昨收，接一根今日模擬K
+              candlesShort = [...candlesShort, {
+                time:   Math.floor(Date.now() / 1000),
+                open:   livePrev,
+                high:   Math.max(livePrev, livePrice),
+                low:    Math.min(livePrev, livePrice),
+                close:  livePrice,
+                volume: liveVolume,
+              }];
+            } else {
+              // 最後一根就是今日，更新收盤
+              candlesShort = [...candlesShort.slice(0, -1), {
+                ...lastC,
+                close:  livePrice,
+                high:   Math.max(lastC.high ?? livePrice, livePrice),
+                low:    Math.min(lastC.low  ?? livePrice, livePrice),
+                volume: Math.max(lastC.volume ?? 0, liveVolume),
+              }];
+            }
+          }
           const hShort = calcHealth(candlesShort);
-          const hLong  = calcHealthLong(candles, fund);
+          const hLong  = calcHealthLong(candles, fund, item.code);
           _healthCache[item.code]     = hShort;
           _healthLongCache[item.code] = hLong;
           // ── 存回 IndexedDB + Firestore（fire-and-forget）──
@@ -909,7 +1053,7 @@ function _renderTxList(item) {
       });
     });
     row.querySelector('.pf-tx-del').addEventListener('click', async () => {
-      if (!confirm('確定刪除這筆交易?')) return;
+      if (!await _pfConfirm('刪除交易', '確定刪除這筆交易？', '刪除')) return;
       const code = document.getElementById('pfModal').dataset.code;
       await holdingRemoveTx(_activeListId, code, txId);
       const it = getList(_activeListId)?.items.find(i => i.code === code);
@@ -1129,7 +1273,7 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
     document.getElementById('pfModalRemove')?.addEventListener('click', async () => {
       const code = document.getElementById('pfModal').dataset.code;
       if (!code) return;
-      if (!confirm(`確定從清單移除 ${code}?所有交易紀錄會一起刪除`)) return;
+      if (!await _pfConfirm(`移除 ${code}`, '所有交易紀錄會一起刪除', '移除')) return;
       await holdingRemoveCode(_activeListId, code);
       _closeModal();
       render();
@@ -1200,7 +1344,7 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
     document.getElementById('pfWatchRemove')?.addEventListener('click', async () => {
       const code = document.getElementById('pfWatchModal').dataset.code;
       if (!code) return;
-      if (!confirm(`從追蹤清單移除 ${code}?`)) return;
+      if (!await _pfConfirm(`移除 ${code}`, '確定從追蹤清單移除此股？', '移除')) return;
       await watchRemoveCode(_activeListId, code);
       _closeWatchModal();
       render();
@@ -1279,4 +1423,11 @@ if (typeof document !== 'undefined' && !window.__pfBoundV2) {
 
 function _esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+}
+
+// ── 盤中健康度觸發入口（由 main.js MIS 更新後呼叫）────────────────────────
+// 有 debounce 保護，多次呼叫只跑一次
+export function refreshHealthFromPrice() {
+  if (!_isTradingNow()) return;
+  _refreshHealthInBackground(false);  // force=false：有快取且有效時跳過
 }

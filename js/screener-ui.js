@@ -15,7 +15,7 @@ import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 
 // fund 快取（結果渲染後批次讀入）
 let _scFundCache = {};
-import { calcHealth, calcHealthFast, calcHealthLong, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
 import { Config } from './config.js';
 import { getKlineCache } from './db.js';
 
@@ -28,6 +28,7 @@ let _sortAsc    = false;       // 預設：降冪
 
 // 本次篩選 meta（供備份用）
 let _currentStrategyName = null;
+let _currentStrategyId   = null;
 let _currentCondLabels   = [];
 
 // ─────────────────────────────────────────────
@@ -55,6 +56,7 @@ function _bindStrategyEvents() {
   document.addEventListener('strategyClear', () => {
     _conditions = [];
     _currentStrategyName = null;
+    _currentStrategyId   = null;
     _renderConditionArea();
   });
 
@@ -70,6 +72,7 @@ function _bindStrategyEvents() {
 
   document.addEventListener('strategyApplied', (e) => {
     _currentStrategyName = e.detail?.name ?? null;
+    _currentStrategyId   = e.detail?.id   ?? null;
   });
 
   // v2.6.2 — 策略自動升級週期時同步 Config.screenerPeriod
@@ -242,6 +245,18 @@ export function openScreenerModal() {
   if (bg) bg.style.display = 'flex';
   _renderConditionArea();
   _renderSavedSets();
+  // 預設顯示策略庫 tab（每次開啟都切回，不殘留上次的 custom）
+  _switchToStrategyTab();
+}
+
+// 切到策略庫 tab（與 strategy.js 的 _switchToCustomTab 對稱）
+function _switchToStrategyTab() {
+  document.querySelectorAll('.sc-left-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.sc-left-tab[data-left-tab="strategy"]')?.classList.add('active');
+  const pc = document.getElementById('scPanelCustom');
+  const ps = document.getElementById('scPanelStrategy');
+  if (pc) pc.style.display = 'none';
+  if (ps) ps.style.display = '';
 }
 
 function _closeScreenerModal() {
@@ -441,7 +456,7 @@ function _renderResults(rows) {
       document.querySelector('.sidebar').style.display = '';
       document.querySelector('.main').style.display    = '';
       document.dispatchEvent(new CustomEvent('stockSelect', {
-        detail: { code, matchedConds, fromScreener: true }
+        detail: { code, matchedConds, matchedCondIds: result?.matchedCondIds ?? [], strategyId: _currentStrategyId, strategyName: _currentStrategyName, fromScreener: true }
       }));
     });
   });
@@ -478,7 +493,7 @@ function _renderResultRow(r) {
     ? calcHealth(_sc)
     : calcHealthFast(r);
   // 長線：需 ≥120 根（screener 3mo 通常不夠，顯示 —）
-  const healthLong  = r.candles?.length >= 120 ? calcHealthLong(r.candles, _scFundCache[r.code] ?? null) : null;
+  const healthLong  = r.candles?.length >= 120 ? calcHealthLong(r.candles, _scFundCache[r.code] ?? null, r.code) : null;
 
   // v2.7+ 訊號觸發資訊 chip
   // 格式:「已亮 N 天 · 起 MM/DD」(全要版,使用者選 D 選項)
@@ -491,7 +506,7 @@ function _renderResultRow(r) {
       <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-price">${fmt(r.price)}</span></td>
       <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-chg ${chgCls}">${chgStr}</span></td>
       <td class="sc-tbl-td sc-tbl-num">${fmtVol(r.volume)}</td>
-      <td class="sc-tbl-td">${healthBadgeDual(healthShort, healthLong, 'sc')}</td>
+      <td class="sc-tbl-td">${renderHealthBadge(healthShort, healthLong)}</td>
       <td class="sc-tbl-td"><canvas class="sc-sparkline" data-code="${r.code}" width="80" height="32"></canvas></td>
       <td class="sc-tbl-td sc-tbl-tags">${tags}${tags && triggerChip ? '<span style="display:inline-block;width:6px"></span>' : ''}${triggerChip}</td>
       <td class="sc-tbl-td">
@@ -662,6 +677,7 @@ function _toggleSaveNameArea() {
     try {
       await saveResult(name, _results, {
         strategy:   _currentStrategyName,
+        strategyId: _currentStrategyId,
         condLabels: _currentCondLabels,
       });
       document.dispatchEvent(new CustomEvent('showToast', {
@@ -752,6 +768,8 @@ function _loadResultEntry(id, all) {
   if (!entry) return;
 
   _results = entry.results ?? [];
+  _currentStrategyName = entry.strategy ?? null;
+  _currentStrategyId   = entry.strategyId ?? null;
   _renderResults(_results);
 
   // 顯示「已載入備份」提示列

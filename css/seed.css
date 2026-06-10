@@ -772,28 +772,30 @@
 /* ─── 模式切換 toggle ───────────────────────────────────── */
 .seed-mode-toggle {
   display: flex;
-  gap: 2px;
-  background: var(--bg3, #1c2330);
-  border: 1px solid var(--border2);
-  border-radius: 8px;
-  padding: 3px;
-  margin-bottom: 16px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+  flex: 1;          /* 撐開 header 內空間，避免 tab 被壓到換行 */
+  min-width: 0;
 }
 .seed-mode-btn {
   flex: 1;
-  padding: 6px 0;
+  padding: 9px 6px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   background: none;
   border: none;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: background .15s, color .15s;
+  font-family: inherit;
+  transition: color .15s, border-color .15s;
+  margin-bottom: -1px;
+  white-space: nowrap;   /* 避免「多股模式」擠成兩行 */
 }
 .seed-mode-btn.active {
-  background: var(--accent);
-  color: #fff;
+  color: var(--text);
+  border-bottom-color: var(--accent);
 }
 .seed-mode-btn:not(.active):hover { color: var(--text); }
 

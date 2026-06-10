@@ -597,3 +597,124 @@
   border-color: var(--up);
   color: var(--up);
 }
+
+/* ══════════════════════════════════════════
+   系統發現策略（lab-discovered.js）
+   ══════════════════════════════════════════ */
+.ld-loading,
+.ld-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ld-header {
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 8px;
+}
+.ld-header b { color: var(--text); }
+
+.ld-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.ld-table th {
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--muted);
+  font-weight: 400;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  background: var(--bg2);
+}
+
+.ld-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ld-table tbody tr:last-child td { border-bottom: none; }
+.ld-table tbody tr:hover td { background: var(--bg2); }
+
+.ld-rank  { color: var(--muted); width: 28px; }
+.ld-hold  { color: var(--text); }
+.ld-score { font-weight: 600; color: #f0b429; }
+.ld-muted { color: var(--muted); font-size: 11px; }
+
+.ld-conds { white-space: normal; min-width: 200px; }
+.ld-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  margin: 1px 3px 1px 0;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid var(--border2);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 台股慣例：超額為正紅、為負綠（hex 寫死，不依賴 --up/--dn 變數語義） */
+.ld-table .wl-up { color: #ef5350 !important; }
+.ld-table .wl-dn { color: #26a69a !important; }
+
+.ld-note {
+  font-size: 11px;
+  color: var(--muted);
+  padding-top: 8px;
+  line-height: 1.6;
+}
+
+/* 系統發現 — 找個股展開列 */
+.ld-find-btn {
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .12s;
+}
+.ld-find-btn:hover { border-color: var(--accent); background: rgba(59,130,246,.07); }
+
+.ld-match-cell { white-space: normal !important; background: var(--bg); }
+.ld-card-grid { padding-top: 8px; }
+.ld-card { cursor: pointer; }
+.ld-match-cell .theme-stock-del { display: none; }  /* 借衣服但不借刪除鈕 */
+
+/* 系統發現 — 命中名單分頁 */
+.ld-pager {
+  display: flex;
+  gap: 4px;
+  padding-top: 10px;
+  align-items: center;
+}
+.ld-page-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .12s;
+}
+.ld-page-btn:hover:not([disabled]) { border-color: var(--accent); color: var(--accent); }
+.ld-page-btn.active { border-color: #f0b429; color: #f0b429; }
+.ld-page-btn[disabled] { opacity: .35; cursor: not-allowed; }
+
+
+/* 真實驗室 toolbar 兩列排版（2026-06-10）：controls 佔滿整列換行，不再橫向擠爆 */
+.lab-toolbar { flex-wrap: wrap; height: auto; min-height: 42px; padding-top: 6px; padding-bottom: 6px; }
+#labControlsExperiment { flex-basis: 100%; flex-wrap: wrap; row-gap: 6px; }

@@ -500,7 +500,7 @@
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 9px 0;
+  padding: 9px 6px;
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
@@ -508,6 +508,7 @@
   font-family: inherit;
   transition: color 0.15s, border-color 0.15s;
   margin-bottom: -1px;
+  white-space: nowrap;   /* 避免「自訂條件」擠成兩行 */
 }
 .sc-left-tab:hover  { color: var(--text); }
 .sc-left-tab.active { color: var(--text); border-bottom-color: var(--accent); }
@@ -684,6 +685,7 @@
   align-items: center;
   justify-content: center;
 }
+/* sc-health-badge 統一對齊 hg- 台股配色（紅強→橙→黃→淺綠→綠弱）*/
 .sc-health-badge {
   display: inline-block;
   padding: 2px 7px;
@@ -692,16 +694,11 @@
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-/* 80-100 強勢 — 紅 */
-.sc-health-badge.strong     { background: rgba(239,83,80,.18);   color: #ef5350; }
-/* 60-79  中性偏強 — 橘 */
-.sc-health-badge.mid-strong { background: rgba(245,158,11,.15);  color: #f59e0b; }
-/* 40-59  中性 — 灰 */
-.sc-health-badge.neutral    { background: rgba(255,255,255,.07); color: var(--muted); }
-/* 20-39  中性偏弱 — 青 */
-.sc-health-badge.mid-weak   { background: rgba(6,182,212,.15);   color: #06b6d4; }
-/* 0-19   弱勢 — 綠 */
-.sc-health-badge.weak       { background: rgba(38,166,154,.18);  color: var(--up); }
+.sc-health-badge.strong     { background: rgba(239,83,80,.18);   color: #ef5350; }  /* ≥80 紅 */
+.sc-health-badge.mid-strong { background: rgba(255,138,101,.15); color: #ff8a65; }  /* ≥60 橙 */
+.sc-health-badge.neutral    { background: rgba(245,158,11,.12);  color: #f59e0b; }  /* ≥40 黃 */
+.sc-health-badge.mid-weak   { background: rgba(102,187,106,.12); color: #66bb6a; }  /* ≥20 淺綠 */
+.sc-health-badge.weak       { background: rgba(38,166,154,.18);  color: #26a69a; }  /* <20 綠 */
 .sc-health-empty { color: var(--hint); font-size: 11px; }
 
 /* ── 篩選結果：加入追蹤清單按鈕 ── */

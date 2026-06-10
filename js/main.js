@@ -17,7 +17,7 @@ if (!localStorage.getItem('__devMode')) {
 // ────────────────────────────────────────────────────────────
 
 import { AppState, updateWatchlistPrice } from './state.js';
-import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore } from './api.js';
+import { toYahooSymbol, resolveYahooSymbol, fetchQuote, fetchHistory, fetchHistoryCached, fetchTWSEPrices, getChineseName, ensureChineseName, preloadNamesFromFirestore, preloadBundles, fetchSnapshot, fetchHealthSnapshot, fetchCondHistory } from './api.js';
 import {
   initCharts, renderChartData, setSubChartsActive,
   getMainChart, getCandleSeries, getMainChartEl,
@@ -64,11 +64,12 @@ import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
 import { initStrategyPanel, getSignalPeriod, refreshStrategyCards, calcSignalLamps, STRATEGIES } from './strategy.js';
 import { initStrategyModal, renderStrategyGrid } from './modal-strategy.js';
-import { initPortfolio } from './portfolio-ui.js';
+import { initPortfolio, refreshHealthFromPrice } from './portfolio-ui.js';
 import { initPatternDraw, updateScreenerCount } from './pattern-draw.js';
 import { initScreenerHub } from './screener-hub.js';
 import { initStrategyLab } from './strategy-lab.js';
 import { initMarketMini } from './market-mini.js';
+import { initMarketPulse } from './market-pulse.js';
 import { initHotgroup }  from './market.js';
 import { initTheme, reloadThemes } from './theme.js';
 import { renderThemePanel } from './theme-ui.js';
@@ -78,13 +79,13 @@ import { initFullscreenAnalysis, destroyFullscreenAnalysis, refreshFullscreenAna
 import './analysis-perspective.js';  // 觀點 Tab — 自動 registerAnalysisModule
 
 // ── 資料庫 / 設定 ──
-import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices, deleteKlineCache, syncCloudToLocal, syncLocalToCloud } from './db.js';
+import { initDB, migrateFromLocalStorage, cleanupExpiredKlineCache, loadAllLastPrices, deleteKlineCache, syncCloudToLocal, syncLocalToCloud, getKlineCache } from './db.js';
 import { loadConfig }    from './config.js';
 import { initWatchlist, reloadWatchlist, addStockToGroup, getDefaultGroupId, updateStockPrices, createGroup } from './watchlist.js';
 import * as PriceHub from './price-hub.js';
 import { initLayout }    from './layout.js';
 // screener-result-store 的 UI 邏輯已整合進 screener-ui.js，不需在此 import
-import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache } from './signal-scan.js';
+import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache, scanOneCode } from './signal-scan.js';
 
 // ── Firebase Auth UI（新增）──
 import { initAuthUI } from './auth-ui.js';
@@ -98,6 +99,10 @@ async function loadStock(code, opts = {}) {
   AppState.activeCode    = code;
   window.__stockDashCode = code;
   const force = !!opts.force;
+
+  // 點開個股時先跑 scanOneCode，確保妖股狀態在渲染前更新完畢
+  // force:true 確保不用舊快取，渲染時 AppState.yaoguStatus[code] 已是最新
+  scanOneCode(code, { force: true }).catch(() => {});
 
   showLoading(true);
   setHeaderLoading(code);
@@ -132,8 +137,43 @@ async function loadStock(code, opts = {}) {
       getChineseName(code) ? Promise.resolve() : ensureChineseName(code).catch(() => {}),
     ]);
 
+    // fetchQuote 失敗時 fallback：優先用 IDB R2 K 線最後一根（當天今收，最可靠），
+    // 再 fallback priceCache。盤後 Yahoo 502 時 priceCache 可能是過期昨收或壞資料，
+    // 而 R2 bundle 是 GAS 盤後抓的今收。
     const [quote] = await Promise.all([
-      fetchQuote(symbol),
+      fetchQuote(symbol).catch(async () => {
+        // 1) 先試 IDB K 線最後一根（兩個 suffix）
+        try {
+          const sym1 = symbol;
+          const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
+          const hit  = await getKlineCache(sym1, '1y').catch(() => null)
+                    || await getKlineCache(sym2, '1y').catch(() => null);
+          const cs   = hit?.candles;
+          if (cs && cs.length >= 2) {
+            const last = cs[cs.length - 1];
+            const prev = cs[cs.length - 2];
+            const chgPct = prev.close > 0 ? (last.close - prev.close) / prev.close * 100 : 0;
+            return {
+              price:  last.close,
+              prev:   prev.close,
+              chgPct: chgPct,
+              open:   last.open  ?? null,
+              high:   last.high  ?? null,
+              low:    last.low   ?? null,
+              volume: last.volume ?? null,
+              name:   null,
+            };
+          }
+        } catch (_) {}
+        // 2) 再 fallback priceCache（可能過期）
+        const cached = window.__priceCache?.[code];
+        return cached ? {
+          price:  cached.price,
+          prev:   cached.prev  ?? cached.price,
+          chgPct: cached.chgPct ?? 0,
+          open: null, high: null, low: null, volume: null, name: null,
+        } : { price: 0, prev: 0, chgPct: 0, open: null, high: null, low: null, volume: null, name: null };
+      }),
     ]);
 
     const { chg, chgPct } = updateHeader(code, quote);
@@ -161,7 +201,10 @@ async function loadStock(code, opts = {}) {
       if (chName && AppState.activeCode === code) {
         const el = document.getElementById('shName');
         if (el && el.textContent !== chName) el.textContent = chName;
-        PriceHub.push({ [code]: { price: quote.price, chg, chgPct, name: chName } }, { persist: false, updateHeader: false, source: 'loadStock-namefix' });
+        // ⚠️ namefix push 必須帶 prev：否則 PriceHub 存入時 prev 缺失，
+        //   被當成 prev=price → chgPct 算錯（昨收=今收）。
+        //   quote.prev 來自 fetchQuote（或失敗 fallback 的 IDB K 線前一根），是正確昨收。
+        PriceHub.push({ [code]: { price: quote.price, prev: quote.prev, chg, chgPct, name: chName } }, { persist: false, updateHeader: false, source: 'loadStock-namefix' });
         reloadStockTabs(code, chName);
         window.__mobileUpdateTitle?.(`${chName}（${code}）`);
         window.__mobileRenderWatchlist?.();
@@ -453,10 +496,9 @@ function _bridgeWlButtons() {
 }
 
 function _toggleMobileSidebar(show) {
-  const sb = document.querySelector('.sidebar') ?? document.getElementById('sidebar');
-  const mn = document.querySelector('.main');
-  if (sb) sb.style.display = show ? 'flex' : '';
-  if (mn) mn.style.display = show ? 'none' : '';
+  // v2：sidebar 改為抽屜式，由 layout.js 統一管理開關
+  if (show) window.__drawerOpen?.();
+  else      window.__drawerClose?.();
 }
 
 // ─────────────────────────────────────────────
@@ -1469,9 +1511,28 @@ function _initFullscreen() {
 (async function init() {
   // 1. 先啟動 IndexedDB 並遷移舊資料
   await initDB();
-  await migrateFromLocalStorage();
+  // ⚠️ 踩雷備忘：migrate 在「乾淨新機」可能丟錯（預期的舊 localStorage 不存在），
+  //   若不 catch → init() 整個 reject → 後面的 bundle 預載 kick 從未註冊 → 新機不下載 K 線包。
+  //   包 try/catch，遷移失敗只記 log，不連累後續初始化。
+  try {
+    await migrateFromLocalStorage();
+  } catch (e) {
+    console.warn('[main] migrateFromLocalStorage 失敗(忽略,不影響後續):', e?.message);
+  }
   // Phase 7.4 — 背景清理過期 K 線快取(不 await,不擋初始化)
   cleanupExpiredKlineCache();
+
+  // Bundle 預載：背景抓 GAS 預打包的全市場 K 線（7 包 gzip）→ 灌 IDB kline_cache
+  //   每日只灌一次（localStorage 旗標防重跑）。完成後篩選器/型態/種子掃描全本機命中。
+  //   用 requestIdleCallback 延後到瀏覽器空檔，完全不影響首屏與既有初始化。
+  window.__bundleReady = new Promise(resolve => {
+    const kick = () => preloadBundles().then(resolve).catch(e => {
+      console.warn('[main] preloadBundles 失敗:', e?.message);
+      resolve(null);
+    });
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(kick, { timeout: 4000 });
+    else setTimeout(kick, 1500);
+  });
 
   // 1.5 Firebase 名稱庫預載（最高優先，背景執行不擋後續）
   // ⚠️ 踩雷備忘：之前有 export preloadNamesFromFirestore 但沒有呼叫
@@ -1480,6 +1541,35 @@ function _initFullscreen() {
   //   修法：最早期預載 Firebase names/batch*，loadStock 時 _nameCache 已有資料
   // ⚠️ 存到 window.__namesReady，讓 loadStock 的補刷邏輯可以等它完成
   window.__namesReady = preloadNamesFromFirestore().catch(() => {});
+
+  // 1.6 Snapshot 預載（GAS 每日盤後預算的全市場 condition snapshot）
+  //   背景靜默載入，載入完成後篩選器自動走快速路徑（不需本機算 K 線）
+  //   週末/假日也能正常使用（顯示最近交易日的資料）
+  // 預載全市場健康度快照（GAS 每日算好，getHealthScore 優先讀此）
+  fetchHealthSnapshot().catch(() => {});
+  // 預載條件歷史序列（screener snapshot 路徑算 triggerHistory 用）
+  fetchCondHistory().catch(() => {});
+
+  fetchSnapshot().then(snap => {
+    const el = document.getElementById('screenerSnapshotStatus');
+    if (!el) return;
+    if (!snap) {
+      // 有可能是品質驗算失敗（api.js 回 null + 設 window.__snapshotQualityFail）
+      const qFail = window.__snapshotQualityFail;
+      if (qFail) {
+        el.textContent = `⚠️ 策略快取驗算異常（偏差率 ${qFail.rate}%）・已切換本機模式`;
+        el.style.color   = '#ef5350';
+        el.style.display = '';
+        console.warn('[main] snapshot 品質異常，screener 將走本機 K 線計算');
+      }
+      return;
+    }
+    el.textContent = `⚡ 策略快取已就緒・${snap.date}・共 ${Object.keys(snap.stocks || {}).length} 支`;
+    el.style.color   = '';
+    el.style.display = '';
+    console.log(`[main] snapshot 就緒：${snap.date}`);
+    window.dispatchEvent(new CustomEvent('snapshotReady'));
+  }).catch(() => {});
 
   // 2. 載入設定（async）
   await loadConfig();
@@ -1605,7 +1695,7 @@ function _initFullscreen() {
     const { code, matchedConds, fromScreener } = e.detail ?? {};
     // 篩選器來的：存篩選條件到 AppState，讓 stock-tabs 渲染篩選標籤
     if (fromScreener && matchedConds?.length) {
-      AppState.screenerContext = { code, matchedConds };
+      AppState.screenerContext = { code, matchedConds, matchedCondIds: e.detail?.matchedCondIds ?? [], strategyId: e.detail?.strategyId ?? null, strategyName: e.detail?.strategyName ?? null };
     } else if (AppState.screenerContext?.code !== code) {
       // 切換到非篩選器來源的股票時，清除篩選 context
       AppState.screenerContext = null;
@@ -1685,9 +1775,28 @@ function _initFullscreen() {
 
   // 11b. 初次掃描延遲 90 秒：等 loadStock K線穩定完成再掃
   // ⚠️ 踩雷備忘：延遲太短（5秒）會與 loadStock K線並發衝爆 Worker，造成 K線 25 分鐘空白
-  setTimeout(() => {
+  setTimeout(async () => {
     console.log('[main] 初次自動掃描燈號');
     scanWatchlistSignals({ silent: true });
+
+    // ── 每日自動重建 yaogu 記錄：對所有自選清單個股跑 scanOneCode ──────
+    // 確保 activatedAt/warningAt 每天從 K 線重算，不沿用可能錯誤的舊值
+    const today = new Date().toISOString().slice(0, 10);
+    const yaoguRebuildKey = 'yaogu_rebuild_date';
+    if (localStorage.getItem(yaoguRebuildKey) !== today) {
+      try {
+        const groups = AppState.watchlistGroups ?? [];
+        const codes = [...new Set(groups.flatMap(g => g.stocks?.map(s => s.code) ?? []))];
+        console.log(`[main] yaogu 每日重建：${codes.length} 支`);
+        for (const code of codes) {
+          await scanOneCode(code, { force: false }).catch(() => {});
+        }
+        localStorage.setItem(yaoguRebuildKey, today);
+        console.log('[main] yaogu 每日重建完成');
+      } catch(e) {
+        console.warn('[main] yaogu rebuild failed:', e.message);
+      }
+    }
   }, 90 * 1000);
 
   setInterval(() => {
@@ -1783,6 +1892,7 @@ function _initFullscreen() {
   if (first) loadStock(first.code);
 
 initMarketMini();
+initMarketPulse();
 
 // ── 盤中即時報價（mis.twse.com.tw）+ K線定時更新 ───────────────────────────
 // Worker 已加 mis session 管理，可直接打即時 API
@@ -1893,6 +2003,8 @@ initMarketMini();
         await updateStockPrices(allMap);
       }
       console.log(`[main] 自選清單盤中更新完成 ${codes.length} 檔（已存 DB）`);
+      // 報價更新完畢，重算庫存健康度（接入即時價）
+      refreshHealthFromPrice();
     } catch (e) {
       console.warn('[main] _pollWatchlistPrices failed:', e.message);
     } finally {

@@ -165,9 +165,15 @@ export function calcReturnDistribution(hits, bucketSize = 2) {
     if (buckets[key] != null) buckets[key]++;
   }
 
-  return Object.entries(buckets).map(([label, count]) => ({
-    label: `${Number(label) >= 0 ? '+' : ''}${label}%`,
-    count,
-    isPositive: Number(label) >= 0,
-  }));
+  // ⚠️ Object.entries 對數字 key 會「正整數升序在前、其餘字串在後」，
+  //   導致負數 bucket（"-18"）排到正數後面 → X 軸順序錯亂。
+  //   必須明確依數值排序，不能依賴物件 key 列舉順序。
+  return Object.entries(buckets)
+    .map(([label, count]) => ({
+      value: Number(label),
+      label: `${Number(label) >= 0 ? '+' : ''}${label}%`,
+      count,
+      isPositive: Number(label) >= 0,
+    }))
+    .sort((a, b) => a.value - b.value);
 }
