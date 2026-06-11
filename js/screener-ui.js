@@ -17,7 +17,8 @@ import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 let _scFundCache = {};
 import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
 import { Config } from './config.js';
-import { getKlineCache } from './db.js';
+import { getKlineCache, getAllSignalsCache } from './db.js';
+import { openStockPreview } from './stock-preview.js';
 
 // 目前使用中的條件列
 let _conditions = [];
@@ -25,6 +26,9 @@ let _isRunning  = false;
 let _results    = [];
 let _sortKey    = 'chgPct';   // 預設：漲跌幅
 let _sortAsc    = false;       // 預設：降冪
+let _page       = 1;           // 結果分頁（15 檔/頁）
+let _yaoguMap   = new Map();   // code → { x1,x2,x5,x6, rank }（妖股標籤）
+const PAGE_SIZE = 15;
 
 // 本次篩選 meta（供備份用）
 let _currentStrategyName = null;
@@ -41,6 +45,107 @@ export async function initScreener() {
   _bindStrategyEvents();
   await _renderSavedSets();
   await _renderSavedResultsList();
+  // 系統發現「🔍 個篩」在 hub lazy init 前就 dispatch → 事件已掉，從全域暫存消化
+  if (window.__screenerPresetConds) {
+    const d = window.__screenerPresetConds;
+    window.__screenerPresetConds = null;
+    _applyPresetConds(d);
+  }
+}
+
+// ── 系統發現/名人堂 → 個篩自訂條件 套用 ─────────────────────────────────
+// GAS 條件與前端同名不同義者（踩雷備忘：kd_k_min 反義、vol_surge/bb 系列門檻不同）
+const _GAS_SEMANTIC_WARN = new Set(['kd_k_min', 'vol_surge', 'bb_squeeze', 'bb_expanding']);
+
+// GAS 固定門檻等效值（heatmap_calc.gs _calcConditions 語意）：
+// 套用系統發現條件時用這些值，不用前端 default（門檻不同會讓命中數對不上，
+// 例：gain_10d GAS >5%，前端 default 10% → 直接篩掉一半）
+const _GAS_EQUIV_VALUES = {
+  gain_10d: 5,      // 近10日漲 >5%
+  loss_5d: 5,       // 近5日跌 >5%
+  rsi_min: 50,      // RSI ≥50
+  rsi_max: 80,      // RSI ≥80
+  kd_k_max: 80,     // K ≥80
+  vol_surge: 1.5,   // 量 ≥1.5x
+};
+
+function _applyPresetConds(detail, opts = {}) {
+  const { conds, name } = detail ?? {};
+  const autorun = opts.autorun !== false;
+  if (!Array.isArray(conds) || !conds.length) return;
+  _conditions = [];
+  const missing = [], warned = [];
+  for (const id of conds) {
+    const def = CONDITION_DEFS.find(d => d.id === id);
+    if (!def) { missing.push(id); continue; }
+    if (_GAS_SEMANTIC_WARN.has(id)) warned.push(id);
+    const value = (id in _GAS_EQUIV_VALUES) ? _GAS_EQUIV_VALUES[id] : def.default;
+    _conditions.push({ id, def, value });
+  }
+  _currentStrategyName = name ?? '系統發現';
+  _currentStrategyId   = null;
+  _renderConditionArea();
+
+  let note = `已套用：${name ?? conds.join('+')}`;
+  if (warned.length)  note += `｜⚠ ${warned.join(',')} 前端與 GAS 語意/門檻不同，結果可能與系統發現命中數有出入`;
+  if (missing.length) note += `｜❌ 個篩無此條件已略過：${missing.join(',')}`;
+  _updateStatus(note);
+  if (missing.length || !autorun) {
+    openScreenerModal();             // 缺漏或匯入模式 → 開 modal 讓使用者確認
+    _switchToCustomTabLocal();
+  } else {
+    requestAnimationFrame(() => _runScreener());  // 全數套用 → 直接開篩
+  }
+}
+
+/* 📥 匯入條件清單：解析貼上的文字，抽出合法 condition id（吃 lab-discovered 📋 複製格式或任意含 id 的文字） */
+function _injectImportUI() {
+  const pc = document.getElementById('scPanelCustom');
+  if (!pc || pc.querySelector('#scImportCondsBtn')) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'margin-top:10px;border-top:1px solid var(--border,#222);padding-top:10px';
+  row.innerHTML = `
+    <button id="scImportCondsBtn" class="sc-add-cond-btn" type="button"
+      style="font-size:12px">📥 匯入條件清單</button>
+    <div id="scImportCondsBox" style="display:none;margin-top:8px">
+      <textarea id="scImportCondsTa" rows="5" placeholder="貼上系統發現 📋 複製的條件清單（或任何含 condition id 的文字）"
+        style="width:100%;background:var(--bg,#0d1117);color:var(--text,#ddd);border:1px solid var(--border,#333);border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+        <button id="scImportCondsApply" class="sc-add-cond-btn" type="button" style="font-size:12px">套用</button>
+      </div>
+      <div id="scImportCondsMsg" style="font-size:11px;color:var(--muted,#888);margin-top:4px"></div>
+    </div>`;
+  pc.appendChild(row);
+
+  row.querySelector('#scImportCondsBtn').addEventListener('click', () => {
+    const box = row.querySelector('#scImportCondsBox');
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+  });
+  row.querySelector('#scImportCondsApply').addEventListener('click', () => {
+    const ta  = row.querySelector('#scImportCondsTa');
+    const msg = row.querySelector('#scImportCondsMsg');
+    const text = ta.value ?? '';
+    // 抽 token、按出現順序比對合法 condition id，去重
+    const ids = new Set(CONDITION_DEFS.map(d => d.id));
+    const found = [];
+    for (const tok of text.match(/[a-z][a-z0-9_]+/gi) ?? []) {
+      const t = tok.toLowerCase();
+      if (ids.has(t) && !found.includes(t)) found.push(t);
+    }
+    if (!found.length) { msg.textContent = '❌ 沒有解析到任何合法 condition id'; return; }
+    _applyPresetConds({ conds: found, name: '匯入清單' }, { autorun: false });
+    msg.textContent = `✅ 已套用 ${found.length} 個條件：${found.join(', ')}（按「開始篩選」執行）`;
+  });
+}
+
+// 切到自訂條件 tab（與 _switchToStrategyTab 對稱）
+function _switchToCustomTabLocal() {
+  document.querySelectorAll('.sc-left-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.sc-left-tab[data-left-tab="custom"]')?.classList.add('active');
+  const pc = document.getElementById('scPanelCustom');
+  const ps = document.getElementById('scPanelStrategy');
+  if (pc) pc.style.display = '';
+  if (ps) ps.style.display = 'none';
 }
 
 // ─────────────────────────────────────────────
@@ -68,6 +173,11 @@ function _bindStrategyEvents() {
     if (_conditions.find(c => c.id === condId)) return;
     _conditions.push({ id: condId, def, value: value ?? def.default });
     _renderConditionArea();
+  });
+
+  document.addEventListener('screener:applyConds', (e) => {
+    window.__screenerPresetConds = null; // 已由事件接手，清掉暫存防 init 重複消化
+    _applyPresetConds(e.detail);
   });
 
   document.addEventListener('strategyApplied', (e) => {
@@ -244,6 +354,7 @@ export function openScreenerModal() {
   const bg = document.getElementById('screenerModalBg');
   if (bg) bg.style.display = 'flex';
   _renderConditionArea();
+  _injectImportUI();
   _renderSavedSets();
   // 預設顯示策略庫 tab（每次開啟都切回，不殘留上次的 custom）
   _switchToStrategyTab();
@@ -277,6 +388,8 @@ async function _runScreener() {
   // overlay 和 running 狀態先設（在任何 await 之前，讓使用者馬上看到）
   _isRunning           = true;
   _results             = [];
+  _page                = 1;
+  _loadYaoguMap();
   _currentCondLabels   = _conditions.map(c => c.def.label);
   _hideSaveResultBtn();
   _setRunBtnState(true);
@@ -380,6 +493,13 @@ function _sortedRows(rows) {
       av = (_s(a.candles)?.length >= 20 ? calcHealth(_s(a.candles)) : calcHealthFast(a)) ?? -1;
       bv = (_s(b.candles)?.length >= 20 ? calcHealth(_s(b.candles)) : calcHealthFast(b)) ?? -1;
       // 排序用短線分數
+    } else if (key === 'code') {
+      // 代號是字串，數值化排序（含 00 開頭 ETF）
+      av = parseInt(a.code, 10) || 0;
+      bv = parseInt(b.code, 10) || 0;
+    } else if (key === 'yaogu') {
+      av = _yaoguMap.get(a.code)?.rank ?? 0;
+      bv = _yaoguMap.get(b.code)?.rank ?? 0;
     } else {
       av = a[key] ?? (key === 'chgPct' ? -999 : 0);
       bv = b[key] ?? (key === 'chgPct' ? -999 : 0);
@@ -404,12 +524,13 @@ function _renderResults(rows) {
   const sorted = _sortedRows(rows);
 
   const cols = [
-    { key: null,     label: '代號',     noSort: true },
+    { key: 'code',   label: '代號' },
     { key: null,     label: '名稱',     noSort: true },
     { key: 'price',  label: '收盤價',   align: 'right' },
     { key: 'chgPct', label: '漲跌幅',   align: 'right' },
     { key: 'volume', label: '成交量',   align: 'right' },
     { key: 'health', label: '健康度' },
+    { key: 'yaogu',  label: '妖股' },
     { key: null,     label: '走勢',     noSort: true },
     { key: null,     label: '符合指標', noSort: true },
     { key: null,     label: '',         noSort: true },
@@ -428,14 +549,32 @@ function _renderResults(rows) {
   });
   thead += '</tr>';
 
-  const tbody = sorted.map(r => _renderResultRow(r)).join('');
-  el.innerHTML = `<div class="sc-tbl-wrap"><table class="sc-tbl"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+  // ── 分頁：15 檔/頁 ──
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  if (_page > totalPages) _page = totalPages;
+  const pageRows = sorted.slice((_page - 1) * PAGE_SIZE, _page * PAGE_SIZE);
+
+  const tbody = pageRows.map(r => _renderResultRow(r)).join('');
+  const pager = totalPages > 1 ? _renderPager(totalPages, sorted.length) : '';
+  el.innerHTML = `<div class="sc-tbl-wrap"><table class="sc-tbl"><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>${pager}`;
+
+  // pager 事件
+  el.querySelectorAll('.sc-pager-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseInt(btn.dataset.page, 10);
+      if (!p || p === _page) return;
+      _page = p;
+      _renderResults(_results);
+      el.closest('.sc-results-full')?.scrollTo({ top: 0 });
+    });
+  });
 
   el.querySelectorAll('.sc-tbl-th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
       const key = th.dataset.sort;
       if (_sortKey === key) _sortAsc = !_sortAsc;
       else { _sortKey = key; _sortAsc = false; }
+      _page = 1;
       _renderResults(_results);
     });
   });
@@ -447,17 +586,14 @@ function _renderResults(rows) {
       if (!code) return;
       const result = _results.find(r => r.code === code);
       const matchedConds = result?.matchedConds ?? [];
-      document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
-      document.querySelector('.main-tab[data-tab="chart"]')?.classList.add('active');
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('tabChart')?.classList.add('active');
-      document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
-      document.querySelector('.tab-item[data-mobile-tab="chart"]')?.classList.add('active');
-      document.querySelector('.sidebar').style.display = '';
-      document.querySelector('.main').style.display    = '';
-      document.dispatchEvent(new CustomEvent('stockSelect', {
-        detail: { code, matchedConds, matchedCondIds: result?.matchedCondIds ?? [], strategyId: _currentStrategyId, strategyName: _currentStrategyName, fromScreener: true }
-      }));
+      // 點擊 → 開個股速覽 modal；ctx 透傳給 modal 的「進入個股頁面」（stockSelect detail）
+      openStockPreview(code, {
+        matchedConds,
+        matchedCondIds: result?.matchedCondIds ?? [],
+        strategyId: _currentStrategyId,
+        strategyName: _currentStrategyName,
+        fromScreener: true,
+      });
     });
   });
 
@@ -468,7 +604,62 @@ function _renderResults(rows) {
     });
   });
 
-  _enqueueScSparklines(el, sorted);
+  _enqueueScSparklines(el, pageRows);
+}
+
+// ─── 妖股標籤 ─────────────────────────────────────────────
+async function _loadYaoguMap() {
+  _yaoguMap = new Map();
+  let allCache = [];
+  try { allCache = await getAllSignalsCache(); } catch (_) {}
+  allCache.forEach(row => {
+    const sigs = row.signals ?? [];
+    const x1 = sigs.some(sg => sg.id === 'X1');
+    const x2 = sigs.some(sg => sg.id === 'X2');
+    const x5 = sigs.some(sg => sg.id === 'X5');
+    const x6 = sigs.some(sg => sg.id === 'X6');
+    if (x1 || x2 || x5 || x6) {
+      // 排序權重：X2 > X1 > X6 > X5
+      _yaoguMap.set(row.code, { x1, x2, x5, x6, rank: x2 ? 4 : x1 ? 3 : x6 ? 2 : 1 });
+    }
+  });
+}
+
+function _ygPills(code) {
+  const yg = _yaoguMap.get(code);
+  if (!yg) return '';
+  return ['X2','X1','X6','X5']
+    .filter(id => yg[id.toLowerCase()])
+    .map(id => `<span class="th-yaogu-pill th-yaogu-pill--${id.toLowerCase()}">${id}</span>`)
+    .join('');
+}
+
+// ─── 結果分頁列 ───────────────────────────────────────────
+function _renderPager(totalPages, totalRows) {
+  // 頁碼窗口：1 … (cur-1 cur cur+1) … last
+  const cur = _page;
+  const pages = new Set([1, totalPages, cur - 1, cur, cur + 1]);
+  const list = [...pages].filter(p => p >= 1 && p <= totalPages).sort((a, b) => a - b);
+
+  let btns = '';
+  let prev = 0;
+  for (const p of list) {
+    if (p - prev > 1) btns += `<span style="color:var(--hint);padding:0 2px">…</span>`;
+    const active = p === cur;
+    btns += `<button class="sc-pager-btn" data-page="${p}" style="
+      min-width:28px;padding:3px 7px;font-size:12px;border-radius:4px;cursor:pointer;
+      border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
+      background:${active ? 'rgba(59,130,246,.12)' : 'transparent'};
+      color:${active ? 'var(--accent)' : 'var(--muted)'};">${p}</button>`;
+    prev = p;
+  }
+  const prevBtn = `<button class="sc-pager-btn" data-page="${cur - 1}" ${cur <= 1 ? 'disabled' : ''} style="padding:3px 7px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:${cur <= 1 ? 'not-allowed' : 'pointer'};opacity:${cur <= 1 ? '.4' : '1'}">‹</button>`;
+  const nextBtn = `<button class="sc-pager-btn" data-page="${cur + 1}" ${cur >= totalPages ? 'disabled' : ''} style="padding:3px 7px;font-size:12px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:${cur >= totalPages ? 'not-allowed' : 'pointer'};opacity:${cur >= totalPages ? '.4' : '1'}">›</button>`;
+
+  return `<div class="sc-pager" style="display:flex;align-items:center;justify-content:center;gap:4px;padding:10px 0">
+    ${prevBtn}${btns}${nextBtn}
+    <span style="font-size:11px;color:var(--hint);margin-left:8px">共 ${totalRows} 檔</span>
+  </div>`;
 }
 
 function _renderResultRow(r) {
@@ -507,6 +698,7 @@ function _renderResultRow(r) {
       <td class="sc-tbl-td sc-tbl-num"><span class="sc-tbl-chg ${chgCls}">${chgStr}</span></td>
       <td class="sc-tbl-td sc-tbl-num">${fmtVol(r.volume)}</td>
       <td class="sc-tbl-td">${renderHealthBadge(healthShort, healthLong)}</td>
+      <td class="sc-tbl-td">${_ygPills(r.code)}</td>
       <td class="sc-tbl-td"><canvas class="sc-sparkline" data-code="${r.code}" width="80" height="32"></canvas></td>
       <td class="sc-tbl-td sc-tbl-tags">${tags}${tags && triggerChip ? '<span style="display:inline-block;width:6px"></span>' : ''}${triggerChip}</td>
       <td class="sc-tbl-td">
@@ -768,6 +960,7 @@ function _loadResultEntry(id, all) {
   if (!entry) return;
 
   _results = entry.results ?? [];
+  _loadYaoguMap().then(() => _renderResults(_results));  // 妖股快取載完重繪補標籤
   _currentStrategyName = entry.strategy ?? null;
   _currentStrategyId   = entry.strategyId ?? null;
   _renderResults(_results);

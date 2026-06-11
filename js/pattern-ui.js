@@ -13,6 +13,7 @@ import { runBacktest, calcReturnDistribution } from './backtest.js';
 import { AppState } from './state.js';
 import { normalizeSeries } from './pattern.js';
 import { getChineseName, fetchFundamentalsBatch } from './api.js';
+import { openStockPreview } from './stock-preview.js';
 import { addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { initPatternImageUI } from './pattern-image-ui.js';
 import { getAllSignalsCache } from './db.js';
@@ -438,10 +439,12 @@ function _renderAllResults() {
     }
 
     row.addEventListener('click', () => {
-      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code: item.code } }));
-      document.dispatchEvent(new CustomEvent('patternHighlight', {
-        detail: { code: item.code, startIdx: item.startIdx, endIdx: item.endIdx }
-      }));
+      // 點列 → 個股速覽 modal；進入個股頁後才派發 patternHighlight（高亮比對區間）
+      openStockPreview(item.code, {
+        _afterEnter: () => document.dispatchEvent(new CustomEvent('patternHighlight', {
+          detail: { code: item.code, startIdx: item.startIdx, endIdx: item.endIdx }
+        })),
+      });
     });
   }
 

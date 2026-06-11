@@ -7,7 +7,7 @@
  * 對外：bindDiscoveredRun()  ← strategy-lab.js lazy bind 呼叫
  */
 
-import { getChineseName } from './api.js';
+import { getChineseName, fetchHistoryCached } from './api.js';
 import { openLabWithCode } from './strategy-lab.js';
 import { getKlineCache, loadHealthCacheBatch, dbGet, dbGetAll, dbPut, dbDelete } from './db.js';
 import { fsGetShared, fsSetShared } from './firebase.js';
@@ -104,6 +104,8 @@ function _render(panel, data) {
       <td class="ld-muted">${q.foundAt ?? ''}</td>
       <td><button class="ld-find-btn" data-idx="${idx}">找個股</button>
           <button class="ld-find-btn ld-bt-btn" data-idx="${idx}" title="帶入組合回測跑 2 年全市場驗證">🧪 2Y</button>
+          <button class="ld-find-btn ld-sc-btn" data-idx="${idx}" title="套用到個篩自訂條件">🔍 個篩</button>
+          <button class="ld-find-btn ld-cc-btn" data-idx="${idx}" title="複製條件細節">📋</button>
           <button class="ld-find-btn ld-arc-btn" data-idx="${idx}" title="晉升名人堂：需先完成 1Y/2Y 實測，晉升時填驗證摘要">🏆</button></td>
     </tr>
     <tr class="ld-match-row" id="ldMatch${idx}" style="display:none"><td colspan="10" class="ld-match-cell"></td></tr>`;
@@ -126,8 +128,14 @@ function _render(panel, data) {
     <div class="ld-note">${data.note ?? ''}<br>
       ⚠ 樣本窗僅約半年（120 根），通過驗證 ≠ 長期有效；正式採用前須經 MC 出場回測驗證。</div>`;
 
-  panel.querySelectorAll('.ld-find-btn:not(.ld-bt-btn)').forEach(btn => {
+  panel.querySelectorAll('.ld-find-btn:not(.ld-bt-btn):not(.ld-arc-btn):not(.ld-sc-btn):not(.ld-cc-btn)').forEach(btn => {
     btn.addEventListener('click', () => _findMatches(data.top[+btn.dataset.idx], +btn.dataset.idx));
+  });
+  panel.querySelectorAll('.ld-sc-btn').forEach(btn => {
+    btn.addEventListener('click', () => _applyToScreener(data.top[+btn.dataset.idx]));
+  });
+  panel.querySelectorAll('.ld-cc-btn').forEach(btn => {
+    btn.addEventListener('click', () => _copyCondDetail(data.top[+btn.dataset.idx], btn));
   });
   panel.querySelectorAll('.ld-bt-btn').forEach(btn => {
     btn.addEventListener('click', () => _sendToBacktest(data.top[+btn.dataset.idx]));
@@ -140,6 +148,62 @@ function _render(panel, data) {
 }
 
 // ── 名人堂（晉升制：候選 → 1Y/2Y 實測 → 證實可靠 → 永久留存 IDB + Firebase）──
+/*
+ * TWII 同期報酬基準：優先 2y K 線，退 1y。
+ * ⚠️ 不做外插（把多頭年外插到無資料區間會灌爆基準）：
+ *   - 覆蓋 >=95%：直接同窗總報酬比較
+ *   - 覆蓋 60%~95%：雙邊年化日率比較（excess = (策略日率 − TWII日率) × 240，標 annualized）
+ *   - 覆蓋 <60%：不核算（回 null，鑑定顯示基準不足）
+ */
+async function _twiiBench(days) {
+  const tryRead = async () => {
+    for (const p of ['2y', '1y']) {
+      try {
+        const c = await getKlineCache('^TWII', p);
+        const cs = c?.candles ?? c;
+        if (Array.isArray(cs) && cs.length > 30) {
+          const n = Math.min(days, cs.length - 1);
+          if (n < days * 0.6) continue; // 覆蓋太少，試下一個 period
+          const a = cs[cs.length - 1 - n].close, b = cs[cs.length - 1].close;
+          const raw = +((b / a - 1) * 100).toFixed(1);
+          return { ret: raw, covered: n, days, partial: n < days * 0.95, period: p };
+        }
+      } catch {}
+    }
+    return null;
+  };
+  let r = await tryRead();
+  if (r) return r;
+  // IDB 不足（R2 bundle 只寫 1y）→ 單檔抓 ^TWII 2y 進快取後重讀（自救一次）
+  try {
+    await fetchHistoryCached('^TWII', '2y', { allowStale: true });
+    r = await tryRead();
+  } catch (e) { console.warn('[discovered] ^TWII 2y 補抓失敗:', e.message); }
+  return r;
+}
+
+/* 超額核算：完整覆蓋比總報酬；部分覆蓋比年化日率（×240 年化呈現） */
+function _calcExcess(totalRet, bench) {
+  if (totalRet == null || !bench) return null;
+  if (!bench.partial) return { v: +(totalRet - bench.ret).toFixed(1), mode: 'total' };
+  const stratDaily = totalRet / bench.days;
+  const twiiDaily  = bench.ret / bench.covered;
+  return { v: +((stratDaily - twiiDaily) * 240).toFixed(1), mode: 'annual' };
+}
+
+/* 舊名人堂項目只有 validation 字串 → regex 解析回結構（新項目存 evidence 結構） */
+function _parseEvidence(item) {
+  if (item.evidence) return item.evidence;
+  const v = item.validation ?? '';
+  const m1 = v.match(/1Y掃描\(([^)]+)\)：勝率([\-\d.]+)%／均報([\-\d.]+)%／(\d+)\s*筆/);
+  const m2 = v.match(/2Y回測\(([^)]+)\)：(\d+)日／(\d+)筆／總報酬([\-\d.]+)%/);
+  return {
+    scan1y: m1 ? { at: m1[1], wr: +m1[2], avg: +m1[3], n: +m1[4] } : null,
+    bt2y:   m2 ? { at: m2[1], days: +m2[2], trades: +m2[3], totalRet: +m2[4] } : null,
+    excess2y: null,
+  };
+}
+
 async function _loadHall() {
   let items = [];
   try { items = await dbGetAll('strategy_hall'); } catch {}
@@ -174,7 +238,17 @@ async function _promoteToHall(q, btn) {
   const sv = await dbGet('config', 'sv:' + key).catch(() => null);
   const hasScan = !!sv?.scan1y;
   const hasBt   = !!sv?.bt2y;
-  const canPromote = hasScan && hasBt;
+
+  // ④ 品質門檻：2Y 超額 = 組合總報酬 − 同期 TWII，> 0 才放行
+  // （假日接刀手教訓：三步「跑過」≠「過了」，2Y 絕對報酬在世紀行情下可能仍輸大盤）
+  let bench = null, excess2y = null, excessMode = 'total';
+  if (hasBt && sv.bt2y.totalRet != null) {
+    bench = await _twiiBench(sv.bt2y.days || 480);
+    const ex = _calcExcess(sv.bt2y.totalRet, bench);
+    if (ex) { excess2y = ex.v; excessMode = ex.mode; }
+  }
+  const hasEdge = excess2y != null && excess2y > 0;
+  const canPromote = hasScan && hasBt && hasEdge;
 
   const stepHtml = (ok, label, detail) => `
     <div class="hc-row ${ok ? 'hc-pass' : 'hc-fail'}" style="grid-template-columns:20px 1fr">
@@ -204,6 +278,13 @@ async function _promoteToHall(q, btn) {
             hasScan ? `${sv.scan1y.at}・勝率 ${sv.scan1y.wr}%・均報 ${sv.scan1y.avg}%・${sv.scan1y.n} 筆` : '尚未執行 — 到真實驗室按「全市場掃描」')}
           ${stepHtml(hasBt, '③ 2Y 組合回測',
             hasBt ? `${sv.bt2y.at}・${sv.bt2y.days} 交易日・${sv.bt2y.trades} 筆・總報酬 ${sv.bt2y.totalRet != null ? sv.bt2y.totalRet + '%' : '—'}` : '尚未執行 — 候選列按「🧪 2Y」跑組合回測')}
+          ${stepHtml(hasEdge, '④ 品質門檻：2Y 超額 vs TWII（同期）',
+            excess2y != null
+              ? (excessMode === 'total'
+                  ? `組合 ${sv.bt2y.totalRet}% − TWII 同窗 ${bench.ret}% = <b style="color:${hasEdge ? 'var(--up,#ef5350)' : 'var(--down,#26a69a)'}">${excess2y > 0 ? '+' : ''}${excess2y}%</b>`
+                  : `基準僅覆蓋 ${bench.covered}/${bench.days} 日 → 改比年化日率：策略 ${(sv.bt2y.totalRet / bench.days * 240).toFixed(1)}%/年 − TWII ${(bench.ret / bench.covered * 240).toFixed(1)}%/年 = <b style="color:${hasEdge ? 'var(--up,#ef5350)' : 'var(--down,#26a69a)'}">${excess2y > 0 ? '+' : ''}${excess2y}%/年</b>`)
+                + (hasEdge ? '' : ' — 輸大盤，不予晉升')
+              : (hasBt ? 'TWII 基準覆蓋 <60%（IDB 缺 ^TWII 長 K），不核算、不放行' : '需先完成 ③'))}
         </div>
         <div style="margin-top:12px">
           <label style="font-size:11px;color:var(--muted)">鑑定備註（選填，例：MC 已過 / 命名「假日接刀手」）</label>
@@ -227,11 +308,13 @@ async function _promoteToHall(q, btn) {
     const note = bg.querySelector('#ldPromoNote')?.value?.trim() ?? '';
     const validation =
       `1Y掃描(${sv.scan1y.at})：勝率${sv.scan1y.wr}%／均報${sv.scan1y.avg}%／${sv.scan1y.n}筆；` +
-      `2Y回測(${sv.bt2y.at})：${sv.bt2y.days}日／${sv.bt2y.trades}筆／總報酬${sv.bt2y.totalRet ?? '—'}%` +
+      `2Y回測(${sv.bt2y.at})：${sv.bt2y.days}日／${sv.bt2y.trades}筆／總報酬${sv.bt2y.totalRet ?? '—'}%；` +
+      `2Y超額 vs TWII：${excess2y > 0 ? '+' : ''}${excess2y}%` +
       (note ? `；備註：${note}` : '');
 
     items.unshift({
       key, conds: q.conds, hold: q.hold,
+      evidence: { scan1y: sv.scan1y, bt2y: sv.bt2y, excess2y, twii: bench },
       discovered: {
         foundAt: q.foundAt, score: q.score,
         trainAvgExcess: q.trainAvgExcess, trainWinRate: q.trainWinRate, trainN: q.trainN,
@@ -268,6 +351,8 @@ async function _renderHall(panel) {
       <td class="ld-muted">發現 ${d.foundAt ?? '—'}・晉升 ${q.promotedAt ?? '—'}</td>
       <td><button class="ld-find-btn ld-hall-find" data-i="${i}">找個股</button>
           <button class="ld-find-btn ld-hall-bt" data-i="${i}">🧪 2Y</button>
+          <button class="ld-find-btn ld-hall-sc" data-i="${i}" title="套用到個篩自訂條件">🔍 個篩</button>
+          <button class="ld-find-btn ld-hall-cc" data-i="${i}" title="複製條件細節">📋 條件</button>
           <button class="ld-find-btn ld-hall-copy" data-i="${i}" title="複製完整導入資訊給 AI 協助轉正">📋 導入</button>
           <button class="ld-find-btn ld-hall-del" data-i="${i}" title="移出名人堂">🗑</button></td>
     </tr>
@@ -275,8 +360,13 @@ async function _renderHall(panel) {
   }).join('');
 
   box.innerHTML = `
-    <div class="ld-header" style="padding-top:16px">🏆 名人堂（${items.length}）— 已通過 1Y/2Y 驗證，IDB + Firebase 永久留存</div>
+    <div class="ld-header" style="padding-top:16px;display:flex;align-items:center;gap:10px">
+      <span>🏆 名人堂（${items.length}）— 已通過 1Y/2Y 驗證，IDB + Firebase 永久留存</span>
+      <button class="ld-find-btn" id="ldHallCompare" title="名人堂策略並列比較 + 嚴格審核報告">⚖ 比較</button>
+    </div>
     <table class="ld-table"><tbody>${rows}</tbody></table>`;
+
+  box.querySelector('#ldHallCompare')?.addEventListener('click', () => _compareHall(items));
 
   box.querySelectorAll('.ld-hall-find').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -298,6 +388,12 @@ async function _renderHall(panel) {
   box.querySelectorAll('.ld-hall-bt').forEach(btn => {
     btn.addEventListener('click', () => _sendToBacktest(items[+btn.dataset.i]));
   });
+  box.querySelectorAll('.ld-hall-sc').forEach(btn => {
+    btn.addEventListener('click', () => _applyToScreener(items[+btn.dataset.i]));
+  });
+  box.querySelectorAll('.ld-hall-cc').forEach(btn => {
+    btn.addEventListener('click', () => _copyCondDetail(items[+btn.dataset.i], btn));
+  });
   box.querySelectorAll('.ld-hall-copy').forEach(btn => {
     btn.addEventListener('click', () => _copyAdoptionInfo(items[+btn.dataset.i], btn));
   });
@@ -310,6 +406,132 @@ async function _renderHall(panel) {
       await _saveHall(rest);
       _renderHall(panel);
     });
+  });
+}
+
+// ── 套用到個篩自訂條件 ──────────────────────────────────────────────────
+// 發送端：寫 window.__screenerPresetConds + dispatch event + 切到選股篩選 hub
+// 接收端：screener-ui.js 監聽 'screener:applyConds'，勾選對應 condition 並開始篩選
+function _applyToScreener(q) {
+  const detail = {
+    conds: q.conds.slice(),
+    name: q.conds.map(id => COND_LABELS[id] ?? id).join('+') + `（${q.hold}日）`,
+    source: 'discovered',
+  };
+  window.__screenerPresetConds = detail;
+  document.dispatchEvent(new CustomEvent('screener:applyConds', { detail }));
+  document.querySelector('[data-tab="hub"]')?.click();
+}
+
+// 複製條件細節（condId + 中文，可貼給 AI 或手動設定個篩）
+function _copyCondDetail(q, btn) {
+  const zh = q.conds.map(id => COND_LABELS[id] ?? id);
+  const text = [
+    `策略條件：${zh.join(' + ')}（持有 ${q.hold} 日）`,
+    '',
+    'condition ids（語意同 heatmap_calc.gs _calcConditions 固定門檻）：',
+    ...q.conds.map((id, i) => `- ${id}　${zh[i]}`),
+  ].join('\n');
+  navigator.clipboard?.writeText(text).then(() => {
+    if (btn) { const t = btn.textContent; btn.textContent = '✓'; setTimeout(() => { btn.textContent = t; }, 1200); }
+  }).catch(() => alert('複製失敗'));
+}
+
+// ── 名人堂並列比較 + 嚴格審核報告 ───────────────────────────────────────
+async function _compareHall(items) {
+  // 補算各項目的 2Y 超額（舊項目 evidence 缺 excess2y 時現算）
+  const rows = [];
+  let flags_annual = false;
+  for (const it of items) {
+    const ev = _parseEvidence(it);
+    let excess = ev.excess2y ?? null;
+    let bench = ev.twii ?? null;
+    let exMode = 'total';
+    if (excess == null && ev.bt2y?.totalRet != null) {
+      bench = await _twiiBench(ev.bt2y.days || 480);
+      const ex = _calcExcess(ev.bt2y.totalRet, bench);
+      if (ex) { excess = ex.v; exMode = ex.mode; }
+    }
+    if (exMode === 'annual') flags_annual = true;
+    // 自動評語旗標
+    const flags = [];
+    if (excess == null) flags.push('❓無超額基準');
+    else if (excess <= 0) flags.push('❌輸大盤');
+    else if (excess < 5) flags.push('⚠超額薄');
+    if (ev.scan1y && ev.scan1y.n < 100) flags.push('⚠1Y樣本<100');
+    if (ev.bt2y && ev.bt2y.trades < 50) flags.push('⚠2Y筆數<50');
+    if (ev.scan1y && ev.scan1y.wr < 55) flags.push('⚠勝率<55');
+    rows.push({ it, ev, excess, bench, flags });
+  }
+
+  const zh = it => it.conds.map(id => COND_LABELS[id] ?? id).join('+');
+  const f = v => v == null ? '—' : (v > 0 ? '+' : '') + v + '%';
+  const trHtml = rows.map(r => `
+    <tr class="ld-row">
+      <td style="white-space:normal;max-width:220px">${zh(r.it)}</td>
+      <td>${r.it.hold}日</td>
+      <td>${r.ev.scan1y ? `${r.ev.scan1y.wr}%／${f(r.ev.scan1y.avg)}／${r.ev.scan1y.n}筆` : '—'}</td>
+      <td>${r.ev.bt2y ? `${f(r.ev.bt2y.totalRet)}／${r.ev.bt2y.trades}筆` : '—'}</td>
+      <td style="font-weight:700;color:${r.excess > 0 ? 'var(--up,#ef5350)' : 'var(--down,#26a69a)'}">${f(r.excess)}</td>
+      <td class="ld-muted" style="white-space:normal">${r.flags.join(' ') || '✅'}</td>
+    </tr>`).join('');
+
+  const bg = document.createElement('div');
+  bg.className = 'lab-modal-bg';
+  bg.style.position = 'fixed';
+  bg.style.zIndex = '500';
+  bg.innerHTML = `
+    <div class="lab-modal" style="max-width:860px">
+      <div class="lab-modal-header">
+        <div class="lab-modal-title">⚖ 名人堂策略比較（${items.length}）</div>
+        <button class="lab-modal-close" id="ldCmpClose">✕</button>
+      </div>
+      <div class="lab-modal-body">
+        <table class="ld-table" style="width:100%">
+          <thead><tr class="ld-row" style="color:var(--muted);font-size:11px">
+            <th style="text-align:left">條件組合</th><th>持有</th>
+            <th>1Y掃描 勝率／均報／筆</th><th>2Y回測 總報酬／筆</th>
+            <th>2Y超額vsTWII</th><th>評語</th>
+          </tr></thead>
+          <tbody>${trHtml}</tbody>
+        </table>
+        <div class="ld-muted" style="margin-top:8px;font-size:11px">
+          超額 = 2Y 組合總報酬 − 同窗 TWII${flags_annual ? '（部分項目基準覆蓋不足，改比年化日率，單位 %/年）' : ''}。1Y 掃描窗與發現窗重疊，數字含 in-sample 成分，超額欄才是落地依據。
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button class="lab-run-btn" id="ldCmpCopy">📋 複製結果（嚴格審核用）</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.querySelector('#ldCmpClose')?.addEventListener('click', close);
+  bg.addEventListener('click', e => { if (e.target === bg) close(); });
+
+  bg.querySelector('#ldCmpCopy')?.addEventListener('click', () => {
+    const md = [
+      '# dengdeng 名人堂策略 嚴格審核請求',
+      '',
+      `產出時間：${new Date().toISOString().slice(0, 16).replace('T', ' ')}・超額基準：同期 TWII（不足時線性外插）`,
+      '',
+      '| # | 條件組合 | 持有 | 1Y勝率 | 1Y均報 | 1Y筆數 | 2Y總報酬 | 2Y筆數 | 2Y超額vsTWII | 旗標 |',
+      '|---|---|---|---|---|---|---|---|---|---|',
+      ...rows.map((r, i) =>
+        `| ${i + 1} | ${zh(r.it)} | ${r.it.hold}日 | ${r.ev.scan1y?.wr ?? '—'}% | ${f(r.ev.scan1y?.avg)} | ${r.ev.scan1y?.n ?? '—'} | ${f(r.ev.bt2y?.totalRet)} | ${r.ev.bt2y?.trades ?? '—'} | ${f(r.excess)} | ${r.flags.join(' ') || '✅'} |`),
+      '',
+      '備註：' + rows.map((r, i) => `#${i + 1} 發現${r.it.discovered?.foundAt ?? '—'}・晉升${r.it.promotedAt ?? '—'}${r.it.validation?.includes('備註') ? '・' + r.it.validation.split('備註：')[1] : ''}`).join('；'),
+      '',
+      '## 審核要求（請逐項嚴格執行）',
+      '1. 逐一講解每個組合的條件邏輯：這是什麼市場情境的故事？條件之間是互補還是冗餘？',
+      '2. 過擬合徵兆：發現窗（120根）/ 1Y 掃描窗重疊度、驗證筆數是否撐得起結論、同族組合（同條件不同持有期）是否只是同一訊號重複計數',
+      '3. 超額判定：2Y 超額 ≤0 的直接判死；0~5% 的標記「邊緣」並說明風險；基準為外插估算的須提醒不確定性',
+      '4. 樣本與勝率：筆數 <50 或勝率 <55% 的，評估是少樣本運氣還是低頻高賠率結構',
+      '5. 結論：每個組合給「轉正 / 觀察 / 淘汰」三選一 + 一句理由；若有同族組合，指出該保留哪個持有期',
+    ].join('\n');
+    navigator.clipboard?.writeText(md).then(() => {
+      const b = bg.querySelector('#ldCmpCopy');
+      if (b) { b.textContent = '✓ 已複製'; setTimeout(() => { b.textContent = '📋 複製結果（嚴格審核用）'; }, 1500); }
+    }).catch(() => alert('複製失敗'));
   });
 }
 

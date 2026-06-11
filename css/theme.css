@@ -201,10 +201,11 @@
   letter-spacing: .03em;
   flex-shrink: 0;
 }
-.theme-stock-name {
+/* 加 .theme-stock-card scope 提高特異度：防 theme-additions.css 同名通用規則（flex:1）覆蓋 */
+.theme-stock-card .theme-stock-name {
   font-size: 12px;
   color: var(--muted);
-  flex-basis: 100%;      /* 獨佔整行，永遠不截斷 */
+  flex: 0 0 100%;        /* 獨佔整行，永遠不截斷 */
   order: 1;              /* 排在代號/價格之後 */
   overflow: hidden;
   text-overflow: ellipsis;

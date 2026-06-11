@@ -915,7 +915,14 @@ export async function syncCloudToLocal() {
           const local = localMap.get(key);
           // 雲端較新（或本地沒有）才覆蓋
           if (!local || (row.updatedAt ?? 0) >= (local.updatedAt ?? 0)) {
-            await dbPut(idb, row);
+            // ⚠️ 踩雷備忘（永久，2026-06-11）：
+            //   screenerResults 雲端只存 metadata（saveScreenerResult 去掉 results 避 1MB 限制），
+            //   且 updatedAt 與本地完整記錄「相同」→ >= 判定成立 → metadata 覆蓋本地，
+            //   results 蒸發變 0 檔。雲端 row 缺 results 而本地有 → 必須保留本地 results。
+            const put = (idb === 'screenerResults' && local?.results?.length && !Array.isArray(row.results))
+              ? { ...row, results: local.results }
+              : row;
+            await dbPut(idb, put);
             merged++;
           }
         }

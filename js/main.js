@@ -71,6 +71,7 @@ import { initStrategyLab } from './strategy-lab.js';
 import { initMarketMini } from './market-mini.js';
 import { initMarketPulse } from './market-pulse.js';
 import { initHotgroup }  from './market.js';
+import { initHotgroupTabs } from './hotgroup-tabs.js';
 import { initTheme, reloadThemes } from './theme.js';
 import { renderThemePanel } from './theme-ui.js';
 
@@ -91,6 +92,7 @@ import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache, scanOn
 import { initAuthUI } from './auth-ui.js';
 import { applyTierGate, loadFeatureGates } from './auth-gate.js';
 import { syncTokenFromCloud } from './config.js';
+import { initStockPreview } from './stock-preview.js';
 
 // ─────────────────────────────────────────────
 // 載入完整股票資料
@@ -411,7 +413,7 @@ function initMainTabs() {
         activePanel.classList.add('active');
       }
       // 強勢族群 Tab 懶載入（等 panel display 後再 init，避免 canvas 尺寸 0）
-      if (tab === 'hotgroup') requestAnimationFrame(() => initHotgroup());
+      if (tab === 'hotgroup') requestAnimationFrame(() => { initHotgroup(); initHotgroupTabs(); });
       // AI 圓桌 Tab：動態渲染（VVVIP 限定，personas-panel.js）
       if (tab === 'personas') requestAnimationFrame(() => initPersonasPanel());
       // 題材追蹤 Tab 懶載入：每次切入都重讀，避免 IndexedDB/雲端同步時序問題
@@ -1579,6 +1581,7 @@ function _initFullscreen() {
   initSettingsDrawer();
   initStockTabs();
   initMainTabs();
+  initStockPreview();   // 個股速覽 modal（篩選結果點擊入口）
 
   // 觀點 Tab 所需的 window 橋接
   window.__STRATEGIES        = STRATEGIES;

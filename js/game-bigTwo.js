@@ -1,17 +1,18 @@
 /**
- * game-bigTwo.js — 燈燈大老二
+ * game-bigTwo.js — 燈燈大老二（基礎完整版）
  * 需在 splash-game.js 之前載入
  *
- * 規則：
- *   - 4人桌（1玩家 + 3AI）
- *   - 梅花3先出
- *   - 牌型：單張/對子/三條/順子/同花/葫蘆/鐵支(四條+1)/同花順
- *   - 鐵支可壓除同花順外所有牌
- *   - 葫蘆只能壓葫蘆
- *   - 同花順最大，23456花色最大，A2345最小
- *   - 一圈全Pass → 出牌者可任意出新牌
- *   - 結算：剩餘手牌計算罰金，贏家按60/30/10%分配
- *   - IndexedDB 存取籌碼
+ * 規則（2026/06 定版）：
+ *   - 4人桌（1玩家 + 3AI），梅花3持有者先出且首手必含梅花3
+ *   - 牌型：單張 / 對子 / 三條 / 五張（順子、葫蘆、鐵支、同花順）
+ *     ※ 無「同花」牌型（同花是13支玩法）
+ *   - 同花順 > 鐵支：兩者皆可壓任何張數牌型；同花順壓一切、鐵支壓除同花順外一切
+ *   - 其餘牌型：同張數、同型互壓（順子壓順子、葫蘆壓葫蘆）
+ *   - 順子：A2345 最小、23456 最大；JQKA2 不合法（2 僅能出現在前述兩種）
+ *   - 一圈 Pass（所有在場其他人皆 Pass）→ 最後出牌者自由出新牌；
+ *     若其已出完，由其下一位在場玩家自由出牌
+ *   - 結算：只有第 1 名收錢，其餘三家依剩牌罰金付給頭家
+ *   - IndexedDB 存玩家籌碼
  */
 (function () {
   'use strict';
@@ -25,8 +26,9 @@
   const SUIT_VAL = {}; SUITS.forEach((s,i)=>SUIT_VAL[s]=i);
 
   const PLAYERS = ['玩家','小明AI','阿財AI','老K AI'];
-  const AI_NAMES = [1,2,3];
-  const PAYOUT = [0.6,0.3,0.1]; // 第1,2,3名分配比例
+  const AVATARS = ['😺','🤖','🦊','🐯'];
+  const TYPE_ZH = {single:'單張',pair:'對子',triple:'三條',straight:'順子',
+    fullHouse:'葫蘆',fourOfAKind:'鐵支',straightFlush:'同花順'};
 
   /* ══════════════════════════════════════
      二、牌組工具
@@ -41,13 +43,10 @@
     return arr;
   }
   function cardId(c){return c.r+c.s;}
-  function cardScore(c){
-    let base=5;
-    if(c.r==='2')base*=2;
-    if(c.r==='A')base*=2;
-    if(['J','Q','K'].includes(c.r))base*=2;
-    return base;
-  }
+  function sortByRank(h){h.sort((a,b)=>a.v!==b.v?a.v-b.v:a.sv-b.sv);}
+  function sortBySuit(h){h.sort((a,b)=>a.sv!==b.sv?a.sv-b.sv:a.v-b.v);}
+
+  /* 剩牌罰金：每張5元；≥10張總額×2；2/A/JQK 每張再×2 */
   function handPenalty(hand){
     let base=hand.length*5;
     if(hand.length>=10)base*=2;
@@ -78,168 +77,194 @@
       return null;
     }
     if(n===5){
-      // 同花？
       const flush=sorted.every(c=>c.s===sorted[0].s);
-      // 順子？（含 A2345 和一般順）
       const straight=isStraight(sorted);
       if(flush&&straight){
-        const sk=straightKey(sorted);
-        return{type:'straightFlush',cards:sorted,key:sk*4+SUIT_VAL[sorted[0].s]};
+        // 同花順：以順子大小為主，花色為輔（取頂牌花色）
+        return{type:'straightFlush',cards:sorted,key:straightKey(sorted)*4+SUIT_VAL[sorted[0].s]};
       }
-      if(straight){
-        return{type:'straight',cards:sorted,key:straightKey(sorted)*4+sorted[4].sv};
-      }
-      if(flush){
-        return{type:'flush',cards:sorted,key:sorted[4].v*100+sorted[4].sv};
-      }
-      // 鐵支
-      const fourKind=findFour(sorted);
-      if(fourKind!==null){
-        const kicker=sorted.find(c=>c.v!==fourKind);
-        return{type:'fourOfAKind',cards:sorted,key:fourKind*4+sorted[sorted.length-1].sv,fourVal:fourKind};
-      }
-      // 葫蘆
+      const four=findFour(sorted);
+      if(four!==null)
+        return{type:'fourOfAKind',cards:sorted,key:four};
       const full=findFullHouse(sorted);
-      if(full!==null){
-        return{type:'fullHouse',cards:sorted,key:full*100};
-      }
+      if(full!==null)
+        return{type:'fullHouse',cards:sorted,key:full};
+      if(straight)
+        return{type:'straight',cards:sorted,key:straightKey(sorted)*4+sorted[4].sv};
+      // 純同花（非順）不是合法牌型
       return null;
     }
     return null;
   }
 
   /*
-   * 順子大小（key 值）：
-   *   A2345 = -1  (最小)
-   *   34567 = 4   (3的val=0, 最大牌6的val=3)
-   *   ...
-   *   10JQKA = 11 (A的val=11)
-   *   23456  = 14 (最大順，特殊key)
-   *
-   * RANKS index: 3=0,4=1,5=2,6=3,7=4,8=5,9=6,10=7,J=8,Q=9,K=10,A=11,2=12
-   * 所以 sorted by val:
-   *   一般順(34567~10JQKA): vals連續
-   *   A2345: 3,4,5,A,2 → vals=[0,1,2,11,12]  → 特殊判斷
-   *   23456: 3,4,5,6,2 → vals=[0,1,2,3,12]   → 特殊判斷
+   * 順子合法性：
+   *   一般連續順（34567~10JQKA）：vals 連續且不含2（vals[4]<=11）
+   *   A2345：vals=[0,1,2,11,12]（最小，key=-1）
+   *   23456：vals=[0,1,2,3,12]（最大，key=14）
+   *   JQKA2（vals=[8,9,10,11,12] 連續）→ 不合法
    */
   function isStraight(sorted){
     const vals=sorted.map(c=>c.v);
-    const ranks=sorted.map(c=>c.r);
-    // 一般連續順
     const normal=vals.every((v,i)=>i===0||v===vals[i-1]+1);
-    if(normal)return true;
-    // 23456: vals=[0,1,2,3,12], ranks含'2'含'6'不含'A'
-    if(vals[4]===12&&vals[3]===3&&vals[2]===2&&vals[1]===1&&vals[0]===0&&ranks.includes('2')&&ranks.includes('6'))return true;
-    // A2345: vals=[0,1,2,11,12], ranks含'A'含'2'含'3'
-    if(vals[4]===12&&vals[3]===11&&vals[2]===2&&vals[1]===1&&vals[0]===0&&ranks.includes('A')&&ranks.includes('2')&&ranks.includes('3'))return true;
+    if(normal)return vals[4]<=11; // 排除 JQKA2
+    if(vals[0]===0&&vals[1]===1&&vals[2]===2&&vals[3]===3&&vals[4]===12)return true; // 23456
+    if(vals[0]===0&&vals[1]===1&&vals[2]===2&&vals[3]===11&&vals[4]===12)return true; // A2345
     return false;
   }
-
   function straightKey(sorted){
     const vals=sorted.map(c=>c.v);
-    const ranks=sorted.map(c=>c.r);
-    // 23456 最大
-    if(vals[4]===12&&ranks.includes('2')&&ranks.includes('6'))return 14;
-    // A2345 最小
-    if(vals[4]===12&&ranks.includes('A')&&ranks.includes('2')&&ranks.includes('3'))return -1;
-    // 一般順：以最大牌val為key（10JQKA→vals[4]=11, 34567→vals[4]=3）
-    return vals[4];
+    if(vals[4]===12&&vals[3]===3)return 14;  // 23456 最大
+    if(vals[4]===12&&vals[3]===11)return -1; // A2345 最小
+    return vals[4]; // 一般順：頂牌val
   }
 
   function findFour(sorted){
     const cnt={};
-    for(const c of sorted){cnt[c.v]=(cnt[c.v]||0)+1;}
-    for(const [v,c] of Object.entries(cnt)){if(c===4)return Number(v);}
+    for(const c of sorted)cnt[c.v]=(cnt[c.v]||0)+1;
+    for(const [v,c] of Object.entries(cnt))if(c===4)return Number(v);
     return null;
   }
   function findFullHouse(sorted){
     const cnt={};
-    for(const c of sorted){cnt[c.v]=(cnt[c.v]||0)+1;}
+    for(const c of sorted)cnt[c.v]=(cnt[c.v]||0)+1;
     const vals=Object.values(cnt);
-    if(vals.includes(3)&&vals.includes(2)){
+    if(vals.includes(3)&&vals.includes(2))
       return Number(Object.entries(cnt).find(([,c])=>c===3)[0]);
-    }
     return null;
   }
 
-  /* 比較兩個牌型大小，回傳 >0 表示 a > b */
-  const TYPE_ORDER={single:0,pair:1,triple:2,straight:3,flush:4,fullHouse:5,fourOfAKind:6,straightFlush:7};
-
+  /* 壓牌判定 */
   function canBeat(played, attempt){
-    if(!played)return true; // 任意出
+    if(!played)return true;   // 自由出牌
     if(!attempt)return false;
-    const pn=played.cards.length, an=attempt.cards.length;
-    // 張數不同（五張牌型之間互比，其他不可壓）
-    if(pn!==an){
-      if(pn===5&&an===5){}
-      else if(pn===1&&an===5&&attempt.type==='fourOfAKind'){}
-      else if(pn===2&&an===5&&attempt.type==='fourOfAKind'){}
-      else if(pn===3&&an===5&&attempt.type==='fourOfAKind'){}
-      else return false;
-    }
-    // 同張數：同牌型才能壓（除鐵支/同花順特例）
+    // 同花順壓一切
     if(attempt.type==='straightFlush'){
       if(played.type==='straightFlush')return attempt.key>played.key;
-      return true; // 同花順壓一切
+      return true;
     }
+    // 鐵支壓除同花順外一切
     if(attempt.type==='fourOfAKind'){
       if(played.type==='straightFlush')return false;
       if(played.type==='fourOfAKind')return attempt.key>played.key;
-      return true; // 鐵支壓除同花順外所有
+      return true;
     }
-    if(played.type==='fourOfAKind'||played.type==='straightFlush')return false;
+    // 桌面是炸彈，一般牌壓不了
+    if(played.type==='straightFlush'||played.type==='fourOfAKind')return false;
+    // 其餘：同張數、同型互壓
+    if(attempt.cards.length!==played.cards.length)return false;
     if(attempt.type!==played.type)return false;
-    // 葫蘆只能壓葫蘆
-    if(attempt.type==='fullHouse'&&played.type==='fullHouse')return attempt.key>played.key;
     return attempt.key>played.key;
   }
 
   /* ══════════════════════════════════════
-     四、AI 策略
+     四、合法組合列舉 + AI 策略
   ══════════════════════════════════════ */
-  function aiPlay(hand, played, mustHaveClub3, targetIdx, selfIdx){
-    // mustHaveClub3: 必須帶梅花3
-    // 找所有合法出牌組合（簡化：列舉1,2,3,5張組合）
+  function legalCombos(hand, played, mustHaveClub3){
     const combos=[];
-
     function addIfValid(cards){
       const cl=classify(cards);
       if(!cl)return;
       if(mustHaveClub3&&!cards.some(c=>c.r==='3'&&c.s==='♣'))return;
       if(canBeat(played,cl))combos.push({cards,cl});
     }
-
-    // 單張
-    for(const c of hand)addIfValid([c]);
-    // 對子
-    for(let i=0;i<hand.length;i++)for(let j=i+1;j<hand.length;j++)
+    const n=hand.length;
+    for(let i=0;i<n;i++)addIfValid([hand[i]]);
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)
       if(hand[i].v===hand[j].v)addIfValid([hand[i],hand[j]]);
-    // 三條
-    for(let i=0;i<hand.length;i++)for(let j=i+1;j<hand.length;j++)for(let k=j+1;k<hand.length;k++)
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)for(let k=j+1;k<n;k++)
       if(hand[i].v===hand[j].v&&hand[j].v===hand[k].v)addIfValid([hand[i],hand[j],hand[k]]);
-    // 五張組合
-    for(let i=0;i<hand.length-4;i++)
-      for(let j=i+1;j<hand.length-3;j++)
-        for(let k=j+1;k<hand.length-2;k++)
-          for(let l=k+1;l<hand.length-1;l++)
-            for(let m=l+1;m<hand.length;m++)
+    for(let i=0;i<n-4;i++)
+      for(let j=i+1;j<n-3;j++)
+        for(let k=j+1;k<n-2;k++)
+          for(let l=k+1;l<n-1;l++)
+            for(let m=l+1;m<n;m++)
               addIfValid([hand[i],hand[j],hand[k],hand[l],hand[m]]);
+    combos.sort((a,b)=>{
+      // 先比牌型成本（炸彈最後出），再比key
+      const cost=t=>t==='straightFlush'?2:t==='fourOfAKind'?1:0;
+      const ca=cost(a.cl.type),cb=cost(b.cl.type);
+      if(ca!==cb)return ca-cb;
+      return a.cl.key-b.cl.key;
+    });
+    return combos;
+  }
 
+  /**
+   * AI 策略：
+   *   - 一般：出最小合法牌（保留炸彈）
+   *   - 自己手牌 ≤4：出最大牌衝刺
+   *   - 有對手剩牌 ≤2 且需壓牌：出最大牌封鎖
+   */
+  function aiPlay(hand, played, mustHaveClub3, minOppLen){
+    const combos=legalCombos(hand, played, mustHaveClub3);
     if(combos.length===0)return null; // PASS
-
-    // 策略：
-    // 1. 優先出最小的合法牌
-    // 2. 若有針對目標：偶爾出稍大的牌壓制
-    combos.sort((a,b)=>a.cl.key-b.cl.key);
-
-    // 針對目標時，30%機率出最大牌
-    if(targetIdx!==null&&Math.random()<0.3){
-      return combos[combos.length-1];
-    }
-    // 快出完時出大牌
     if(hand.length<=4)return combos[combos.length-1];
-    // 一般出最小合法牌
+    if(minOppLen<=2&&played)return combos[combos.length-1];
     return combos[0];
+  }
+
+
+  /* ══════════════════════════════════════
+     四之二、強化 AI：手牌拆解 + 計牌
+  ══════════════════════════════════════ */
+  /* 混花順子候選（保護對子：消耗≥2組複數張的順子放棄） */
+  function findRunMixed(rest){
+    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
+    const vs=Object.keys(byV).map(Number).sort((a,b)=>a-b);
+    for(let i=0;i<vs.length;i++){
+      const run=[vs[i]];
+      for(let j=i+1;j<vs.length&&run.length<5;j++){
+        if(vs[j]===run[run.length-1]+1)run.push(vs[j]);else break;
+      }
+      if(run.length===5&&run[4]<=11){
+        const pairsUsed=run.filter(v=>byV[v].length>=2).length;
+        if(pairsUsed<=1)
+          return run.map(v=>[...byV[v]].sort((a,b)=>a.sv-b.sv)[0]);
+      }
+    }
+    return null;
+  }
+  /* 同花順候選 */
+  function findRunSuited(rest){
+    const bySuit={};rest.forEach(c=>{(bySuit[c.s]=bySuit[c.s]||[]).push(c);});
+    for(const s in bySuit){
+      const cs=[...bySuit[s]].sort((a,b)=>a.v-b.v);
+      for(let i=0;i+4<cs.length;i++){
+        if(cs[i+4].v-cs[i].v===4&&cs[i+4].v<=11&&new Set(cs.slice(i,i+5).map(c=>c.v)).size===5)
+          return cs.slice(i,i+5);
+      }
+    }
+    return null;
+  }
+  /* 手牌最優拆解：同花順→鐵支→順子→三條→對子→單張，回傳完整單位列表 */
+  function partitionHand(hand){
+    let rest=[...hand].sort((a,b)=>a.v-b.v||a.sv-b.sv);
+    const units=[];
+    const remove=cards=>{const ids=new Set(cards.map(cardId));rest=rest.filter(c=>!ids.has(cardId(c)));};
+    let run;
+    while((run=findRunSuited(rest))){units.push(run);remove(run);}
+    // 鐵支先取出，稍後配最小單張湊成五張炸彈
+    const fours=[];
+    const byV4={};rest.forEach(c=>{(byV4[c.v]=byV4[c.v]||[]).push(c);});
+    for(const v in byV4)if(byV4[v].length===4){fours.push([...byV4[v]]);remove(byV4[v]);}
+    while((run=findRunMixed(rest))){units.push(run);remove(run);}
+    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
+    for(const v in byV){
+      if(byV[v].length===3){units.push([...byV[v]]);remove(byV[v]);}
+      else if(byV[v].length===2){units.push([...byV[v]]);remove(byV[v]);}
+    }
+    // 鐵支配腳：最小剩餘單張；沒有單張就拆成兩對
+    for(const fc of fours){
+      if(rest.length){
+        const kicker=rest[0];
+        units.push([...fc,kicker]);remove([kicker]);
+      } else {
+        units.push(fc.slice(0,2));units.push(fc.slice(2,4));
+      }
+    }
+    rest.forEach(c=>units.push([c]));
+    return units.map(cards=>({cards,cl:classify(cards)})).filter(u=>u.cl);
   }
 
   /* ══════════════════════════════════════
@@ -280,54 +305,91 @@
     id: 'bigTwo',
     name: '🃏 燈燈大老二',
     hint: '點選手牌選牌，按出牌確認；Pass跳過',
-    canvasH: 480,
+    canvasH: 600,
 
     init(canvas, ctx, api){
-      const W=680, H=480;
+      const W=680, H=600;
+
+      /* ── 高解析渲染（消除 DOS 感糊邊）── */
+      const dpr=Math.min(window.devicePixelRatio||1,2);
+      if(dpr>1){
+        const rect=canvas.getBoundingClientRect();
+        const cssW=rect.width>0?rect.width:W, cssH=rect.height>0?rect.height:H;
+        canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+        canvas.width=W*dpr; canvas.height=H*dpr;
+      }
+      ctx.setTransform(dpr,0,0,dpr,0,0);
 
       /* ── 遊戲狀態 ── */
       let chips=[1000,1000,1000,1000]; // 0=玩家
       let hands=[[],[],[],[]];
-      let finished=[]; // 出完牌的順序 [playerIdx,...]
+      let finished=[];        // 出完牌順序 [playerIdx,...]
       let currentPlayer=0;
-      let played=null; // 當前桌面牌型
+      let played=null;        // 桌面牌型
       let playedBy=-1;
-      let passCount=0;
+      let passCount=0;        // 自上次出牌後的連續Pass數
       let selectedCards=[];
-      let gamePhase='loading'; // loading/playing/result
-      let targetPlayer=null; // AI針對目標
-      let targetTimer=0;
-      let msgLog=[]; // 遊戲訊息
+      let gamePhase='loading';// loading/dealing/playing/result
+      let msgLog=[];
+      let lastAction=['','','',''];  // 各家最後動作（面板顯示）
       let aiThinkTimer=0;
-      let aiThinkDelay=60; // AI思考延遲幀數
-      let mustFirst=true; // 第一輪必須梅花3
-      let animCards=[]; // 出牌動畫
+      const aiThinkDelay=55;
+      let mustFirst=true;     // 首手必含梅花3
+      let animCards=[];       // 出牌滑入動畫
+      let tableFade=null;     // 清桌淡出 {cards,by,alpha}
+      let dealT=0;            // 發牌動畫計時
+      let sortMode='rank';    // rank | suit
+      let playedRecord=[];    // 已亮牌（計牌用，AI 不偷看手牌）
+      let fastMode=false;     // 玩家完牌後加速模擬
       let fr=0;
-      let running=false;
+      let alive=true;         // init 實例存活旗標（防舊 listener / loop 殘留）
+
+      /* ── 按鈕區（draw 與 click 共用座標）── */
+      const BTNS={
+        hint:  {x:W/2-160, y:H-56, w:60, h:38, label:'💡提示'},
+        play:  {x:W/2-92,  y:H-56, w:84, h:38, label:'出牌'},
+        pass:  {x:W/2+8,   y:H-56, w:84, h:38, label:'Pass'},
+        sort:  {x:W/2+100, y:H-56, w:60, h:38, label:'⇅排序'},
+        cancel:{x:W-80,    y:H-56, w:72, h:38, label:'↩ 取消'},
+        skip:  {x:W-128,   y:8,    w:120,h:32, label:'⏭ 跳到結算'},
+      };
+      const inBtn=(b,mx,my)=>mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h;
 
       /* ── 載入籌碼 ── */
       loadChips(v=>{
+        if(!alive)return;
         chips[0]=v;
         api.setScore(chips[0]);
         startRound();
       });
 
+      function sortHand0(){
+        if(sortMode==='rank')sortByRank(hands[0]);
+        else sortBySuit(hands[0]);
+      }
+
       function startRound(){
         const deck=shuffle(makeDeck());
         hands=[[],[],[],[]];
         for(let i=0;i<52;i++)hands[i%4].push(deck[i]);
-        hands.forEach(h=>h.sort((a,b)=>a.v!==b.v?a.v-b.v:a.sv-b.sv));
+        hands.forEach(sortByRank);
+        sortHand0();
         finished=[];
         played=null; playedBy=-1; passCount=0;
         selectedCards=[];
+        lastAction=['','','',''];
+        animCards=[]; tableFade=null;
         mustFirst=true;
-        gamePhase='playing';
+        playedRecord=[];
+        fastMode=false;
         msgLog=[];
-        // 梅花3的人先出
+        dealT=0;
+        gamePhase='dealing';
         currentPlayer=hands.findIndex(h=>h.some(c=>c.r==='3'&&c.s==='♣'));
-        // 隨機設定AI針對目標（每局換）
-        targetPlayer=Math.floor(Math.random()*4);
-        targetTimer=0;
+      }
+
+      function onDealDone(){
+        gamePhase='playing';
         addLog(`${PLAYERS[currentPlayer]} 先出（持有梅花3）`);
         if(currentPlayer!==0)scheduleAI();
       }
@@ -337,95 +399,187 @@
         if(msgLog.length>6)msgLog.pop();
       }
 
+      const activeList=()=>[0,1,2,3].filter(i=>!finished.includes(i));
+      const minOppLen=(self)=>Math.min(...activeList().filter(i=>i!==self).map(i=>hands[i].length));
+
       /* ── 出牌 ── */
       function playCards(pidx, cards){
         const cl=classify(cards);
         if(!cl){addLog('❌ 無效牌型');return false;}
-        if(mustFirst&&!cards.some(c=>c.r==='3'&&c.s==='♣')){addLog('❌ 必須帶梅花3');return false;}
+        if(mustFirst&&!cards.some(c=>c.r==='3'&&c.s==='♣')){addLog('❌ 首手必須帶梅花3');return false;}
         if(!canBeat(played,cl)){addLog('❌ 牌不夠大');return false;}
 
-        // 從手牌移除
         const ids=cards.map(cardId);
         hands[pidx]=hands[pidx].filter(c=>!ids.includes(cardId(c)));
         played=cl; playedBy=pidx; passCount=0; mustFirst=false;
+        playedRecord.push(...cards);
+        tableFade=null;
+        lastAction[pidx]=`出${TYPE_ZH[cl.type]}`;
 
-        // 動畫
-        animCards=cards.map((c,i)=>({card:c,x:W/2-cards.length*35/2+i*35,y:H/2-40,alpha:1,vy:-2}));
-        addLog(`${PLAYERS[pidx]} 出 ${cards.map(c=>c.r+c.s).join(' ')} [${cl.type}]`);
+        // 滑入動畫：從出牌者方位飛向中央
+        if(!fastMode){
+          const FROM=[[W/2,H-150],[W/2,120],[70,H/2],[W-70,H/2]][pidx];
+          animCards=cards.map((c,i)=>({card:c,x:FROM[0]-cards.length*25+i*50,y:FROM[1]-34,alpha:1}));
+        }
+        addLog(`${PLAYERS[pidx]} 出 ${cards.map(c=>c.r+c.s).join(' ')}（${TYPE_ZH[cl.type]}）`);
 
-        // 出完牌
         if(hands[pidx].length===0){
+          // 第一個出完即整局結束，其餘依剩牌數排名（同張數比罰金、再比座位）
           finished.push(pidx);
-          addLog(`🎉 ${PLAYERS[pidx]} 第${finished.length}名！`);
-          if(finished.length===3){
-            // 找最後一名
-            const last=[0,1,2,3].find(i=>!finished.includes(i));
-            finished.push(last);
-            endRound();
-            return true;
-          }
+          lastAction[pidx]='🎉 完牌';
+          addLog(`🎉 ${PLAYERS[pidx]} 出完，本局結束！`);
+          const rest=[0,1,2,3].filter(i=>i!==pidx)
+            .sort((a,b)=>hands[a].length-hands[b].length
+              ||handPenalty(hands[a])-handPenalty(hands[b])
+              ||a-b);
+          finished.push(...rest);
+          endRound();
+          return true;
         }
         nextPlayer();
         return true;
       }
 
       function pass(pidx){
-        if(played===null){addLog('❌ 不能Pass，請出牌');return;}
-        if(playedBy===pidx){addLog('❌ 你出的牌，不能Pass');return;}
+        if(played===null){addLog('❌ 自由出牌，不能Pass');return;}
+        if(playedBy===pidx){addLog('❌ 自己出的牌不能Pass');return;}
         passCount++;
+        lastAction[pidx]='Pass';
         addLog(`${PLAYERS[pidx]} Pass`);
-        // 一圈都pass
-        if(passCount>=3){
+
+        // 一圈判定：除最後出牌者外，所有在場玩家都Pass了
+        const needed=activeList().filter(i=>i!==playedBy).length;
+        if(passCount>=needed){
+          tableFade={cards:played.cards,by:playedBy,alpha:0.6};
+          // 自由出牌權：最後出牌者；若其已出完 → 其下一位在場玩家
+          let lead=playedBy;
+          if(finished.includes(lead)){
+            lead=(lead+1)%4;
+            while(finished.includes(lead))lead=(lead+1)%4;
+          }
           played=null; playedBy=-1; passCount=0;
-          addLog(`🔄 一圈Pass，${PLAYERS[pidx===3?0:pidx+1]} 可任意出牌`);
+          currentPlayer=lead;
+          addLog(`🔄 一圈Pass，${PLAYERS[lead]} 自由出牌`);
+          if(currentPlayer!==0)scheduleAI();
+          return;
         }
         nextPlayer();
       }
 
       function nextPlayer(){
-        let next=(currentPlayer+1)%4;
-        let count=0;
+        let next=(currentPlayer+1)%4, count=0;
         while(finished.includes(next)&&count<4){next=(next+1)%4;count++;}
         currentPlayer=next;
         if(currentPlayer!==0)scheduleAI();
       }
 
-      function scheduleAI(){aiThinkTimer=aiThinkDelay+Math.floor(Math.random()*40);}
+      /* 該單張是否為「場上王牌」：所有未現身的牌都壓不過它（公平計牌：只看已亮牌+自己手牌） */
+      function isBossSingle(card,pidx){
+        const seen=new Set([...playedRecord,...hands[pidx]].map(cardId));
+        const k=card.v*4+card.sv;
+        for(const s of SUITS)for(const r of RANKS){
+          if(seen.has(r+s))continue;
+          if(RANK_VAL[r]*4+SUIT_VAL[s]>k)return false;
+        }
+        return true;
+      }
 
-      /* ── 結算 ── */
+      /**
+       * 強化 AI 決策：
+       *  1. 一手出完直接贏
+       *  2. 殘局（≤8張）：出完此手後剩牌恰為一個合法牌型 → 兩步收尾
+       *  3. 領出：優先丟「完整單位」中最小的；有人快出完改領多張牌型或王牌單張保控制權
+       *  4. 壓牌：完整單位優先最小可壓；需拆牌時只有在危險或殘局才拆，否則 Pass 保牌型
+       */
+      function smartAiPlay(pidx,mustC3){
+        const hand=hands[pidx];
+        const combos=legalCombos(hand,played,mustC3);
+        if(!combos.length)return null;
+        const finish=combos.find(c=>c.cards.length===hand.length);
+        if(finish)return finish;
+        if(hand.length<=8){
+          for(const c of combos){
+            const ids=new Set(c.cards.map(cardId));
+            const restCards=hand.filter(x=>!ids.has(cardId(x)));
+            if(restCards.length&&classify(restCards))return c;
+          }
+        }
+        const units=partitionHand(hand);
+        const ukey=cs=>cs.map(cardId).sort().join(',');
+        const unitSet=new Set(units.map(u=>ukey(u.cards)));
+        const isWhole=c=>unitSet.has(ukey(c.cards));
+        const danger=minOppLen(pidx)<=2;
+        const whole=combos.filter(isWhole);
+        if(!played){
+          const pool=whole.length?whole:combos;
+          if(danger){
+            // 有人快出完：領王牌單張保控制權 > 多張牌型 > 最大單張
+            const boss=pool.find(c=>c.cards.length===1&&isBossSingle(c.cards[0],pidx));
+            if(boss)return boss;
+            const multi=pool.filter(c=>c.cards.length>=2);
+            if(multi.length)return multi[0];
+            return pool[pool.length-1];
+          }
+          return pool[0];
+        }
+        if(whole.length){
+          if(danger)return whole[whole.length-1];
+          const pick=whole[0];
+          // 非危急時不輕易動用含2的單張/對子，留一手（也給別人活路）
+          if(pick.cl.key>=48&&(pick.cl.type==='single'||pick.cl.type==='pair')&&Math.random()<0.45)return null;
+          return pick;
+        }
+        if(danger||hand.length<=6)return combos[0];
+        // 拆單張/對子去壓低牌可接受；拆五張牌型或動用炸彈不值得 → Pass
+        const cheap=combos.find(c=>c.cards.length<=2&&c.cl.type!=='fourOfAKind');
+        if(cheap&&(played.type==='single'||played.type==='pair')&&played.key<8*4)return cheap;
+        return null;
+      }
+
+      function scheduleAI(){
+        aiThinkTimer=fastMode?5:aiThinkDelay+Math.floor(Math.random()*40);
+      }
+
+      /* 玩家完牌後直接模擬到結算 */
+      function simulateToEnd(){
+        let guard=500;
+        while(gamePhase==='playing'&&guard-->0){
+          const p=currentPlayer;
+          if(finished.includes(p)){nextPlayer();continue;}
+          const mustC3=mustFirst&&hands[p].some(c=>c.r==='3'&&c.s==='♣');
+          const r=smartAiPlay(p,mustC3);
+          if(r)playCards(p,r.cards); else pass(p);
+        }
+        animCards=[];
+      }
+
+      /* ── 結算：只有第1名收錢 ── */
       function endRound(){
         gamePhase='result';
-        running=false;
-        // 計算每個輸家罰金
+        const winner=finished[0];
         const penalties=[0,0,0,0];
-        for(let i=1;i<4;i++){
-          const loserIdx=finished[i];
-          penalties[loserIdx]=handPenalty(hands[loserIdx]);
+        let pot=0;
+        for(let rank=1;rank<4;rank++){
+          const idx=finished[rank];
+          penalties[idx]=handPenalty(hands[idx]);
+          pot+=penalties[idx];
         }
-        const totalPenalty=penalties.reduce((a,b)=>a+b,0);
-        // 分配給贏家
-        for(let rank=0;rank<3;rank++){
-          const winnerIdx=finished[rank];
-          const share=Math.round(totalPenalty*PAYOUT[rank]);
-          chips[winnerIdx]=Math.max(0,chips[winnerIdx]+share);
-        }
-        for(let i=1;i<4;i++){
-          const loserIdx=finished[i];
-          chips[loserIdx]=Math.max(0,chips[loserIdx]-penalties[loserIdx]);
+        chips[winner]+=pot;
+        for(let rank=1;rank<4;rank++){
+          const idx=finished[rank];
+          chips[idx]=Math.max(0,chips[idx]-penalties[idx]);
         }
         saveChips(chips[0]);
         api.setScore(chips[0]);
 
-        // 結算訊息
-        let resultLines=finished.map((pidx,rank)=>{
-          const p=penalties[pidx]?`-${penalties[pidx]}`:`+${Math.round(totalPenalty*PAYOUT[rank])}`;
-          return `${rank+1}. ${PLAYERS[pidx]} ${p}元 → ${chips[pidx]}元`;
+        const resultLines=finished.map((pidx,rank)=>{
+          const delta=rank===0?`+${pot}`:`-${penalties[pidx]}`;
+          const cardsLeft=rank===0?'':`（剩${hands[pidx].length}張）`;
+          return `${rank+1}. ${PLAYERS[pidx]} ${delta}元${cardsLeft} → ${chips[pidx]}元`;
         }).join('\n');
 
-        // 破產判斷
-        const broke=chips.findIndex((c,i)=>c<=0&&i===0);
-        if(broke>=0){
-          api.showMsg('破產了 😭',`籌碼歸零！\n${resultLines}\n\n要繼續嗎？`,[
+        if(chips[0]<=0){
+          api.showMsg('破產了 😭',`籌碼歸零！\n\n${resultLines}`,[
             {label:'重新開始(1000元)',red:true,fn:()=>{chips[0]=1000;saveChips(1000);api.hideMsg();startNewGame();}},
             {label:'看盤去',fn:()=>{window.__closeGame();window.__hideSplash&&window.__hideSplash();}},
           ]);
@@ -438,224 +592,311 @@
       }
 
       function startNewGame(){
-        gamePhase='loading';
-        // 破產AI補新人
-        for(let i=1;i<4;i++){if(chips[i]<=0)chips[i]=1000;}
-        running=true;
+        for(let i=1;i<4;i++){if(chips[i]<=0)chips[i]=1000;} // 破產AI補新人
         startRound();
       }
 
-      /* ── 玩家點牌 ── */
-      canvas.addEventListener('click',e=>{
+      /* ── 玩家操作 ── */
+      function onClick(e){
+        if(!alive)return;
         if(gamePhase!=='playing')return;
-        if(currentPlayer!==0)return;
         const r=canvas.getBoundingClientRect();
         const mx=(e.clientX-r.left)*(W/r.width);
         const my=(e.clientY-r.top)*(H/r.height);
-        // 出牌按鈕（對齊新版 drawButtons: W/2-92, H-56, 84x38）
-        if(mx>W/2-92&&mx<W/2-8&&my>H-56&&my<H-18){
+
+        if(fastMode&&inBtn(BTNS.skip,mx,my)){simulateToEnd();return;}
+        if(currentPlayer!==0)return;
+
+        if(inBtn(BTNS.play,mx,my)){
           if(selectedCards.length===0){addLog('❌ 請先選牌');return;}
-          playCards(0,selectedCards);
-          selectedCards=[];
+          if(playCards(0,selectedCards))selectedCards=[];
           return;
         }
-        // Pass按鈕
-        if(mx>W/2+8&&mx<W/2+92&&my>H-56&&my<H-18){
-          pass(0); selectedCards=[];return;
+        if(inBtn(BTNS.pass,mx,my)){
+          if(played===null||playedBy===0)return;
+          pass(0); selectedCards=[]; return;
         }
-        // 取消選牌按鈕（右下角）
-        if(mx>W-80&&mx<W-8&&my>H-56&&my<H-18){
-          selectedCards=[];
-          addLog('↩ 取消選牌');return;
+        if(inBtn(BTNS.hint,mx,my)){
+          const mustC3=mustFirst&&hands[0].some(c=>c.r==='3'&&c.s==='♣');
+          const combos=legalCombos(hands[0],played,mustC3);
+          if(combos.length===0){addLog('💡 沒有牌能壓，建議 Pass');selectedCards=[];}
+          else{selectedCards=[...combos[0].cards];addLog('💡 已幫你選最小可出牌');}
+          return;
         }
-        // 點選手牌（對齊新版 drawHand bottom: maxSpread=n*30, y=H-138, cw=46, ch=68）
+        if(inBtn(BTNS.sort,mx,my)){
+          sortMode=sortMode==='rank'?'suit':'rank';
+          sortHand0();
+          addLog(`⇅ 改為${sortMode==='rank'?'點數':'花色'}排序`);
+          return;
+        }
+        if(selectedCards.length>0&&inBtn(BTNS.cancel,mx,my)){
+          selectedCards=[]; return;
+        }
+
+        // 點選手牌（座標與 drawHand bottom ×1.25 對齊）
         const hand=hands[0];
-        const cw=46,ch=68;
-        const maxSpread=Math.min(hand.length*30,W-80);
-        const step=hand.length>1?maxSpread/(hand.length-1):0;
+        const cw=46*1.25,ch=68*1.25;
+        const maxSpread=Math.min((hand.length-1)*36+cw,W-50);
+        const step=hand.length>1?(maxSpread-cw)/(hand.length-1):0;
         const startX=(W-maxSpread)/2;
         for(let i=hand.length-1;i>=0;i--){
-          const cx=hand.length===1?W/2-cw/2:startX+i*step;
+          const cx=startX+i*step;
           const isSel=selectedCards.some(sc=>cardId(sc)===cardId(hand[i]));
-          const cy=H-138-(isSel?16:0);
+          const cy=H-168-(isSel?18:0);
           if(mx>=cx&&mx<=cx+cw&&my>=cy&&my<=cy+ch){
             const idx=selectedCards.findIndex(sc=>cardId(sc)===cardId(hand[i]));
-            if(idx>=0){
-              selectedCards.splice(idx,1); // 再點一次 → 取消選取
-            } else {
-              selectedCards.push(hand[i]);
-            }
+            if(idx>=0)selectedCards.splice(idx,1);
+            else selectedCards.push(hand[i]);
             return;
           }
         }
-      });
+      }
+      // 防重入：上一局實例若未被銷毀，先清掉它的 listener
+      if(canvas.__bigTwoDestroy){try{canvas.__bigTwoDestroy();}catch(e){}}
+      canvas.addEventListener('click',onClick);
+      const destroy=()=>{alive=false;canvas.removeEventListener('click',onClick);};
+      canvas.__bigTwoDestroy=destroy;
 
-      /* ── 繪製 ── */
-      /* ══ 牌面常數 ══ */
-      const SUIT_COLOR={'♠':'#1a1a2e','♣':'#1a2e1a','♥':'#8b0000','♦':'#8b0000'};
-      const SUIT_LIGHT={'♠':'#4a4a7a','♣':'#2a6a2a','♥':'#cc4444','♦':'#cc4444'};
-      const TYPE_ZH={single:'單張',pair:'對子',triple:'三條',straight:'順子',
-        flush:'同花',fullHouse:'葫蘆',fourOfAKind:'鐵支',straightFlush:'同花順'};
+      /* ══════════════════════════════════════
+         繪製
+      ══════════════════════════════════════ */
+      /* 數字牌 pip 排版（相對座標 0~1）*/
+      const PIPS={
+        '2':[[.5,.22],[.5,.78]],
+        '3':[[.5,.2],[.5,.5],[.5,.8]],
+        '4':[[.33,.24],[.67,.24],[.33,.76],[.67,.76]],
+        '5':[[.33,.24],[.67,.24],[.5,.5],[.33,.76],[.67,.76]],
+        '6':[[.33,.22],[.67,.22],[.33,.5],[.67,.5],[.33,.78],[.67,.78]],
+        '7':[[.33,.22],[.67,.22],[.5,.36],[.33,.5],[.67,.5],[.33,.78],[.67,.78]],
+        '8':[[.33,.22],[.67,.22],[.5,.36],[.33,.5],[.67,.5],[.5,.64],[.33,.78],[.67,.78]],
+        '9':[[.33,.2],[.67,.2],[.33,.42],[.67,.42],[.5,.5],[.33,.62],[.67,.62],[.33,.82],[.67,.82]],
+        '10':[[.33,.18],[.67,.18],[.5,.3],[.33,.42],[.67,.42],[.33,.6],[.67,.6],[.5,.72],[.33,.84],[.67,.84]],
+      };
 
-      /* ── 精緻卡片 ── */
-      function drawCard(x,y,card,selected,faceUp=true,rotate=0){
-        const w=46,h=68,r=6;
+      function drawCard(x,y,card,selected,faceUp=true,scale=1){
+        const w=46*scale,h=68*scale,r=5*scale;
         ctx.save();
-        if(rotate){ctx.translate(x+w/2,y+h/2);ctx.rotate(rotate);ctx.translate(-w/2,-h/2);x=0;y=0;}
-        // 選取光暈
-        if(selected){
-          ctx.shadowColor='#f5c400';ctx.shadowBlur=16;
-        }
+        // 投影
+        ctx.shadowColor=selected?'rgba(245,196,0,.9)':'rgba(0,0,0,.45)';
+        ctx.shadowBlur=selected?14:5*scale;
+        ctx.shadowOffsetY=selected?0:2*scale;
         if(faceUp){
-          // 卡片底色：米白帶紋理感
-          const bg=ctx.createLinearGradient(x,y,x+w,y+h);
-          bg.addColorStop(0,'#fefefe');bg.addColorStop(1,'#f0ede8');
+          const bg=ctx.createLinearGradient(x,y,x,y+h);
+          bg.addColorStop(0,'#ffffff');bg.addColorStop(.55,'#fbf9f4');bg.addColorStop(1,'#ece8df');
           ctx.fillStyle=bg;
           ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
-          ctx.shadowBlur=0;
-          // 外框
-          ctx.strokeStyle=selected?'#f5c400':'rgba(0,0,0,.25)';
+          ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
+          ctx.strokeStyle=selected?'#f5c400':'rgba(60,50,30,.35)';
           ctx.lineWidth=selected?2:1;
           ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.stroke();
-          // 花色顏色
+
           const isRed=card.s==='♥'||card.s==='♦';
-          const col=isRed?'#cc2222':'#111122';
-          // 左上角 rank
+          const col=isRed?'#c0392b':'#1c1c30';
           ctx.fillStyle=col;
-          ctx.font='bold 13px -apple-system,sans-serif';
-          ctx.textAlign='left';
-          ctx.fillText(card.r,x+4,y+15);
-          // 左上花色
-          ctx.font='11px sans-serif';
-          ctx.fillText(card.s,x+4,y+27);
-          // 中央大花色
-          ctx.font=`bold ${w>40?28:22}px sans-serif`;
+          // 角標（襯線字較有撲克質感）
+          ctx.font=`bold ${12.5*scale}px Georgia,'Times New Roman',serif`;
           ctx.textAlign='center';
-          ctx.fillText(card.s,x+w/2,y+h/2+10);
-          // 右下角（倒置）
+          ctx.fillText(card.r,x+8*scale,y+13*scale);
+          ctx.font=`${9.5*scale}px sans-serif`;
+          ctx.fillText(card.s,x+8*scale,y+23*scale);
+          // 右下倒置角標
           ctx.save();
           ctx.translate(x+w,y+h);ctx.rotate(Math.PI);
           ctx.fillStyle=col;
-          ctx.font='bold 13px -apple-system,sans-serif';
-          ctx.textAlign='left';
-          ctx.fillText(card.r,4,15);
-          ctx.font='11px sans-serif';
-          ctx.fillText(card.s,4,27);
+          ctx.font=`bold ${12.5*scale}px Georgia,'Times New Roman',serif`;
+          ctx.fillText(card.r,8*scale,13*scale);
+          ctx.font=`${9.5*scale}px sans-serif`;
+          ctx.fillText(card.s,8*scale,23*scale);
           ctx.restore();
-          // 內邊框細線
-          ctx.strokeStyle='rgba(0,0,0,.06)';ctx.lineWidth=1;
-          ctx.beginPath();ctx.roundRect(x+2,y+2,w-4,h-4,r-1);ctx.stroke();
+
+          if(card.r==='A'){
+            // A：中央大花色＋細光暈
+            ctx.font=`${30*scale}px sans-serif`;
+            ctx.fillText(card.s,x+w/2,y+h/2+11*scale);
+          } else if(['J','Q','K'].includes(card.r)){
+            // 人頭牌：內框 + 大字母 + 雙花色
+            ctx.strokeStyle=isRed?'rgba(192,57,43,.45)':'rgba(28,28,48,.4)';
+            ctx.lineWidth=1;
+            ctx.beginPath();ctx.roundRect(x+10*scale,y+13*scale,w-20*scale,h-26*scale,3*scale);ctx.stroke();
+            ctx.font=`bold ${21*scale}px Georgia,serif`;
+            ctx.fillText(card.r,x+w/2,y+h/2+7*scale);
+            ctx.font=`${9*scale}px sans-serif`;
+            ctx.fillText(card.s,x+w/2,y+h/2-12*scale);
+            ctx.save();
+            ctx.translate(x+w/2,y+h/2+17*scale);ctx.rotate(Math.PI);
+            ctx.fillText(card.s,0,3*scale);
+            ctx.restore();
+          } else {
+            // 數字牌：pip 排版（下半倒置）
+            const pips=PIPS[card.r]||[];
+            ctx.font=`${10*scale}px sans-serif`;
+            for(const [px,py] of pips){
+              if(py>0.5){
+                ctx.save();
+                ctx.translate(x+px*w,y+py*h);ctx.rotate(Math.PI);
+                ctx.fillText(card.s,0,3.5*scale);
+                ctx.restore();
+              } else {
+                ctx.fillText(card.s,x+px*w,y+py*h+3.5*scale);
+              }
+            }
+          }
         } else {
-          // 背面：深藍質感
+          // 背面：深藍緞面＋細格紋＋金菱
           const bg=ctx.createLinearGradient(x,y,x+w,y+h);
-          bg.addColorStop(0,'#1a2a4a');bg.addColorStop(1,'#0d1a30');
+          bg.addColorStop(0,'#22335c');bg.addColorStop(.5,'#16244a');bg.addColorStop(1,'#0d1830');
           ctx.fillStyle=bg;
           ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
-          ctx.shadowBlur=0;
-          ctx.strokeStyle='rgba(100,140,200,.3)';ctx.lineWidth=1;
+          ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
+          ctx.strokeStyle='rgba(140,170,230,.4)';ctx.lineWidth=1;
           ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.stroke();
-          // 背面花紋
-          ctx.strokeStyle='rgba(100,140,200,.12)';ctx.lineWidth=1;
-          for(let i=0;i<5;i++){
-            ctx.beginPath();ctx.roundRect(x+3+i*1.5,y+3+i*1.5,w-6-i*3,h-6-i*3,r-1);ctx.stroke();
+          // 白邊
+          ctx.strokeStyle='rgba(255,255,255,.55)';
+          ctx.beginPath();ctx.roundRect(x+2,y+2,w-4,h-4,Math.max(r-1,1));ctx.stroke();
+          // 斜格紋
+          ctx.save();
+          ctx.beginPath();ctx.roundRect(x+4,y+4,w-8,h-8,Math.max(r-2,1));ctx.clip();
+          ctx.strokeStyle='rgba(120,150,210,.18)';ctx.lineWidth=1;
+          for(let d=-h;d<w+h;d+=7*scale){
+            ctx.beginPath();ctx.moveTo(x+d,y);ctx.lineTo(x+d+h,y+h);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(x+d+h,y);ctx.lineTo(x+d,y+h);ctx.stroke();
           }
-          // 中央菱形
-          ctx.fillStyle='rgba(100,150,220,.2)';
+          ctx.restore();
+          // 中央金菱
+          ctx.fillStyle='rgba(212,160,23,.55)';
           ctx.beginPath();
-          ctx.moveTo(x+w/2,y+10);ctx.lineTo(x+w-8,y+h/2);
-          ctx.lineTo(x+w/2,y+h-10);ctx.lineTo(x+8,y+h/2);
+          ctx.moveTo(x+w/2,y+h/2-11*scale);ctx.lineTo(x+w/2+8*scale,y+h/2);
+          ctx.lineTo(x+w/2,y+h/2+11*scale);ctx.lineTo(x+w/2-8*scale,y+h/2);
           ctx.closePath();ctx.fill();
+          ctx.fillStyle='rgba(245,196,0,.85)';
+          ctx.font=`${9*scale}px sans-serif`;ctx.textAlign='center';
+          ctx.fillText('燈',x+w/2,y+h/2+3.5*scale);
         }
         ctx.restore();
       }
 
-      /* ── 手牌排列 ── */
-      function drawHand(hand,cx,cy,dir,faceUp,selected=[]){
-        const n=hand.length;if(n===0)return;
-        const cw=46,ch=68;
+      /* 各家可見張數（發牌動畫進度）*/
+      function visibleCount(idx){
+        if(gamePhase!=='dealing')return hands[idx].length;
+        const dealt=Math.floor(dealT/2); // 每2幀發1張，共104幀
+        return Math.max(0,Math.min(hands[idx].length,Math.ceil((dealt-idx)/4)));
+      }
+
+      function drawHand(idx,cx,cy,dir,faceUp,selected=[]){
+        const hand=hands[idx];
+        const n=visibleCount(idx);
+        if(n===0)return;
+        const cw=46;
         if(dir==='bottom'){
-          const maxSpread=Math.min(n*30,W-80);
-          const step=n>1?maxSpread/(n-1):0;
+          const bw=cw*1.25;
+          const maxSpread=Math.min((n-1)*36+bw,W-50);
+          const step=n>1?(maxSpread-bw)/(n-1):0;
           const startX=(W-maxSpread)/2;
           for(let i=0;i<n;i++){
-            const x=n===1?W/2-cw/2:startX+i*step;
+            const x=startX+i*step;
             const isSel=selected.some(c=>cardId(c)===cardId(hand[i]));
-            drawCard(x,cy-(isSel?16:0),hand[i],isSel,faceUp);
+            drawCard(x,cy-(isSel?18:0),hand[i],isSel,faceUp,1.25);
           }
         } else if(dir==='top'){
-          const step=Math.min(22,Math.floor((W-80)/Math.max(n,1)));
+          const step=Math.min(22,Math.floor((W-200)/Math.max(n,1)));
           const startX=(W-(n-1)*step-cw)/2;
-          for(let i=0;i<n;i++) drawCard(startX+i*step,cy,hand[i],false,false);
-        } else if(dir==='left'){
-          const step=Math.min(18,(H-160)/Math.max(n,1));
-          const startY=80+(H-160-(n-1)*step)/2;
-          for(let i=0;i<n;i++) drawCard(cx,startY+i*step,hand[i],false,false);
-        } else if(dir==='right'){
-          const step=Math.min(18,(H-160)/Math.max(n,1));
-          const startY=80+(H-160-(n-1)*step)/2;
-          for(let i=0;i<n;i++) drawCard(cx,startY+i*step,hand[i],false,false);
+          for(let i=0;i<n;i++) drawCard(startX+i*step,cy,hand[i],false,false,0.8);
+        } else if(dir==='left'||dir==='right'){
+          const step=Math.min(17,(H-240)/Math.max(n,1));
+          const startY=(H-(n-1)*step-54)/2;
+          for(let i=0;i<n;i++) drawCard(cx,startY+i*step,hand[i],false,false,0.8);
         }
       }
 
-      /* ── 桌面中央出牌區 ── */
-      function drawPlayedCards(){
+      /* ── 桌面中央 ── */
+      function drawTable(){
+        // 清桌淡出殘影
+        if(tableFade){
+          ctx.save();
+          ctx.globalAlpha=tableFade.alpha;
+          drawCardsCenter(tableFade.cards,null);
+          ctx.restore();
+          tableFade.alpha-=0.015;
+          if(tableFade.alpha<=0)tableFade=null;
+        }
         if(!played)return;
-        const cards=played.cards;
+        drawCardsCenter(played.cards,`${PLAYERS[playedBy]}　${TYPE_ZH[played.type]}`);
+      }
+      function drawCardsCenter(cards,label){
         const n=cards.length;
-        const cw=46,gap=50;
+        const cw=46*1.15,gap=58;
         const totalW=(n-1)*gap+cw;
         const startX=W/2-totalW/2;
-        const cy=H/2-44;
-        // 牌型標籤
-        const typeZH=TYPE_ZH[played.type]||played.type;
-        const label=`${PLAYERS[playedBy]}　${typeZH}`;
-        ctx.fillStyle='rgba(245,196,0,.85)';
-        ctx.font='bold 11px -apple-system,sans-serif';
-        ctx.textAlign='center';
-        ctx.fillText(label,W/2,cy-8);
-        for(let i=0;i<n;i++) drawCard(startX+i*gap,cy,cards[i],false,true);
+        const cy=H/2-50;
+        if(label){
+          ctx.font='bold 11px -apple-system,sans-serif';
+          const tw=ctx.measureText(label).width;
+          ctx.fillStyle='rgba(0,0,0,.55)';
+          ctx.beginPath();ctx.roundRect(W/2-tw/2-10,cy-26,tw+20,18,9);ctx.fill();
+          ctx.strokeStyle='rgba(245,196,0,.4)';ctx.lineWidth=1;
+          ctx.beginPath();ctx.roundRect(W/2-tw/2-10,cy-26,tw+20,18,9);ctx.stroke();
+          ctx.fillStyle='rgba(245,196,0,.95)';
+          ctx.textAlign='center';
+          ctx.fillText(label,W/2,cy-13);
+        }
+        for(let i=0;i<n;i++) drawCard(startX+i*gap,cy,cards[i],false,true,1.15);
       }
 
-      /* ── 玩家資訊面板 ── */
+      /* ── 玩家面板 ── */
       function drawPlayerPanel(idx,px,py,w,h){
-        const isActive=currentPlayer===idx;
+        const isActive=currentPlayer===idx&&gamePhase==='playing';
         const isDone=finished.includes(idx);
-        const isTarget=idx===targetPlayer&&fr%60<30;
-        // 面板底
         ctx.save();
-        ctx.fillStyle=isActive?'rgba(245,196,0,.12)':isDone?'rgba(80,80,80,.15)':'rgba(0,0,0,.35)';
-        ctx.strokeStyle=isActive?'rgba(245,196,0,.6)':isTarget?'rgba(255,60,60,.5)':'rgba(255,255,255,.08)';
+        // 主動者外光圈
+        if(isActive){
+          ctx.shadowColor='rgba(245,196,0,.55)';ctx.shadowBlur=14;
+        }
+        const pg=ctx.createLinearGradient(px,py,px,py+h);
+        if(isActive){pg.addColorStop(0,'rgba(70,56,8,.92)');pg.addColorStop(1,'rgba(40,32,4,.92)');}
+        else if(isDone){pg.addColorStop(0,'rgba(50,50,55,.7)');pg.addColorStop(1,'rgba(30,30,34,.7)');}
+        else{pg.addColorStop(0,'rgba(22,27,34,.92)');pg.addColorStop(1,'rgba(10,13,18,.92)');}
+        ctx.fillStyle=pg;
+        ctx.beginPath();ctx.roundRect(px,py,w,h,9);ctx.fill();
+        ctx.shadowColor='transparent';ctx.shadowBlur=0;
+        ctx.strokeStyle=isActive?'rgba(245,196,0,.75)':'rgba(255,255,255,.1)';
         ctx.lineWidth=isActive?1.5:1;
-        ctx.beginPath();ctx.roundRect(px,py,w,h,8);ctx.fill();ctx.stroke();
+        ctx.beginPath();ctx.roundRect(px,py,w,h,9);ctx.stroke();
+        // 頭像
+        ctx.font='20px sans-serif';ctx.textAlign='left';
+        ctx.globalAlpha=isDone?0.55:1;
+        ctx.fillText(AVATARS[idx],px+7,py+h/2+8);
+        ctx.globalAlpha=1;
         // 名字
-        ctx.fillStyle=isActive?'#f5c400':isDone?'#666':'#ddd';
+        ctx.fillStyle=isActive?'#f5c400':isDone?'#777':'#e8e8e8';
         ctx.font=`${isActive?'bold ':''}12px -apple-system,sans-serif`;
-        ctx.textAlign='left';
-        ctx.fillText(PLAYERS[idx],px+8,py+16);
+        ctx.fillText(PLAYERS[idx],px+34,py+17);
         // 籌碼
         ctx.fillStyle='#f5c400';ctx.font='bold 11px monospace';
-        ctx.fillText('$'+chips[idx],px+8,py+30);
+        ctx.fillText('$'+chips[idx],px+34,py+32);
         // 手牌數
-        ctx.fillStyle='#888';ctx.font='10px monospace';
-        ctx.fillText('手牌 '+hands[idx].length,px+w-50,py+16);
+        ctx.fillStyle=hands[idx].length<=3&&!isDone?'#ef5350':'#999';
+        ctx.font='bold 10px monospace';
+        ctx.textAlign='right';
+        ctx.fillText(hands[idx].length+'張',px+w-8,py+17);
+        // 最後動作
+        if(lastAction[idx]&&!isDone){
+          ctx.fillStyle=lastAction[idx]==='Pass'?'#7fa8d8':'#bbb';
+          ctx.font='10px -apple-system,sans-serif';
+          ctx.textAlign='right';
+          ctx.fillText(lastAction[idx],px+w-8,py+32);
+        }
         // 名次
         if(isDone){
           const rank=finished.indexOf(idx)+1;
           const medals=['🥇','🥈','🥉','💀'];
           ctx.font='16px sans-serif';ctx.textAlign='right';
-          ctx.fillText(medals[rank-1]||rank,px+w-6,py+30);
-        }
-        // 針對標示
-        if(isTarget){
-          ctx.fillStyle='rgba(255,60,60,.8)';ctx.font='bold 10px sans-serif';
-          ctx.textAlign='right';
-          ctx.fillText('🎯',px+w-6,py+16);
+          ctx.fillText(medals[rank-1]||rank,px+w-8,py+34);
         }
         // 出牌指示燈
-        if(isActive&&gamePhase==='playing'){
+        if(isActive){
           const pulse=0.5+Math.sin(fr*0.15)*0.5;
-          ctx.fillStyle=`rgba(245,196,0,${pulse})`;
-          ctx.beginPath();ctx.arc(px+w-8,py+h-8,4,0,Math.PI*2);ctx.fill();
+          ctx.fillStyle=`rgba(245,196,0,${pulse.toFixed(2)})`;
+          ctx.beginPath();ctx.arc(px+w-10,py+h-9,4,0,Math.PI*2);ctx.fill();
         }
         ctx.restore();
       }
@@ -664,11 +905,11 @@
       function drawLog(){
         ctx.save();
         ctx.fillStyle='rgba(0,0,0,.55)';
-        ctx.beginPath();ctx.roundRect(8,8,210,96,8);ctx.fill();
+        ctx.beginPath();ctx.roundRect(8,8,212,96,8);ctx.fill();
         ctx.strokeStyle='rgba(255,255,255,.06)';ctx.lineWidth=1;
-        ctx.beginPath();ctx.roundRect(8,8,210,96,8);ctx.stroke();
+        ctx.beginPath();ctx.roundRect(8,8,212,96,8);ctx.stroke();
         msgLog.forEach((m,i)=>{
-          ctx.fillStyle=i===0?'#ddd':'rgba(180,180,180,.'+(7-i*1)+'0)';
+          ctx.fillStyle=i===0?'#ddd':`rgba(180,180,180,${Math.max(0.7-i*0.1,0.2)})`;
           ctx.font=(i===0?'bold ':'')+'10px -apple-system,sans-serif';
           ctx.textAlign='left';
           ctx.fillText(m,16,24+i*15,196);
@@ -677,100 +918,131 @@
       }
 
       /* ── 操作按鈕 ── */
+      function drawBtn(b,enabled,baseA,baseB,borderC){
+        ctx.save();
+        const g=ctx.createLinearGradient(b.x,b.y,b.x+b.w,b.y+b.h);
+        g.addColorStop(0,enabled?baseA:'#2a2a2a');
+        g.addColorStop(1,enabled?baseB:'#1a1a1a');
+        ctx.fillStyle=g;
+        ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,8);ctx.fill();
+        ctx.strokeStyle=enabled?borderC:'rgba(80,80,80,.5)';
+        ctx.lineWidth=1.5;
+        ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,8);ctx.stroke();
+        ctx.fillStyle=enabled?'#fff':'#555';
+        ctx.font='bold 13px -apple-system,sans-serif';
+        ctx.textAlign='center';
+        ctx.fillText(b.label,b.x+b.w/2,b.y+b.h/2+5);
+        ctx.restore();
+      }
       function drawButtons(){
+        if(gamePhase==='playing'&&fastMode){
+          drawBtn(BTNS.skip,true,'#7a4a14','#a06420','rgba(245,160,0,.6)');
+        }
         if(currentPlayer!==0||gamePhase!=='playing')return;
         const canPlay=selectedCards.length>0;
         const canPass=played!==null&&playedBy!==0;
-        // 出牌按鈕
-        ctx.save();
-        const pg=ctx.createLinearGradient(W/2-92,H-56,W/2-8,H-20);
-        pg.addColorStop(0,canPlay?'#c0392b':'#2a2a2a');
-        pg.addColorStop(1,canPlay?'#e74c3c':'#1a1a1a');
-        ctx.fillStyle=pg;
-        ctx.beginPath();ctx.roundRect(W/2-92,H-56,84,38,8);ctx.fill();
-        ctx.strokeStyle=canPlay?'rgba(231,76,60,.8)':'rgba(80,80,80,.5)';
-        ctx.lineWidth=1.5;
-        ctx.beginPath();ctx.roundRect(W/2-92,H-56,84,38,8);ctx.stroke();
-        ctx.fillStyle=canPlay?'#fff':'#555';
-        ctx.font='bold 14px -apple-system,sans-serif';
-        ctx.textAlign='center';
-        ctx.fillText('出牌',W/2-50,H-31);
-        // Pass按鈕
-        const pg2=ctx.createLinearGradient(W/2+8,H-56,W/2+92,H-20);
-        pg2.addColorStop(0,canPass?'#2980b9':'#2a2a2a');
-        pg2.addColorStop(1,canPass?'#3498db':'#1a1a1a');
-        ctx.fillStyle=pg2;
-        ctx.beginPath();ctx.roundRect(W/2+8,H-56,84,38,8);ctx.fill();
-        ctx.strokeStyle=canPass?'rgba(52,152,219,.8)':'rgba(80,80,80,.5)';
-        ctx.beginPath();ctx.roundRect(W/2+8,H-56,84,38,8);ctx.stroke();
-        ctx.fillStyle=canPass?'#fff':'#555';
-        ctx.font='bold 14px -apple-system,sans-serif';
-        ctx.fillText('Pass',W/2+50,H-31);
-        // 取消選牌按鈕（只在有選牌時顯示）
-        if(selectedCards.length>0){
-          ctx.fillStyle='rgba(80,80,80,.6)';
-          ctx.beginPath();ctx.roundRect(W-80,H-56,72,38,8);ctx.fill();
-          ctx.strokeStyle='rgba(150,150,150,.4)';ctx.lineWidth=1;
-          ctx.beginPath();ctx.roundRect(W-80,H-56,72,38,8);ctx.stroke();
-          ctx.fillStyle='#aaa';
-          ctx.font='bold 13px -apple-system,sans-serif';
+        drawBtn(BTNS.hint,true,'#5b4a14','#7a6420','rgba(245,196,0,.5)');
+        drawBtn(BTNS.play,canPlay,'#c0392b','#e74c3c','rgba(231,76,60,.8)');
+        drawBtn(BTNS.pass,canPass,'#2980b9','#3498db','rgba(52,152,219,.8)');
+        drawBtn(BTNS.sort,true,'#3a3a4a','#4a4a5e','rgba(150,150,180,.4)');
+        if(selectedCards.length>0)
+          drawBtn(BTNS.cancel,true,'#4a4a4a','#5a5a5a','rgba(150,150,150,.4)');
+        // 選牌牌型即時提示
+        if(canPlay){
+          const cl=classify(selectedCards);
+          const ok=cl&&canBeat(played,cl)&&(!mustFirst||selectedCards.some(c=>c.r==='3'&&c.s==='♣'));
+          ctx.fillStyle=ok?'rgba(120,220,120,.9)':'rgba(239,83,80,.9)';
+          ctx.font='bold 11px -apple-system,sans-serif';
           ctx.textAlign='center';
-          ctx.fillText('↩ 取消',W-44,H-31);
+          ctx.fillText(cl?`${TYPE_ZH[cl.type]}${ok?' ✓':' ✗壓不過'}`:'✗ 非法牌型',W/2,H-64);
         }
-        ctx.restore();
       }
 
       /* ── 主繪製 ── */
       function draw(){
-        // 背景：深色木紋桌
-        const bg=ctx.createRadialGradient(W/2,H/2,50,W/2,H/2,400);
-        bg.addColorStop(0,'#1a1008');bg.addColorStop(1,'#0a0804');
+        // 背景：暗室氛圍
+        const bg=ctx.createRadialGradient(W/2,H/2,50,W/2,H/2,430);
+        bg.addColorStop(0,'#171019');bg.addColorStop(1,'#07050a');
         ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
 
-        // 絨布桌面橢圓
-        const felt=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,280);
-        felt.addColorStop(0,'#1a4a1a');felt.addColorStop(0.7,'#0d3010');felt.addColorStop(1,'#081808');
-        ctx.fillStyle=felt;
-        ctx.beginPath();ctx.ellipse(W/2,H/2,290,195,0,0,Math.PI*2);ctx.fill();
-        // 絨布邊框（金色）
+        // 木質外框（雙橢圓夾層）
+        const wood=ctx.createLinearGradient(W/2,H/2-265,W/2,H/2+265);
+        wood.addColorStop(0,'#4a2f16');wood.addColorStop(.5,'#6b4423');wood.addColorStop(1,'#3a2410');
+        ctx.fillStyle=wood;
+        ctx.beginPath();ctx.ellipse(W/2,H/2,308,262,0,0,Math.PI*2);ctx.fill();
+        ctx.save();
+        ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=24;ctx.shadowOffsetY=6;
+        ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=2;
+        ctx.beginPath();ctx.ellipse(W/2,H/2,308,262,0,0,Math.PI*2);ctx.stroke();
+        ctx.restore();
+        // 金色滾邊
         const rim=ctx.createLinearGradient(W/2-290,H/2,W/2+290,H/2);
         rim.addColorStop(0,'#8b6914');rim.addColorStop(0.3,'#d4a017');
         rim.addColorStop(0.5,'#f5c400');rim.addColorStop(0.7,'#d4a017');rim.addColorStop(1,'#8b6914');
-        ctx.strokeStyle=rim;ctx.lineWidth=3;
-        ctx.beginPath();ctx.ellipse(W/2,H/2,290,195,0,0,Math.PI*2);ctx.stroke();
-        // 內側細框
-        ctx.strokeStyle='rgba(245,196,0,.2)';ctx.lineWidth=1;
-        ctx.beginPath();ctx.ellipse(W/2,H/2,283,188,0,0,Math.PI*2);ctx.stroke();
+        ctx.strokeStyle=rim;ctx.lineWidth=2.5;
+        ctx.beginPath();ctx.ellipse(W/2,H/2,292,248,0,0,Math.PI*2);ctx.stroke();
 
-        // 玩家面板（四方位）
-        drawPlayerPanel(0,W/2-70,H-68,140,52);  // 下
-        drawPlayerPanel(1,W/2-70,8,140,52);       // 上
-        drawPlayerPanel(2,4,H/2-30,120,52);       // 左
-        drawPlayerPanel(3,W-124,H/2-30,120,52);   // 右
+        // 絨布桌面（含頂光）
+        const felt=ctx.createRadialGradient(W/2,H/2-80,20,W/2,H/2,330);
+        felt.addColorStop(0,'#226b2e');felt.addColorStop(0.55,'#14491e');
+        felt.addColorStop(0.85,'#0c3314');felt.addColorStop(1,'#07230d');
+        ctx.fillStyle=felt;
+        ctx.beginPath();ctx.ellipse(W/2,H/2,290,246,0,0,Math.PI*2);ctx.fill();
+        // 內側壓邊陰影（立體感）
+        ctx.save();
+        ctx.beginPath();ctx.ellipse(W/2,H/2,290,246,0,0,Math.PI*2);ctx.clip();
+        ctx.strokeStyle='rgba(0,0,0,.45)';ctx.lineWidth=14;
+        ctx.beginPath();ctx.ellipse(W/2,H/2,295,251,0,0,Math.PI*2);ctx.stroke();
+        ctx.restore();
+        // 出牌定位線
+        ctx.strokeStyle='rgba(245,196,0,.16)';ctx.lineWidth=1;
+        ctx.setLineDash([5,6]);
+        ctx.beginPath();ctx.ellipse(W/2,H/2,175,118,0,0,Math.PI*2);ctx.stroke();
+        ctx.setLineDash([]);
+        // 中央浮水印
+        if(!played&&!tableFade&&gamePhase!=='dealing'){
+          ctx.fillStyle='rgba(245,196,0,.07)';
+          ctx.font='bold 52px Georgia,serif';
+          ctx.textAlign='center';
+          ctx.fillText('燈 燈',W/2,H/2+16);
+          ctx.font='13px sans-serif';
+          ctx.fillStyle='rgba(245,196,0,.1)';
+          ctx.fillText('♠ ♥ ♣ ♦',W/2,H/2+42);
+        }
+
+        // 玩家面板
+        drawPlayerPanel(0,8,H-68,150,56);        // 下（左下角）
+        drawPlayerPanel(1,W/2-75,6,150,56);      // 上
+        drawPlayerPanel(2,58,H/2-28,118,56);     // 左（牌列內側）
+        drawPlayerPanel(3,W-176,H/2-28,118,56);  // 右（牌列內側）
 
         // 各家手牌
-        drawHand(hands[0],0,H-138,'bottom',true,selectedCards);
-        drawHand(hands[1],0,62,'top',false);
-        drawHand(hands[2],4,0,'left',false);
-        drawHand(hands[3],W-52,0,'right',false);
+        drawHand(0,0,H-168,'bottom',true,selectedCards);
+        drawHand(1,0,72,'top',false);
+        drawHand(2,10,0,'left',false);
+        drawHand(3,W-46,0,'right',false);
 
-        drawPlayedCards();
+        // 發牌中：中央牌堆
+        if(gamePhase==='dealing'){
+          for(let i=0;i<3;i++)drawCard(W/2-23-i*2,H/2-34-i*2,null,false,false);
+          ctx.fillStyle='rgba(245,196,0,.8)';
+          ctx.font='bold 13px -apple-system,sans-serif';
+          ctx.textAlign='center';
+          ctx.fillText('發牌中…',W/2,H/2+72);
+        }
+
+        drawTable();
         drawLog();
         drawButtons();
 
         // 出牌滑入動畫
         for(let i=animCards.length-1;i>=0;i--){
           const ac=animCards[i];
-          ctx.globalAlpha=ac.alpha;
-          ctx.save();
-          ctx.translate(ac.x+23,ac.y+34);
-          ctx.scale(1,ac.alpha*0.3+0.7);
-          ctx.translate(-23,-34);
-          drawCard(0,0,ac.card,false,true);
-          ctx.restore();
-          ac.x+=(W/2-23-ac.x)*0.15;
-          ac.y+=(H/2-34-ac.y)*0.15;
-          ac.alpha-=0.025;
+          ctx.globalAlpha=Math.max(ac.alpha,0);
+          drawCard(ac.x,ac.y,ac.card,false,true);
+          ac.x+=(W/2-26-ac.x)*0.18;
+          ac.y+=(H/2-50-ac.y)*0.18;
+          ac.alpha-=0.04;
           if(ac.alpha<=0)animCards.splice(i,1);
         }
         ctx.globalAlpha=1;
@@ -781,25 +1053,26 @@
           ctx.fillStyle='rgba(245,196,0,.7)';
           ctx.font='bold 12px -apple-system,sans-serif';
           ctx.textAlign='center';
-          ctx.fillText(`${PLAYERS[currentPlayer]} 思考中${dots}`,W/2,H/2+8);
+          ctx.fillText(`${PLAYERS[currentPlayer]} 思考中${dots}`,W/2,H/2+72);
         }
       }
 
       /* ── 主循環 ── */
       function loop(){
+        if(!alive)return;
         fr++;
-        // AI行動
-        if(gamePhase==='playing'&&currentPlayer!==0&&!finished.includes(currentPlayer)){
+        if(gamePhase==='dealing'){
+          dealT++;
+          if(dealT>=110)onDealDone();
+        }
+        else if(gamePhase==='playing'&&currentPlayer!==0&&!finished.includes(currentPlayer)){
           aiThinkTimer--;
           if(aiThinkTimer<=0){
             const mustC3=mustFirst&&hands[currentPlayer].some(c=>c.r==='3'&&c.s==='♣');
-            const result=aiPlay(hands[currentPlayer],played,mustC3,targetPlayer,currentPlayer);
-            if(result){
-              playCards(currentPlayer,result.cards);
-            } else {
-              pass(currentPlayer);
-            }
-            aiThinkTimer=aiThinkDelay+Math.floor(Math.random()*40);
+            const result=smartAiPlay(currentPlayer,mustC3);
+            if(result)playCards(currentPlayer,result.cards);
+            else pass(currentPlayer);
+            scheduleAI();
           }
         }
         draw();
@@ -807,11 +1080,13 @@
       }
 
       /* ── 啟動 ── */
-      running=true;
       api.showMsg('🃏 燈燈大老二',
-        '梅花3先出・梅花3持有者先手\n點選手牌選牌，按出牌/Pass',
+        '梅花3持有者先手，首手必含梅花3\n同花順>鐵支可壓任意牌型\n💡提示鍵自動選牌・⇅可切換排序',
         [{label:'▶ 開始',red:true,fn:()=>{api.hideMsg();api.raf(loop);}}]
       );
+
+      // splash-game.js 若有接 init 回傳值，可直接呼叫銷毀
+      return destroy;
     }
   });
 })();

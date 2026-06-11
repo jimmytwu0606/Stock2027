@@ -13,6 +13,8 @@
  *   - window.__snapshot._quality（驗算品質）
  */
 
+import { getKlineCache } from './db.js';
+
 // ── 策略名稱對照（S/W 系列顯示用）────────────────────────
 const STRATEGY_NAMES = {
   S1:'量價齊揚', S2:'均線黃金交叉', S3:'強勢多頭', S4:'創高強勢',
@@ -40,6 +42,7 @@ let _pulse        = null;
 let _aiResult     = null;   // 已匯入的 AI 分析結果
 let _currentTab   = 'auto';
 let _historyData  = [];     // 近期多空比重歷史（從 localStorage 讀）
+let _twii         = null;   // 大盤統計（_loadTwiiStats 填入，供 prompt 用）
 
 const HISTORY_KEY = 'mp_pulse_history';
 const HISTORY_MAX = 10;
@@ -70,6 +73,31 @@ function _onSnapshotReady() {
   _pulse = snap._pulse;
   _recordHistory(_pulse);
   _updateTopbar();
+  _loadTwiiStats();
+}
+
+// 大盤統計：close / 漲跌 / 月線乖離 / 5日20日漲跌幅
+// 來源：IDB kline_cache（R2 bundle 預載），失敗則 prompt 省略大盤段
+async function _loadTwiiStats() {
+  if (_twii) return;
+  try {
+    const cache = await getKlineCache('^TWII', '1y');
+    const cs = cache?.candles;
+    if (!cs || cs.length < 21) return;
+    const last = cs.at(-1), prev = cs.at(-2);
+    const ma20 = cs.slice(-20).reduce((s, k) => s + k.close, 0) / 20;
+    const pct = (a, b) => b ? +((a - b) / b * 100).toFixed(2) : 0;
+    const d = new Date((last.time ?? 0) * 1000);
+    _twii = {
+      date: `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+      close: last.close,
+      chg1d: pct(last.close, prev.close),
+      ma20: +ma20.toFixed(2),
+      bias20: pct(last.close, ma20),
+      chg5d: pct(last.close, cs.at(-6)?.close),
+      chg20d: pct(last.close, cs.at(-21)?.close),
+    };
+  } catch (e) {}
 }
 
 // ═══════════════════════════════════════════════════════
@@ -672,9 +700,13 @@ function _verifyAiResult(ai) {
   }
 
   // 2. 強度評分合理性
+  // strength = 「方向」的強度：bearish + 極端空頭給高分是一致，不是矛盾
   const extremeBear = cs >= 35, extremeBull = cb >= 55;
-  if (ai.strength >= 4 && extremeBear) {
-    rows.push({ pass:false, warn:true, text:`強度評分 ${ai.strength}/5 偏高`, result:`確定空頭 ${cs}% · 建議降至 3` });
+  if (ai.strength >= 4 && extremeBear && ai.sentiment !== 'bearish') {
+    rows.push({ pass:false, warn:true, text:`強度評分 ${ai.strength}/5 偏高`, result:`確定空頭 ${cs}% 但情緒非偏空 · 建議降至 3` });
+    hasWarn = true;
+  } else if (ai.strength >= 4 && extremeBull && ai.sentiment !== 'bullish') {
+    rows.push({ pass:false, warn:true, text:`強度評分 ${ai.strength}/5 偏高`, result:`確定多頭 ${cb}% 但情緒非偏多 · 建議降至 3` });
     hasWarn = true;
   } else if (ai.strength <= 2 && (extremeBear || extremeBull)) {
     rows.push({ pass:false, warn:true, text:`強度評分 ${ai.strength}/5 偏低`, result:`市場方向明確 · 建議提高` });
@@ -687,6 +719,10 @@ function _verifyAiResult(ai) {
   if (ai.key_signals?.bull?.id && topBull) {
     if (ai.key_signals.bull.id === topBull.id) {
       rows.push({ pass:true, warn:false, text:`多頭主訊號 ${ai.key_signals.bull.id}`, result:`命中 ${_fmtN(topBull.count)} 支 · 吻合` });
+      if (ai.key_signals.bull.count !== topBull.count) {
+        rows.push({ pass:false, warn:true, text:`多頭主訊號 count ${_fmtN(ai.key_signals.bull.count)}`, result:`實際 ${_fmtN(topBull.count)} 支 · AI 數字錯誤` });
+        hasWarn = true;
+      }
     } else {
       const aiCount = (_pulse.bullCounts ?? {})[ai.key_signals.bull.id] ?? 0;
       rows.push({ pass:false, warn:true, text:`多頭主訊號 ${ai.key_signals.bull.id}`, result:`實際最強為 ${topBull.id}（${_fmtN(topBull.count)} 支）` });
@@ -696,6 +732,10 @@ function _verifyAiResult(ai) {
   if (ai.key_signals?.bear?.id && topBear) {
     if (ai.key_signals.bear.id === topBear.id) {
       rows.push({ pass:true, warn:false, text:`空頭主訊號 ${ai.key_signals.bear.id}`, result:`命中 ${_fmtN(topBear.count)} 支 · 吻合` });
+      if (ai.key_signals.bear.count !== topBear.count) {
+        rows.push({ pass:false, warn:true, text:`空頭主訊號 count ${_fmtN(ai.key_signals.bear.count)}`, result:`實際 ${_fmtN(topBear.count)} 支 · AI 數字錯誤` });
+        hasWarn = true;
+      }
     } else {
       rows.push({ pass:false, warn:true, text:`空頭主訊號 ${ai.key_signals.bear.id}`, result:`實際最強為 ${topBear.id}（${_fmtN(topBear.count)} 支）` });
       hasWarn = true;
@@ -719,6 +759,14 @@ function _verifyAiResult(ai) {
       rows.push({ pass:false, warn:true, text:`${keyBearId} 未列入觀察`, result:`為 key_signals.bear，應加入 watchSignals` });
       hasWarn = true;
     }
+  }
+
+  // 4b. watchSignals id 合法性（幻覺 id 防呆）
+  const knownIds = new Set([...Object.keys(_pulse.bullCounts ?? {}), ...Object.keys(_pulse.bearCounts ?? {}), ...Object.keys(STRATEGY_NAMES)]);
+  const unknownIds = watched.filter(id => !knownIds.has(id));
+  if (unknownIds.length) {
+    rows.push({ pass:false, warn:true, text:`未知訊號 id：${unknownIds.join('、')}`, result:'不存在於系統，AI 幻覺' });
+    hasWarn = true;
   }
 
   // 5. riskScore 合理性
@@ -754,10 +802,29 @@ function _buildPrompt() {
   const cBull = _pulse.confirmedBull ?? 0;
   const cBear = _pulse.confirmedBear ?? 0;
   const cNeut = _pulse.confirmedNeutral ?? 0;
-  const topBull = _getTopSignal('bull');
-  const topBear = _getTopSignal('bear');
   const bullTop5 = _getTopSignals('bull', 5).map(s => `${s.id} ${STRATEGY_NAMES[s.id] ?? s.id}:${s.count}支`).join('、');
   const bearTop5 = _getTopSignals('bear', 5).map(s => `${s.id} ${STRATEGY_NAMES[s.id] ?? s.id}:${s.count}支`).join('、');
+
+  // 大盤段（_loadTwiiStats 已完成才附）
+  let twiiBlock = '';
+  if (_twii) {
+    const twiiStale = _twii.date && date !== '—' && !String(date).endsWith(_twii.date);
+    twiiBlock = `
+加權指數（資料日 ${_twii.date}${twiiStale ? '，較訊號數據舊一日，僅供趨勢參考' : ''}）：${_fmtN(_twii.close)} 點（當日 ${_twii.chg1d >= 0 ? '+' : ''}${_twii.chg1d}%）
+指數月線（MA20）：${_fmtN(_twii.ma20)}，乖離 ${_twii.bias20 >= 0 ? '+' : ''}${_twii.bias20}%
+近5日漲跌幅：${_twii.chg5d >= 0 ? '+' : ''}${_twii.chg5d}%，近20日：${_twii.chg20d >= 0 ? '+' : ''}${_twii.chg20d}%
+`;
+  }
+
+  // 近5日確定多空序列（≥2 筆才附，含今日）
+  let histBlock = '';
+  const hist = (_historyData ?? []).filter(d => d.cbull != null).slice(-5);
+  if (hist.length >= 2) {
+    histBlock = `
+近${hist.length}日確定多空比重變化（舊→新）：
+${hist.map(d => `${d.date.slice(5)} 多${d.cbull}%/空${d.cbear}%`).join(' → ')}
+`;
+  }
 
   return `你是台股量化分析師，請根據以下全市場技術訊號數據，提供具深度參考價值的盤面分析。
 
@@ -766,26 +833,33 @@ function _buildPrompt() {
 確定多頭（站上月線且月線上揚）：${_fmtN(cBull)} 支（${cb}%）
 確定空頭（跌破月線且月線下彎）：${_fmtN(cBear)} 支（${cs}%）
 中性盤整（月線附近或方向未明）：${_fmtN(cNeut)} 支（${cn}%）
-
-多頭訊號前5（命中次數）：${bullTop5 || '無'}
-空頭訊號前5（命中次數）：${bearTop5 || '無'}
+${twiiBlock}${histBlock}
+多頭訊號前5（目前符合條件的股票數，為當前狀態統計，非當日新增）：${bullTop5 || '無'}
+空頭訊號前5（同上，為當前狀態統計，非當日新增）：${bearTop5 || '無'}
 
 台股慣例：紅=漲=多頭，綠=跌=空頭。
 
+【硬性限制】
+- 只能根據上方提供的數據分析。未提供的資訊（產業輪動、外資買賣超、個別族群、營收、消息面）一律禁止臆測或編造。
+- 文中引用的所有數字必須與上方數據一致，不可自行推算未提供的統計。
+- key_signals 的 count 必須照抄上方訊號命中次數，不可改動。
+- watchSignals 只能使用上方出現過的訊號 id。
+
 【分析要求】
-請從以下維度提供分析：
-1. market_story：市場現在的核心敘事（AI浪潮/景氣循環/資金輪動等），一句話精準點出
-2. trend：目前趨勢結構（月線站上/跌破的分布意義、主導力量），約60字
-3. risk_opportunity：當前最大風險與潛在機會（具體說明哪類股票值得注意），約60字
-4. suggestion：操作建議（具體方向，非泛泛而談），約40字
-5. key_signals：最強多頭訊號和空頭訊號各一個，說明其市場意義
+1. market_story：用一句話描述數據呈現的市場結構核心狀態（例：指數守穩月線但個股普遍轉弱的背離格局），只根據數據，不講題材故事
+2. trend：趨勢結構（月線分布意義、主導力量${histBlock ? '、多空比重變化方向' : ''}${twiiBlock ? '、指數與個股廣度的關係' : ''}），約60字
+3. risk_opportunity：當前最大風險與潛在機會（從訊號分布推論，例如哪種技術型態的股票風險高/有機會），約60字
+4. suggestion：操作建議（部位、節奏、選股條件，具體可執行），約40字
+5. key_signals：從上方前5名中各選最強多頭與空頭訊號，name 只填中文名稱（不含 id），meaning 用一般投資人聽得懂的白話說明
+
+【文字風格】淺白易懂、像跟朋友解釋盤勢，但描述必須精準：分清楚「目前處於某狀態」和「今天剛發生」，不可混用；數字照抄不改寫。
 
 只回覆以下 JSON，不要加 markdown 標記或其他說明。請確認用語正確，不要有錯別字：
 {
   "sentiment": "bullish|bearish|neutral",
   "strength": 1-5,
   "summary": "一句話盤面總結，30字內，專業精準",
-  "market_story": "市場現在賭的核心故事，一句話",
+  "market_story": "數據呈現的市場結構，一句話",
   "trend": "趨勢分析，約60字",
   "risk_opportunity": "風險與機會，約60字",
   "suggestion": "操作建議，約40字",
@@ -793,12 +867,14 @@ function _buildPrompt() {
     "bull": { "id": "訊號id", "name": "訊號名稱", "count": 0, "meaning": "此訊號的市場意義，20字內" },
     "bear": { "id": "訊號id", "name": "訊號名稱", "count": 0, "meaning": "此訊號的市場意義，20字內" }
   },
-  "watchSignals": ["必須包含 key_signals.bull.id 和 key_signals.bear.id，再加1-3個值得追蹤的訊號id，共3-5個"],
+  "watchSignals": ["S33", "W1", "S5"],
   "outlook": "未來1-3日展望，50字內",
   "riskScore": 1-5,
   "consensus": "整體評估一句話結論，20字內",
   "checkedAt": "${date}"
-}`;
+}
+
+watchSignals 規則：必須包含 key_signals.bull.id 與 key_signals.bear.id，再加 1-3 個值得追蹤的訊號 id，共 3-5 個，全部為純 id 字串。`;
 }
 
 // ── 歷史記錄 ─────────────────────────────────────────────
@@ -808,7 +884,7 @@ function _recordHistory(pulse) {
     const stored = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]');
     const exists = stored.findIndex(d => d.date === pulse.date);
     const bullRatio = _calcBullRatio();
-    const entry = { date: pulse.date, bullRatio };
+    const entry = { date: pulse.date, bullRatio, cbull: pulse.cbullRatio ?? null, cbear: pulse.cbearRatio ?? null };
     if (exists >= 0) stored[exists] = entry;
     else stored.push(entry);
     // 保留最近 N 筆

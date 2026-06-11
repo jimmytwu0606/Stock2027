@@ -29,6 +29,9 @@ const TOOLS = {
   hline:  { icon: '━', label: '水平線', needPoints: 1 },
   vline:  { icon: '│', label: '垂直線', needPoints: 1 },
   rect:   { icon: '▭', label: '矩形',   needPoints: 2 },
+  ray:    { icon: '↗', label: '射線（延伸至圖緣）', needPoints: 2 },
+  fib:    { icon: '𝔉', label: '費波那契回撤',       needPoints: 2 },
+  measure:{ icon: '⤢', label: '量尺（漲跌幅/K棒數）', needPoints: 2 },
   text:   { icon: 'T', label: '文字',   needPoints: 1 },
 };
 
@@ -37,8 +40,15 @@ const DEFAULT_COLOR = {
   hline: '#26a69a',
   vline: '#a78bfa',
   rect:  '#f59e0b',
+  ray:   '#3b82f6',
+  fib:   '#e3b341',
+  measure: '#8b9dc3',
   text:  '#e8eaed',
 };
+
+// 樣式面板：色票 / 線寬 / 虛實（套用到選中圖形；無選取時設為新圖形預設）
+const STYLE_COLORS = ['#3b82f6', '#ef5350', '#26a69a', '#e3b341', '#a78bfa', '#e8eaed'];
+let currentStyle = { color: null, width: 1.5, dash: false };  // color null = 用工具預設色
 
 const HIT_THRESHOLD     = 6;
 const ENDPOINT_RADIUS   = 8;     // A2 端點命中範圍
@@ -63,6 +73,8 @@ let snapEnabled = true;          // A3 磁吸開關
 let shiftHeld = false;           // A3 Shift = 暫時關磁吸
 let lastSnap = null;             // A3 目前吸附位置
 let hoverInfo = null;            // A5 滑鼠 hover 的 OHLCV
+let hoverId   = null;            // B1 hover 高亮的圖形 id
+let ctxMenuEl = null;            // B2 右鍵選單元素
 let coordPanelEl = null;         // A5 浮層元素
 
 let ctxRefs = null;
@@ -120,6 +132,8 @@ export function exitEditMode() {
   _flushSave();
 
   if (overlay) { try { overlay.destroy(); } catch {} overlay = null; }
+  _hideCtxMenu();
+  hoverId = null;
 
   _hideIndicators(false);
   window.dispatchEvent(new CustomEvent('chartReload'));
@@ -144,6 +158,8 @@ export function isEditing() { return editing; }
 
 function _createOverlay() {
   if (overlay) { try { overlay.destroy(); } catch {} overlay = null; }
+  _hideCtxMenu();
+  hoverId = null;
   overlay = initOverlay(ctxRefs.chartContainer, { mode: 'edit', id: 'overlay-edit' });
   const chart  = ctxRefs.getChart?.();
   const series = ctxRefs.getSeries?.();
@@ -155,6 +171,81 @@ function _createOverlay() {
   overlay.on('dblclick',  _onDblClick);
   overlay.on('leave',     _onLeave);
   overlay.render(_drawAll);
+
+  // B2 右鍵選單（canvas-overlay 不轉發 contextmenu，直接綁原生）
+  if (overlay.canvas) {
+    overlay.canvas.addEventListener('contextmenu', _onContextMenu);
+  }
+}
+
+function _onContextMenu(ev) {
+  if (!editing || !overlay) return;
+  ev.preventDefault();
+  const rect = overlay.canvas.getBoundingClientRect();
+  const e = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+  const hit = _hitTest(e);
+  _hideCtxMenu();
+  if (!hit) return;
+  selectedId = hit.id;
+  overlay.requestRender();
+  _showCtxMenu(ev.clientX, ev.clientY);
+}
+
+function _showCtxMenu(clientX, clientY) {
+  if (!ctxMenuEl) {
+    ctxMenuEl = document.createElement('div');
+    ctxMenuEl.className = 'ce-ctx-menu';
+    ctxMenuEl.innerHTML = `
+      <button data-cm="dup">⧉ 複製</button>
+      <button data-cm="top">⇡ 置頂</button>
+      <button data-cm="del" style="color:#ef5350">🗑 刪除</button>`;
+    document.body.appendChild(ctxMenuEl);
+    ctxMenuEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button');
+      if (!btn) return;
+      const act = btn.dataset.cm;
+      if (act === 'del') deleteSelected();
+      if (act === 'dup') _duplicateSelected();
+      if (act === 'top') _bringToFront();
+      _hideCtxMenu();
+    });
+    // 點其他地方關閉
+    document.addEventListener('mousedown', (ev) => {
+      if (ctxMenuEl && !ctxMenuEl.contains(ev.target)) _hideCtxMenu();
+    });
+  }
+  ctxMenuEl.style.left = clientX + 'px';
+  ctxMenuEl.style.top  = clientY + 'px';
+  ctxMenuEl.style.display = 'flex';
+}
+
+function _hideCtxMenu() {
+  if (ctxMenuEl) ctxMenuEl.style.display = 'none';
+}
+
+function _duplicateSelected() {
+  const src = annotations.find(a => a.id === selectedId);
+  if (!src) return;
+  _pushUndo();
+  const dup = JSON.parse(JSON.stringify(src));
+  dup.id = _uuid();
+  dup.auto = false;   // 複製出來的視為手繪
+  dup.created_at = dup.updated_at = Date.now();
+  annotations.push(dup);
+  selectedId = dup.id;
+  _shiftAnnotation(dup, 12, 12);   // 錯位避免完全重疊
+  _scheduleSave();
+  overlay.requestRender();
+}
+
+function _bringToFront() {
+  const idx = annotations.findIndex(a => a.id === selectedId);
+  if (idx < 0 || idx === annotations.length - 1) return;
+  _pushUndo();
+  const [a] = annotations.splice(idx, 1);
+  annotations.push(a);   // 陣列尾端後畫 = 最上層，hit test 也是倒序先命中
+  _scheduleSave();
+  overlay.requestRender();
 }
 
 export function reattachAfterReload() {
@@ -206,11 +297,13 @@ function _drawAll(ctx, h) {
 
 function _drawAnnotation(ctx, h, a, isSelected) {
   ctx.save();
-  ctx.lineWidth = (a.width || 1.5) + (isSelected ? 1 : 0);
+  const isHover = !isSelected && a.id === hoverId;
+  ctx.lineWidth = (a.width || 1.5) + (isSelected ? 1 : 0) + (isHover ? 0.8 : 0);
   ctx.strokeStyle = a.color || DEFAULT_COLOR[a.type] || '#3b82f6';
   ctx.fillStyle   = a.color || DEFAULT_COLOR[a.type] || '#3b82f6';
   ctx.lineCap  = 'round';
   ctx.lineJoin = 'round';
+  ctx.setLineDash(a.dash ? [6, 4] : []);
 
   const W = h.width, H = h.height;
   const pts = (a.points || []).map(p => _pointToXY(h, p));
@@ -252,6 +345,85 @@ function _drawAnnotation(ctx, h, a, isSelected) {
         { x: pts[0].x, y: pts[1].y },
       ]);
     }
+  } else if (a.type === 'ray' && pts.length >= 2 && pts[0] && pts[1]) {
+    // 從 p0 穿過 p1 延伸到畫布邊緣
+    const ext = _extendToEdge(pts[0], pts[1], W, H);
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(ext.x, ext.y);
+    ctx.stroke();
+    if (isSelected) _drawHandles(ctx, pts);
+  } else if (a.type === 'fib' && pts.length >= 2 && pts[0] && pts[1]) {
+    const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+    const p0 = a.points[0], p1 = a.points[1];
+    const x0 = Math.min(pts[0].x, pts[1].x);
+    const x1 = W;  // 向右延伸到圖緣（看未來支撐壓力）
+    const base = a.color || DEFAULT_COLOR.fib;
+    ctx.font = '11px system-ui';
+    ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'right';   // 標籤靠右緣，不壓 K 棒
+    for (const lv of FIB_LEVELS) {
+      const price = p1.price + (p0.price - p1.price) * lv;
+      const y = h.priceToY(price);
+      if (y == null) continue;
+      ctx.globalAlpha = (lv === 0 || lv === 1) ? 0.85 : (lv === 0.5 ? 0.6 : 0.38);
+      ctx.strokeStyle = base;
+      ctx.beginPath();
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x1, y);
+      ctx.stroke();
+      ctx.globalAlpha = (lv === 0 || lv === 1) ? 0.95 : 0.75;
+      ctx.fillStyle = base;
+      ctx.fillText(`${(lv * 100).toFixed(1)}% ${price.toFixed(2)}`, x1 - 4, y - 2);
+    }
+    ctx.globalAlpha = 1;
+    if (isSelected) _drawHandles(ctx, pts);
+  } else if (a.type === 'measure' && pts.length >= 2 && pts[0] && pts[1]) {
+    const p0 = a.points[0], p1 = a.points[1];
+    const chgPct = (p0.price && p1.price) ? ((p1.price - p0.price) / p0.price) * 100 : 0;
+    // 台股慣例：漲紅跌綠
+    const col = chgPct >= 0 ? '#ef5350' : '#26a69a';
+    const bars = (p0.logical != null && p1.logical != null)
+      ? Math.abs(Math.round(p1.logical - p0.logical)) : null;
+    // 半透明區域 + 對角箭頭
+    const x = Math.min(pts[0].x, pts[1].x), y = Math.min(pts[0].y, pts[1].y);
+    const w = Math.abs(pts[1].x - pts[0].x), hh = Math.abs(pts[1].y - pts[0].y);
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.1;
+    ctx.fillRect(x, y, w, hh);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+    ctx.stroke();
+    // 箭頭頭部
+    const ang = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    ctx.beginPath();
+    ctx.moveTo(pts[1].x, pts[1].y);
+    ctx.lineTo(pts[1].x - 8 * Math.cos(ang - 0.4), pts[1].y - 8 * Math.sin(ang - 0.4));
+    ctx.moveTo(pts[1].x, pts[1].y);
+    ctx.lineTo(pts[1].x - 8 * Math.cos(ang + 0.4), pts[1].y - 8 * Math.sin(ang + 0.4));
+    ctx.stroke();
+    // 資訊框
+    const diff = (p1.price ?? 0) - (p0.price ?? 0);
+    const lines = [
+      `${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%（${diff >= 0 ? '+' : ''}${diff.toFixed(2)}）`,
+      bars != null ? `${bars} 根 K 棒` : '',
+    ].filter(Boolean);
+    ctx.font = '12px system-ui';
+    const bw = Math.max(...lines.map(t => ctx.measureText(t).width)) + 12;
+    const bx = (pts[0].x + pts[1].x) / 2 - bw / 2;
+    const by = Math.min(pts[0].y, pts[1].y) - 18 * lines.length - 8;
+    ctx.fillStyle = 'rgba(28,31,36,0.92)';
+    ctx.fillRect(bx, by, bw, 18 * lines.length + 6);
+    ctx.strokeStyle = col;
+    ctx.strokeRect(bx, by, bw, 18 * lines.length + 6);
+    ctx.fillStyle = col;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    lines.forEach((t, i) => ctx.fillText(t, bx + 6, by + 4 + i * 18));
+    if (isSelected) _drawHandles(ctx, pts);
   } else if (a.type === 'text' && pts[0]) {
     ctx.font = '13px system-ui, -apple-system, sans-serif';
     ctx.textBaseline = 'middle';
@@ -267,7 +439,30 @@ function _drawAnnotation(ctx, h, a, isSelected) {
     ctx.fillText(txt, bx + padX, by);
     if (isSelected) _drawHandles(ctx, [pts[0]]);
   }
+  // ✨ 自動描繪標記（與手繪區分，清除自動時只掃這些）
+  if (a.auto && pts[0]) {
+    ctx.setLineDash([]);
+    ctx.font = '10px system-ui';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 0.8;
+    ctx.fillText('✨', 4, pts[0].y - 10);
+    ctx.globalAlpha = 1;
+  }
   ctx.restore();
+}
+
+// 從 p0 穿過 p1 延伸到畫布邊界的交點
+function _extendToEdge(p0, p1, W, H) {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  if (dx === 0 && dy === 0) return p1;
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (W - p0.x) / dx);
+  if (dx < 0) t = Math.min(t, (0 - p0.x) / dx);
+  if (dy > 0) t = Math.min(t, (H - p0.y) / dy);
+  if (dy < 0) t = Math.min(t, (0 - p0.y) / dy);
+  if (!Number.isFinite(t)) return p1;
+  return { x: p0.x + dx * t, y: p0.y + dy * t };
 }
 
 function _drawHandles(ctx, pts) {
@@ -389,8 +584,9 @@ function _onMouseDown(e) {
   drawingTemp = {
     id, type: activeTool,
     points: [p0],
-    color: DEFAULT_COLOR[activeTool],
-    width: 1.5,
+    color: currentStyle.color || DEFAULT_COLOR[activeTool],
+    width: currentStyle.width,
+    dash:  currentStyle.dash,
     label: activeTool === 'text' ? '' : undefined,
     created_at: now, updated_at: now,
   };
@@ -403,6 +599,20 @@ function _onMouseDown(e) {
 function _onMouseMove(e) {
   // A5 即時座標提示
   _updateCoordPanel(e);
+
+  // B1 hover 高亮（select 模式、非拖曳中）
+  if (activeTool === 'select' && !draggingId && !draggingEndpoint && !drawingTemp) {
+    const hit = _hitTest(e);
+    const newHover = hit ? hit.id : null;
+    if (newHover !== hoverId) {
+      hoverId = newHover;
+      if (overlay?.canvas) overlay.canvas.style.cursor = hoverId ? 'pointer' : '';
+      overlay?.requestRender();
+    }
+  } else if (hoverId) {
+    hoverId = null;
+    if (overlay?.canvas) overlay.canvas.style.cursor = '';
+  }
 
   // A3 磁吸偵測(僅繪製工具)
   if (activeTool !== 'select' && editing) {
@@ -529,7 +739,7 @@ function _hitEndpoint(e) {
 function _getEndpoints(h, a) {
   const out = [];
   const pts = (a.points || []).map(p => _pointToXY(h, p));
-  if (a.type === 'line' && pts[0] && pts[1]) {
+  if ((a.type === 'line' || a.type === 'ray' || a.type === 'fib' || a.type === 'measure') && pts[0] && pts[1]) {
     out.push({ ...pts[0], index: 0 });
     out.push({ ...pts[1], index: 1 });
   } else if (a.type === 'rect' && pts[0] && pts[1]) {
@@ -562,8 +772,24 @@ function _hitOne(h, a, x, y) {
   if (a.type === 'vline' && pts[0]) {
     return Math.abs(x - pts[0].x) < HIT_THRESHOLD;
   }
-  if (a.type === 'line' && pts[0] && pts[1]) {
+  if ((a.type === 'line' || a.type === 'measure') && pts[0] && pts[1]) {
     return _distToSegment(x, y, pts[0].x, pts[0].y, pts[1].x, pts[1].y) < HIT_THRESHOLD;
+  }
+  if (a.type === 'ray' && pts[0] && pts[1]) {
+    const ext = _extendToEdge(pts[0], pts[1], h.width, h.height);
+    return _distToSegment(x, y, pts[0].x, pts[0].y, ext.x, ext.y) < HIT_THRESHOLD;
+  }
+  if (a.type === 'fib' && pts[0] && pts[1]) {
+    // 命中：兩錨點連線附近，或任一 level 水平線（x0 以右）
+    if (_distToSegment(x, y, pts[0].x, pts[0].y, pts[1].x, pts[1].y) < HIT_THRESHOLD) return true;
+    const x0 = Math.min(pts[0].x, pts[1].x);
+    if (x < x0 - 4) return false;
+    const p0 = a.points[0], p1 = a.points[1];
+    for (const lv of [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]) {
+      const yLv = h.priceToY(p1.price + (p0.price - p1.price) * lv);
+      if (yLv != null && Math.abs(y - yLv) < HIT_THRESHOLD) return true;
+    }
+    return false;
   }
   if (a.type === 'rect' && pts[0] && pts[1]) {
     const minX = Math.min(pts[0].x, pts[1].x), maxX = Math.max(pts[0].x, pts[1].x);
@@ -770,6 +996,15 @@ export function clearAll() {
   overlay?.requestRender();
 }
 
+export function clearAutoDrawings() {
+  if (!annotations.some(a => a.auto)) return;
+  _pushUndo();
+  annotations = annotations.filter(a => !a.auto);
+  if (selectedId && !annotations.find(a => a.id === selectedId)) selectedId = null;
+  _scheduleSave();
+  overlay?.requestRender();
+}
+
 export function deleteSelected() {
   if (!selectedId) return;
   _pushUndo();
@@ -777,6 +1012,99 @@ export function deleteSelected() {
   selectedId = null;
   _scheduleSave();
   overlay?.requestRender();
+}
+
+// ============================================================================
+// ✨ 自動描繪：擺動點分群 → 支撐/壓力水平線；近 80 根主波段 → 費波回撤
+// ============================================================================
+export function autoDraw() {
+  const candles = ctxRefs?.getCandles?.() || AppState.lastCandles;
+  if (!candles || candles.length < 30 || !overlay) {
+    alert('K 線不足，無法自動描繪');
+    return;
+  }
+  _pushUndo();
+  const now = Date.now();
+  const added = [];
+
+  // ── 1. 擺動點偵測（fractal window 3：左右各 3 根都更低/更高）──
+  const PIVOT_W = 3;
+  const pivots = [];  // { idx, price, kind: 'high'|'low' }
+  for (let i = PIVOT_W; i < candles.length - PIVOT_W; i++) {
+    const hi = candles[i].high, lo = candles[i].low;
+    let isH = true, isL = true;
+    for (let j = i - PIVOT_W; j <= i + PIVOT_W; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= hi) isH = false;
+      if (candles[j].low  <= lo) isL = false;
+    }
+    if (isH) pivots.push({ idx: i, price: hi, kind: 'high' });
+    if (isL) pivots.push({ idx: i, price: lo, kind: 'low' });
+  }
+
+  // ── 2. 支撐壓力：擺動點價位分群（±1.5%），觸碰次數 ≥ 3 取前 3 名 ──
+  const lastClose = candles[candles.length - 1].close;
+  const clusters = [];
+  for (const p of pivots) {
+    const hit = clusters.find(cl => Math.abs(cl.price - p.price) / cl.price < 0.015);
+    if (hit) {
+      hit.count++;
+      hit.price = (hit.price * (hit.count - 1) + p.price) / hit.count;  // 移動平均
+    } else {
+      clusters.push({ price: p.price, count: 1 });
+    }
+  }
+  // 只取「現價上方最近壓力」+「現價下方最近支撐」各一條，避免滿屏橫線雜訊
+  const valid = clusters.filter(cl => cl.count >= 3 && Math.abs(cl.price - lastClose) / lastClose > 0.02);
+  const res = valid.filter(cl => cl.price > lastClose).sort((a, b) => a.price - b.price)[0];
+  const sup = valid.filter(cl => cl.price < lastClose).sort((a, b) => b.price - a.price)[0];
+  [res, sup].filter(Boolean).forEach(cl => {
+      added.push({
+        id: _uuid(), type: 'hline',
+        // ⚠️ _pointToXY 需要 time/logical 才回座標，hline 也不例外 → 錨在最後一根
+        points: [{ price: cl.price, time: candles[candles.length - 1].time, logical: candles.length - 1 }],
+        color: cl.price > lastClose ? '#ef5350' : '#26a69a',  // 上方=壓力紅，下方=支撐綠
+        width: 1.5, dash: true, auto: true,
+        label: cl.price > lastClose ? `壓力（${cl.count}次）` : `支撐（${cl.count}次）`,
+        created_at: now, updated_at: now,
+      });
+    });
+
+  // ── 3. 主波段費波：近 80 根找最高點，與其之前的最低點配對 ──
+  const N = Math.min(80, candles.length);
+  const recent = candles.slice(-N);
+  const offset = candles.length - N;
+  let hiIdx = 0;
+  recent.forEach((c, i) => { if (c.high > recent[hiIdx].high) hiIdx = i; });
+  let loIdx = 0;
+  for (let i = 1; i <= hiIdx; i++) {
+    if (recent[i].low < recent[loIdx].low) loIdx = i;
+  }
+  if (hiIdx > loIdx) {
+    const cLo = candles[offset + loIdx], cHi = candles[offset + hiIdx];
+    const range = (cHi.high - cLo.low) / cLo.low;
+    if (range > 0.1) {  // 波段幅度 > 10% 才畫，避免盤整段畫垃圾
+      added.push({
+        id: _uuid(), type: 'fib',
+        // p0=低點（100%）、p1=高點（0%），與手繪「低拉到高」一致
+        points: [
+          { time: cLo.time, logical: offset + loIdx, price: cLo.low },
+          { time: cHi.time, logical: offset + hiIdx, price: cHi.high },
+        ],
+        color: '#e3b341', width: 1.5, dash: false, auto: true,
+        created_at: now, updated_at: now,
+      });
+    }
+  }
+
+  if (!added.length) {
+    alert('找不到值得描繪的結構（擺動點/波段不足）');
+    undoStack.pop();  // 還掉這次 pushUndo
+    return;
+  }
+  annotations.push(...added);
+  _scheduleSave();
+  overlay.requestRender();
 }
 
 // ============================================================================
@@ -832,7 +1160,18 @@ function _injectToolbar() {
       ).join('')}
     </div>
     <div class="ce-divider"></div>
+    <div class="ce-styles">
+      ${STYLE_COLORS.map(col =>
+        `<button class="ce-style-swatch" data-color="${col}" style="background:${col}" title="顏色（套用選取或之後新圖形）"></button>`
+      ).join('')}
+      <button class="ce-style-btn" data-width="1.5" title="細線">─</button>
+      <button class="ce-style-btn" data-width="2.5" title="粗線" style="font-weight:700">━</button>
+      <button class="ce-style-btn" data-dash="1" title="虛線切換">┄</button>
+    </div>
+    <div class="ce-divider"></div>
     <div class="ce-actions">
+      <button class="ce-action-btn" data-action="auto"      title="自動描繪（支撐壓力 + 主波段費波）">✨</button>
+      <button class="ce-action-btn" data-action="clearAuto" title="清除自動描繪（手繪保留）">🧹</button>
       <button class="ce-action-btn" data-action="snap"   title="磁吸 K 棒(Shift 暫時關)">🧲</button>
       <button class="ce-action-btn" data-action="undo"   title="復原">⟲</button>
       <button class="ce-action-btn" data-action="delete" title="刪除選取(Del)">🗑</button>
@@ -849,9 +1188,28 @@ function _injectToolbar() {
     const tBtn = ev.target.closest('.ce-tool-btn');
     if (tBtn) { setActiveTool(tBtn.dataset.tool); return; }
 
+    // 樣式面板：套用到選中圖形，無選取則設為後續預設
+    const sw = ev.target.closest('.ce-style-swatch, .ce-style-btn');
+    if (sw) {
+      const patch = {};
+      if (sw.dataset.color) { currentStyle.color = sw.dataset.color; patch.color = sw.dataset.color; }
+      if (sw.dataset.width) { currentStyle.width = +sw.dataset.width; patch.width = +sw.dataset.width; }
+      if (sw.dataset.dash)  { currentStyle.dash = !currentStyle.dash; patch.dash = currentStyle.dash; }
+      const sel = annotations.find(a => a.id === selectedId);
+      if (sel) {
+        _pushUndo();
+        Object.assign(sel, patch, { updated_at: Date.now() });
+        _scheduleSave();
+      }
+      overlay?.requestRender();
+      return;
+    }
+
     const aBtn = ev.target.closest('.ce-action-btn, .ce-exit-btn');
     if (!aBtn) return;
     const action = aBtn.dataset.action;
+    if (action === 'auto')      autoDraw();
+    if (action === 'clearAuto') clearAutoDrawings();
     if (action === 'snap')   { setSnapEnabled(!snapEnabled); }
     if (action === 'undo')   undo();
     if (action === 'delete') deleteSelected();

@@ -324,6 +324,36 @@ function _linearSlope(ys) {
 // ─────────────────────────────────────────────
 // 條件定義（供 UI 動態建立條件列使用）
 // ─────────────────────────────────────────────
+// ⚠️ snapshot 只存 true 的 condition（false = key 缺失），無法區分「false」與「GAS 不認識」。
+//   新 condition 在 GAS _calcConditions 補上並重跑 runSnapshotPart1~7 之前，
+//   必須列在此集合 → 含這些 condition 的篩選整批走 K 線路徑（本機算），否則全市場誤判 0 檔。
+//   GAS 同步後把對應 id 從集合移除即可。
+export const SNAPSHOT_MISSING_CONDS = new Set([
+  'pocket_pivot',   // S46 口袋支點（v2.9.4 新增，GAS 尚未同步）
+  'industry_leading', // X4（修正既有 bug：snapshot 無此 key 導致 X4 在快速路徑恆 fail）
+                    // GAS 部署 v2.9.4 並重跑 Part1~7 + finalize 後，與 pocket_pivot 一併移除
+  'cup_and_handle', // S45 杯柄突破：GAS _calcConditions 無此 condition（型態類太複雜不宜搬 GAS），
+                    // 永久走 K 線路徑，此項「不要」移除
+]);
+
+// ═══ snapshot 數值欄位映射（v2.9.4，配合 GAS *_v 欄位）═════════
+//   GAS 固定閾值 boolean（rsi_min≥50 寫死）無法比對任意 value；
+//   snapshot 有 *_v 原始值時走精確數值比對，沒有（舊 snapshot）才 fallback boolean。
+//   也修正 kd_k_min 兩系統同名反義問題（GAS boolean=超賣≤20，前端=K≥v）。
+export const SNAP_NUMERIC = {
+  rsi_min:         { key: 'rsi_v',     op: '>=' },
+  rsi_max:         { key: 'rsi_v',     op: '<=' },
+  kd_k_min:        { key: 'kdk_v',     op: '>=' },
+  kd_k_max:        { key: 'kdk_v',     op: '<=' },
+  gain_10d:        { key: 'gain10d_v', op: '>=' },
+  loss_5d:         { key: 'loss5d_v',  op: '>=' },// loss5d_v 正值 = 跌幅%
+  vol_surge_short: { key: 'vs10_v',    op: '>=', limitUpExempt: true },
+  vol_surge_long:  { key: 'vs30_v',    op: '>=', limitUpExempt: true },
+  industry_leading:{ key: 'indLead_v', op: '>=' },// X4 兩段式（GAS _injectIndustryLeading）
+  bb_squeeze:      { key: 'bbwPct_v',  op: '<=' },// S13/S15 帶寬百分位（GAS v2.9.4 對齊）
+};
+
+
 export const CONDITION_DEFS = [
   // ── 價格 / 量能（第一階段，TWSE 直接過濾）
   {
@@ -2275,6 +2305,62 @@ export const CONDITION_DEFS = [
   },
 
   /**
+   * pocket_pivot：口袋支點（O'Neil/Kacher）
+   * 今日成交量 > 近 10 日「所有下跌日」的最大量，且當日收漲
+   * = 機構買盤一口氣吃掉近期全部賣壓量能，S46 使用
+   * 近 10 日無下跌日 → 不觸發（連十紅自有其他訊號，避免零門檻誤觸）
+   */
+  {
+    id:      'pocket_pivot',
+    group:   'volume',
+    label:   '口袋支點（量吃掉近10日下跌量）',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    calc: candles => {
+      if (candles.length < 12) return { pocketPivot: false };
+      const last = candles[candles.length - 1];
+      const prev = candles[candles.length - 2];
+      if (!(prev?.close > 0)) return { pocketPivot: false };
+
+      // 當日需收漲
+      const isUpDay = last.close > prev.close;
+
+      // 近 10 日（不含今日）下跌日的最大量
+      let maxDownVol = 0;
+      let hasDownDay = false;
+      const from = candles.length - 11;  // 往前 10 根 + 各自的前一根
+      for (let i = Math.max(1, from); i < candles.length - 1; i++) {
+        const c = candles[i], p = candles[i - 1];
+        if (p.close > 0 && c.close < p.close) {
+          hasDownDay = true;
+          if (c.volume > maxDownVol) maxDownVol = c.volume;
+        }
+      }
+
+      // ⚠️ 盤中量外推（同 vol_surge_long 踩雷備忘 2026-05-26）：
+      //   盤中最後一根 volume 是累計量，線性外推全天量避免低估
+      let lastVol = last.volume;
+      const tw   = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      const day  = tw.getUTCDay();
+      const mins = tw.getUTCHours() * 60 + tw.getUTCMinutes();
+      const isTradingNow = day >= 1 && day <= 5 && mins >= 9 * 60 && mins <= 13 * 60 + 30;
+      if (isTradingNow && mins > 9 * 60) {
+        const ratio = (mins - 9 * 60) / (13 * 60 + 30 - 9 * 60);
+        if (ratio > 0.1) lastVol = lastVol / ratio;
+      }
+
+      // 漲停板豁免（量縮買不到，視為最強確認）
+      const chgPctP = (last.close - prev.close) / prev.close * 100;
+      const isLimitUpP = chgPctP >= 9.5 && Math.abs(last.close - (last.high ?? last.close)) < 0.01;
+
+      const pocketPivot = (isUpDay && hasDownDay && lastVol > maxDownVol) || isLimitUpP;
+      return { pocketPivot };
+    },
+    match: (indicators) => indicators.pocketPivot === true,
+  },
+
+  /**
    * limit_up：今日漲停板（漲幅 ≥ 9.5% 且收盤 = 最高）
    * 用於豁免 vol_surge 條件，漲停板視為最強量能確認
    * X1/X2/X5 漲停板時自動觸發（via vol_surge 豁免）
@@ -2829,7 +2915,9 @@ export async function* runScreener(conditions) {
   const snapCodes   = new Set();  // snapshot 命中的 code（跳過 K 線）
   const needKline   = [];         // 需要 K 線的 code
 
-  if (snap && phase2Conds.length > 0) {
+  const _hasSnapshotGap = phase2Conds.some(c => SNAPSHOT_MISSING_CONDS.has(c.def.id));
+
+  if (snap && phase2Conds.length > 0 && !_hasSnapshotGap) {
     for (const code of phase1Pass) {
       const sc = snap[code];
       if (!sc) { needKline.push(code); continue; }
@@ -2858,6 +2946,15 @@ export async function* runScreener(conditions) {
     const pass = phase2Conds.every(c => {
       const id  = c.def.id;
       const val = sc[id];
+
+      // 數值欄位精確比對（優先於 boolean fallback）
+      const nm = SNAP_NUMERIC[id];
+      if (nm && typeof sc[nm.key] === 'number') {
+        if (nm.limitUpExempt && sc.limit_up === true) return true;  // 漲停板豁免量能條件
+        const threshold = c.value ?? c.def.default ?? 0;
+        return nm.op === '<=' ? sc[nm.key] <= threshold : sc[nm.key] >= threshold;
+      }
+
       if (c.def.type === 'number' && typeof val === 'number') {
         const fakeRow = { price: sc.price_min ?? 0, chgPct: sc.chg_min ?? 0, volume: sc.vol_min ?? 0 };
         return c.def.match(fakeRow, c.value);
@@ -2943,12 +3040,22 @@ export async function* runScreener(conditions) {
     // 合併所有 calc 的結果（同一個 calc key 只算一次）
     const indicators = {};
     const calcDone   = new Set();
+    let   calcError  = false;
     for (const cond of phase2Conds) {
       if (cond.def.calc && !calcDone.has(cond.def.id)) {
-        Object.assign(indicators, cond.def.calc(candles));
+        // ⚠️ 必須 try/catch：任一 condition 對單一股票丟例外會炸掉整個 generator，
+        //   掃描中斷且 UI 狀態卡死（之後所有策略都掃不動，需 F5）。跳過該股即可。
+        try {
+          Object.assign(indicators, cond.def.calc(candles));
+        } catch (e) {
+          console.warn(`[screener] calc 例外（${cond.def.id} @ ${code}）:`, e.message);
+          calcError = true;
+          break;
+        }
         calcDone.add(cond.def.id);
       }
     }
+    if (calcError) continue;
 
     // X 系列 industry_leading 需要 context:從 candleMap 動態建構
     // 這裡只設一次,讓 indicators 跟 match 都拿到
@@ -2957,7 +3064,12 @@ export async function* runScreener(conditions) {
       indicators._industryContext = industryContext;
     }
 
-    const pass = phase2Conds.every(c => c.def.match(indicators, c.value));
+    let pass = false;
+    try {
+      pass = phase2Conds.every(c => c.def.match(indicators, c.value));
+    } catch (e) {
+      console.warn(`[screener] match 例外 @ ${code}:`, e.message);
+    }
     if (!pass) continue;
 
     // 清理不需要傳給 UI 的大型序列（closeSeries 僅供 match 內部使用）

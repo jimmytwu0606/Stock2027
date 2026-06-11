@@ -93,7 +93,25 @@ function _calcBreadth() {
     if (r.chgPct >= 9.5)  limitUp++;
     if (r.chgPct <= -9.5) limitDown++;
   }
-  return { up, down, flat, limitUp, limitDown, total: up + down + flat };
+  if (up + down + flat > 0) {
+    return { up, down, flat, limitUp, limitDown, total: up + down + flat, src: 'live' };
+  }
+  // fallback：R2 snapshot（main.js 預載 window.__snapshot，盤後資料）
+  const snapStocks = window.__snapshot?.stocks;
+  if (snapStocks) {
+    for (const code in snapStocks) {
+      const chg = snapStocks[code]?.chg_min;
+      if (typeof chg !== 'number') continue;
+      if (chg > 0) up++;
+      else if (chg < 0) down++;
+      else flat++;
+      if (chg >= 9.5)  limitUp++;
+      if (chg <= -9.5) limitDown++;
+    }
+    return { up, down, flat, limitUp, limitDown, total: up + down + flat,
+             src: 'snapshot', date: window.__snapshot?.date };
+  }
+  return { up, down, flat, limitUp, limitDown, total: 0, src: 'none' };
 }
 
 // ─── 渲染大盤燈號 ───
@@ -168,13 +186,18 @@ function _renderBreadth(b) {
   setText('mmBreadthLimitUp',   b.limitUp);
   setText('mmBreadthLimitDown', b.limitDown);
 
-  // 沒資料時提示
-  if (b.total === 0) {
-    const hint = document.getElementById('mmBreadthHint');
-    if (hint) hint.style.display = '';
-  } else {
-    const hint = document.getElementById('mmBreadthHint');
-    if (hint) hint.style.display = 'none';
+  // 提示列：無資料 / snapshot 盤後資料標日期
+  const hint = document.getElementById('mmBreadthHint');
+  if (hint) {
+    if (b.total === 0) {
+      hint.textContent = '尚未取得盤後資料';
+      hint.style.display = '';
+    } else if (b.src === 'snapshot') {
+      hint.textContent = `盤後資料・${b.date ?? ''}`;
+      hint.style.display = '';
+    } else {
+      hint.style.display = 'none';
+    }
   }
 }
 
@@ -183,21 +206,28 @@ async function _renderSectors(miRows) {
   const el = document.getElementById('mmSectors');
   if (!el) return;
 
-  // 優先讀 Firestore limit_up（Cron 14:15 寫入）
+  // 優先讀 Firestore limit_up（Cron 14:15 寫入）— 與 market.js 同邏輯：往前找最近 7 天
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const snap  = await fsGetShared(`market/${today}/limit_up`);
-    if (snap?.sectorRank) {
-      const top3 = snap.sectorRank.slice(0, 10);
-      if (top3.length > 0) {
-        el.innerHTML = top3.map((s, i) => `
+    let snap = null, dataDate = null;
+    const base = new Date();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      snap = await fsGetShared(`market/${dateStr}/limit_up`);
+      if (snap?.sectorRank) { dataDate = dateStr; break; }
+    }
+    if (snap?.sectorRank?.length) {
+      const top = snap.sectorRank.slice(0, 10);
+      el.innerHTML =
+        `<div class="mm-sector-date">漲停族群・${dataDate}</div>` +
+        top.map((s, i) => `
           <div class="mm-sector-row">
             <span class="mm-sector-rank">${i + 1}.</span>
             <span class="mm-sector-name">${s.sector}</span>
             <span class="mm-sector-pct up">${s.count} 檔漲停</span>
           </div>`).join('');
-        return;
-      }
+      return;
     }
   } catch (e) { /* fallback 到 MI_INDEX */ }
 
