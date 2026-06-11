@@ -21,7 +21,7 @@
 //
 // 升版號的副作用:所有使用者下次開 app 自動清快取重掃(無痛)
 // ─────────────────────────────────────────────
-export const STRATEGY_VERSION = 14;  // v2.9.3 — XG1/XG3 葛蘭碧強化版正式導入
+export const STRATEGY_VERSION = 15;  // v2.9.4 — S46 口袋支點（Pocket Pivot）實驗導入
 
 export const STRATEGIES = [
   // ══════════════════════════════════════════
@@ -76,6 +76,21 @@ export const STRATEGIES = [
     conditions: [
       { condId: 'vol_surge', value: 3 },      // 均量3倍
       { condId: 'chg_min',   value: 0 },      // 且未跌（異常量搭配上漲或平盤）
+    ],
+  },
+  {
+    // S46 口袋支點（Pocket Pivot，O'Neil/Kacher）— v2.9.4 實驗導入
+    // 定義：今日量 > 近 10 日所有「下跌日」的量，且當日上漲
+    //       = 機構買盤足跡（吃掉近期全部賣壓量），通常出現在底部整理或上升趨勢回檔末端
+    // 性質：實驗中，尚未進入 _SCORABLE_IDS（不影響五燈獎）
+    // ⚠️ 升級條件（同 X 系列規格）：exit-backtest 60 天甜蜜點 ≥ +30%、觸發 ≥ 20 次、跨多空年穩定
+    // ⚠️ 台股注意：小型股主力騙量常見，建議搭配健康分數過濾使用
+    id: 'S46', tier: 'pro', icon: '🪤', name: '口袋支點', category: '強勢續漲',
+    desc: '今日量吃掉近10日全部下跌日量能且收漲，機構買盤足跡',
+    conditions: [
+      { condId: 'pocket_pivot'        },   // 核心：量 > 近10日下跌日最大量 + 當日漲
+      { condId: 'above_ma20'          },   // 品質過濾：站上月線（避開破底搶反彈的假訊號）
+      { condId: 'vol_min', value: 500 },   // 流動性下限（張）
     ],
   },
 
@@ -244,72 +259,17 @@ export const STRATEGIES = [
   },
 
   // ── 基本面輔助類（Phase C，需 FinMind Token）─────────────────────────────
-  {
-    id: 'S17', tier: 'pro', icon: '🌊', name: '外資連買', category: '基本面',
-    desc: '外資連續買超 N 日，法人資金持續流入，動能強勁',
-    conditions: [
-      { condId: 'foreign_buy_days', value: 5 }, // 外資連續買超 5 日
-    ],
-  },
-  {
-    id: 'S16', tier: 'pro', icon: '💰', name: '獲利創高', category: '基本面',
-    desc: 'EPS 連續成長且最新季為正，獲利持續擴張中',
-    conditions: [
-      { condId: 'eps_positive'          },        // 最新季 EPS > 0
-      { condId: 'eps_consecutive_growth', value: 3 }, // 連續 3 季成長
-      { condId: 'eps_growth_yoy',  value: 20 },   // EPS 年增率 ≥ 20%
-    ],
-  },
-  {
-    id: 'S18', tier: 'pro', icon: '📊', name: '三率齊揚', category: '基本面',
-    desc: '毛利率、淨利率、營收年增率同步走揚，基本面全面改善',
-    conditions: [
-      { condId: 'gross_margin_min',   value: 20 }, // 毛利率 ≥ 20%
-      { condId: 'net_margin_min',     value: 5  }, // 淨利率 ≥ 5%
-      { condId: 'revenue_growth_yoy', value: 10 }, // 營收年增率 ≥ 10%
-    ],
-  },
-  {
-    id: 'S19', tier: 'pro', icon: '🔄', name: '虧轉為盈', category: '基本面',
-    desc: '前一季 EPS 虧損，最新季轉為獲利，業績出現轉折',
-    conditions: [
-      { condId: 'eps_turn_positive' },             // 最新季虧轉為盈
-    ],
-  },
-
-  // ── 巴菲特選股法（Phase C，需 FinMind Token）────────────────────────────
-  {
-    id: 'S24', tier: 'free', icon: '💎', name: '價值低估', category: '巴菲特',
-    desc: 'PE 低、PB 低、殖利率高，具安全邊際的價值股',
-    conditions: [
-      { condId: 'pe_max',          value: 15  }, // PE ≤ 15
-      { condId: 'pb_max',          value: 1.5 }, // PB ≤ 1.5
-      { condId: 'div_yield_min',   value: 3   }, // 殖利率 ≥ 3%
-    ],
-  },
-  {
-    id: 'S25', tier: 'free', icon: '🏰', name: '護城河企業', category: '巴菲特',
-    desc: '毛利率、淨利率持續高水準，具有穩定競爭優勢',
-    conditions: [
-      { condId: 'gross_margin_min', value: 40 }, // 毛利率 ≥ 40%
-      { condId: 'net_margin_min',   value: 15 }, // 淨利率 ≥ 15%
-    ],
-  },
-  {
-    id: 'S26', tier: 'free', icon: '📈', name: '穩定獲利', category: '巴菲特',
-    desc: 'EPS 連續多季正且成長，獲利品質穩定可靠',
-    conditions: [
-      { condId: 'eps_positive'            },      // 最新季 EPS > 0
-      { condId: 'eps_consecutive_growth', value: 5 }, // 連續 5 季成長
-    ],
-  },
-  {
-    id: 'S27', tier: 'free', icon: '🎯', name: '物美價廉', category: '巴菲特',
-    desc: 'PEG < 1，成長速度比本益比更快，物超所值',
-    conditions: [
-      { condId: 'peg_max', value: 1 },            // PEG < 1
-    ],
-  },
+  // ══════════════════════════════════════════
+  // 基本面 / 巴菲特類（S16~S19、S24~S27）— v2.9.4 移除
+  // ──────────────────────────────────────────
+  // 移除原因：全部條件為 phase 3（FinMind 基本面），實務上不可用：
+  //   1. 無 Token → phase 3 整批跳過 → 策略退化成「全市場都過」（1873/1928 假命中）
+  //   2. 免費 Token → FinMind 擋 TaiwanStockMonthRevenue / FinancialStatements
+  //      批次 dataset，全市場掃描必然失敗
+  //   3. S19 的 condId 'eps_turn_positive' 根本不存在於 screener.js
+  // 復原條件：FinMind 包月（批次 dataset 解鎖）後從 git 歷史取回，
+  //   並補齊 eps_turn_positive condition 定義
+  // ══════════════════════════════════════════
 
   // ══════════════════════════════════════════
   // 避險警示類（賣出/減碼參考，綠色燈號）

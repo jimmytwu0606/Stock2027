@@ -15,21 +15,26 @@ import { fetchSnapshot, runSnapshotScreener } from './api.js';
 import { getChineseName } from './api.js';
 import { initPatternUI }   from './pattern-ui.js';
 import { initSeedUI }      from './seed-ui.js';
+import { initLagUI }       from './lag-ui.js';
+import { initStrategyAudit } from './strategy-audit.js';
 
 const SUBS = {
   screener: 'hubSubScreener',
   pattern:  'hubSubPattern',
   seed:     'hubSubSeed',
+  lag:      'hubSubLag',
 };
 
 let _currentMode = 'screener';
 let _screenerInited = false;
 let _patternInited  = false;
 let _seedInited     = false;
+let _lagInited      = false;
 
 // ── 公開入口 ──────────────────────────────────────────────
 export function initScreenerHub() {
   _bindModeBtns();
+  initStrategyAudit();  // 🧪 策略體檢（VVVIP 限定，自行控制顯隱）
   _bindConfigBtns();
   _bindActionBtns();
   _listenResultEvents();
@@ -64,7 +69,7 @@ function _switchMode(mode) {
   });
 
   // 顯示對應 config btn，隱藏其他
-  const configMap = { screener: 'hubConfigScreener', pattern: 'hubConfigPattern', seed: 'hubConfigSeed' };
+  const configMap = { screener: 'hubConfigScreener', pattern: 'hubConfigPattern', seed: 'hubConfigSeed', lag: 'hubConfigLag' };
   Object.entries(configMap).forEach(([m, id]) => {
     const el = document.getElementById(id);
     if (el) el.style.display = m === mode ? '' : 'none';
@@ -90,6 +95,10 @@ function _switchMode(mode) {
     _seedInited = true;
     initSeedUI();
   }
+  if (mode === 'lag' && !_lagInited) {
+    _lagInited = true;
+    initLagUI();
+  }
 
   // 重設 action btn（切模式時隱藏，等新結果出來再顯示）
   _hideActionBtns();
@@ -105,6 +114,9 @@ function _bindConfigBtns() {
   });
   document.getElementById('hubConfigSeed')?.addEventListener('click', () => {
     document.getElementById('seedOpenConfig')?.click();
+  });
+  document.getElementById('hubConfigLag')?.addEventListener('click', () => {
+    document.getElementById('lagOpenConfig')?.click();
   });
 }
 

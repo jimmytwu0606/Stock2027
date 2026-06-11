@@ -21,6 +21,7 @@ import { runSeedScan, abortSeedScan, runSingleSeedScan } from './seed-scan.js';
 import { getGroups, addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { getAllSeedSets, saveSeedSet, deleteSeedSet, getAllSignalsCache } from './db.js';
 import { getChineseName } from './api.js';
+import { openStockPreview } from './stock-preview.js';
 import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
 import { scanOneCode } from './signal-scan.js';
 
@@ -896,13 +897,7 @@ function _renderResults(items) {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.sr-add-btn') || e.target.closest('.sr-add-dropdown')) return;
       const code = row.dataset.code;
-      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code } }));
-      document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
-      document.querySelector('.main-tab[data-tab="chart"]')?.classList.add('active');
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('tabChart')?.classList.add('active');
-      document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
-      document.querySelector('.tab-item[data-mobile-tab="chart"]')?.classList.add('active');
+      openStockPreview(code);   // 點列 → 個股速覽 modal
     });
   });
 
@@ -952,16 +947,44 @@ function _drawMiniChart(canvas, candles) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, w, h);
 
-  const closes = candles.map(c => c.close);
+  // 只畫最近 60 根（240 根擠在小圖裡 MA20 會貼著價格線，看不出對照意義）
+  // MA20 用畫面外的前 19 根暖機，第一根就有正確 MA 值
+  const SHOW = 60;
+  const allCloses = candles.map(c => c.close);
+  const closes    = allCloses.slice(-SHOW);
+  const offset    = allCloses.length - closes.length;
   const min    = Math.min(...closes);
   const max    = Math.max(...closes);
   const range  = max - min || 1;
   const n      = closes.length;
 
+  const xAt = i => (i / (n - 1)) * w;
+  const yAt = v => h - ((v - min) / range) * h * 0.85 - h * 0.075;
+
+  // ── MA20 灰線（疊底層）──
+  if (allCloses.length >= 20) {
+    ctx.strokeStyle = 'rgba(148,163,184,0.5)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    let sum = 0, started = false;
+    const firstIdx = Math.max(0, offset - 19);
+    for (let g = firstIdx; g < offset; g++) sum += allCloses[g];
+    for (let i = 0; i < n; i++) {
+      const g = offset + i;
+      sum += allCloses[g];
+      if (g >= 20) sum -= allCloses[g - 20];
+      if (g < 19) continue;
+      const x = xAt(i), y = yAt(Math.max(min, Math.min(max, sum / 20)));
+      started ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      started = true;
+    }
+    ctx.stroke();
+  }
+
   ctx.beginPath();
   for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * w;
-    const y = h - ((closes[i] - min) / range) * h * 0.85 - h * 0.075;
+    const x = xAt(i);
+    const y = yAt(closes[i]);
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   const lastUp = closes[closes.length - 1] >= closes[0];

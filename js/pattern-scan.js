@@ -124,38 +124,89 @@ export async function* runPatternScan(templateCandles, opts = {}) {
 
   const total = codes.length;
 
-  // Step 2：逐批掃描
-  let done        = 0;
-  let results     = [];
-  let consecutive429 = 0;   // 連續 429 次數，用於動態退避
+  // ── 範本只需正規化一次（原本每檔都重算）──
+  const templateNorm = normalizeSeries(templateCandles.map(c => c.close));
+  const tLen    = templateCandles.length;
+  const scanLen = Math.max(tLen, windowSize);
 
-  // bundle 預載後幾乎全 cache hit（IDB 本地讀取 + DTW 純計算）→ 可大幅並發
-  // cache miss（要打 Worker）才需限流；用較高並發批次，批內並行跑
-  // CONCURRENCY 提高：IDB 讀取的非同步等待可 overlap，cache hit 不 sleep
-  const HIT_CONCURRENCY = 12;  // cache hit 批次並發數（純本地，可拉高）
+  // ── Pearson 粗篩門檻跟著相似度門檻走 ──
+  //   原本固定 0.1 幾乎不過濾；門檻 89% 時 corr<0.5 根本不可能達標，
+  //   拉高 threshold 可在 DTW 前砍掉大部分股票。
+  const pearsonTh = similarity >= 85 ? 0.5 : similarity >= 75 ? 0.35 : 0.2;
 
-  for (let i = 0; i < codes.length; i += HIT_CONCURRENCY) {
-    if (signal.aborted) {
-      yield { type: 'aborted', message: '掃描已取消', results };
-      return;
+  // ═══ Phase A：IDB 批次預載到記憶體 ═══════════════════════
+  //   原本每檔在掃描迴圈內做 2 次 IDB get（.TW + .TWO），與 DTW 交錯執行。
+  //   改成開頭一次性大並發預載進 Map，之後 hit 全走記憶體、零 I/O。
+  yield { type: 'progress', phase: 'scan', message: '載入本地快取…', done: 0, total };
+
+  const memCache  = new Map();   // code → candles（IDB hit）
+  const missCodes = [];          // IDB miss → Phase C 低速走 Worker
+  const PRELOAD_CONCURRENCY = 32;
+
+  for (let i = 0; i < codes.length; i += PRELOAD_CONCURRENCY) {
+    if (signal.aborted) { yield { type: 'aborted', message: '掃描已取消', results: [] }; return; }
+    const batch = codes.slice(i, i + PRELOAD_CONCURRENCY);
+    await Promise.all(batch.map(async code => {
+      const symbol = toYahooSymbol(code);
+      const sym2   = symbol.endsWith('.TW') ? symbol.replace('.TW', '.TWO') : symbol.replace('.TWO', '.TW');
+      const hit = await getKlineCache(symbol, '1y').catch(() => null)
+               || await getKlineCache(sym2,   '1y').catch(() => null);
+      if (hit?.candles?.length) memCache.set(code, hit.candles);
+      else missCodes.push(code);
+    }));
+    if ((i / PRELOAD_CONCURRENCY) % 4 === 0) {
+      yield { type: 'progress', phase: 'scan', message: `載入本地快取… (${Math.min(i + PRELOAD_CONCURRENCY, total)}/${total})`, done: 0, total };
+    }
+  }
+
+  // ═══ Phase B：cache hit 純計算掃描（零 I/O、零 sleep）═══
+  let done    = 0;
+  let results = [];
+  const COMPUTE_BATCH = 100;   // 每批讓出一次主執行緒，避免凍結畫面
+
+  const hitCodes = [...memCache.keys()];
+  for (let i = 0; i < hitCodes.length; i += COMPUTE_BATCH) {
+    if (signal.aborted) { yield { type: 'aborted', message: '掃描已取消', results }; return; }
+
+    const batch = hitCodes.slice(i, i + COMPUTE_BATCH);
+    for (const code of batch) {
+      done++;
+      const candles = memCache.get(code);
+      if (!candles || candles.length < scanLen) continue;  // 新股/資料太短
+
+      const result = _scoreCandles(code, candles, templateCandles, templateNorm,
+                                   { featureMode, similarity, pearsonTh, priceMap, fromCache: true });
+      if (result && result.score >= similarity) {
+        results.push(result);
+        yield { type: 'result', item: result, done, total };
+      }
     }
 
-    const batch = codes.slice(i, i + HIT_CONCURRENCY);
+    yield { type: 'progress', phase: 'scan', message: '掃描中…', done, total };
+    await _yieldToUI();
+  }
+  memCache.clear();  // 釋放記憶體
 
-    // 批內並行：Promise.all 讓 IDB 讀取等待 overlap（DTW 仍序列但 I/O 不阻塞）
+  // ═══ Phase C：cache miss 低速補掃（必打 Worker，保護 proxy）═══
+  let consecutive429 = 0;
+  const MISS_CONCURRENCY = 4;
+
+  for (let i = 0; i < missCodes.length; i += MISS_CONCURRENCY) {
+    if (signal.aborted) { yield { type: 'aborted', message: '掃描已取消', results }; return; }
+
+    const batch = missCodes.slice(i, i + MISS_CONCURRENCY);
     const batchResults = await Promise.all(
       batch.map(code =>
         signal.aborted ? Promise.resolve(null) :
         _scanOneWithRetry(
           code, templateCandles,
-          { windowSize, featureMode, period, signal, priceMap },
+          { windowSize, featureMode, period, signal, priceMap, similarity, pearsonTh, templateNorm },
           consecutive429
         )
       )
     );
 
     let batchHas429 = false;
-    let batchHasMiss = false;
     for (const result of batchResults) {
       done++;
       if (result === '429') {
@@ -167,26 +218,22 @@ export async function* runPatternScan(templateCandles, opts = {}) {
           results.push(result);
           yield { type: 'result', item: result, done, total };
         }
-        if (result?.fromCache === false) batchHasMiss = true;
       }
     }
 
     yield {
       type: 'progress', phase: 'scan',
-      message: batchHas429 ? '掃描中（rate limit，放慢中）…' : '掃描中…',
+      message: batchHas429 ? '補抓缺漏資料（rate limit，放慢中）…' : `補抓缺漏資料… (${Math.min(i + MISS_CONCURRENCY, missCodes.length)}/${missCodes.length})`,
       done, total,
     };
 
-    // 限流：整批若有 429 或 cache miss（打了 Worker）才 sleep；全 hit 不等待
     if (batchHas429) {
       await _sleep(800 + Math.min(consecutive429 * 1000, 8000));
-    } else if (batchHasMiss) {
-      await _sleep(200);  // 批次有打 Worker → 保護 proxy
+    } else {
+      await _sleep(200);  // miss 必打 Worker → 保護 proxy
     }
-
-    // 讓出主執行緒，避免連續 DTW 凍結畫面
-    await _yieldToUI();
   }
+
 
   results.sort((a, b) => b.score - a.score);
   AppState.pattern.scanResults = results;
@@ -194,15 +241,68 @@ export async function* runPatternScan(templateCandles, opts = {}) {
   _abortController = null;
 }
 
-// ─── 單股掃描（含重試） ────────────────────────────────────
+// ─── 純計算：對單檔 candles 評分（共用於 Phase B / Phase C）────
+/**
+ * @returns {object|null}  null = 粗篩未過或資料不足
+ */
+function _scoreCandles(code, candles, templateCandles, templateNorm, opts) {
+  const { featureMode, similarity, pearsonTh, priceMap, fromCache } = opts;
+  const tLen = templateCandles.length;
+
+  // ── 比對段固定為「最新 tLen 根」（貼齊右端，找正在形成此型態的股票）──
+  const matchSegment = candles.slice(-tLen);
+
+  // 粗篩：降採樣 Pearson，快速剔除明顯不像（省 DTW）
+  const matchNorm = normalizeSeries(matchSegment.map(c => c.close));
+  if (!pearsonPrefilter(templateNorm, matchNorm, pearsonTh)) return null;
+
+  // DTW（early abandoning：低於 similarity 門檻的提前放棄，省一半以上計算）
+  const score = calcSimilarity(templateCandles, matchSegment, featureMode, similarity);
+  if (score < similarity) return null;
+
+  // 畫圖用：前面補一些 context（灰線），藍框=最新 tLen 根貼右端
+  const CONTEXT = Math.min(20, candles.length - tLen);
+  const drawCandles  = candles.slice(-(tLen + CONTEXT));
+  const drawStartIdx = CONTEXT;
+  const drawEndIdx   = drawCandles.length - 1;
+
+  const pd = priceMap?.[code] ?? {};
+  // 價格來源：priceMap 優先（當日收盤）；上櫃股 priceMap 常無 price（=0）
+  //   → 用 K 線最後一根補（今收），漲跌幅用最後兩根算
+  let _price  = isFinite(pd.price)  && pd.price  > 0 ? pd.price  : null;
+  let _chgPct = isFinite(pd.chgPct) && pd.chgPct !== 0 ? pd.chgPct : null;
+  if (_price == null && candles.length >= 1) {
+    const last = candles[candles.length - 1];
+    _price = last?.close ?? null;
+    if (_chgPct == null && candles.length >= 2) {
+      const prev = candles[candles.length - 2];
+      if (prev?.close > 0) _chgPct = (last.close - prev.close) / prev.close * 100;
+    }
+  }
+
+  return {
+    code,
+    name:        getChineseName(code) ?? pd.name ?? '',
+    score:       Math.round(score * 10) / 10,
+    price:       _price  ?? 0,
+    chgPct:      _chgPct ?? 0,
+    startIdx:    drawStartIdx,
+    endIdx:      drawEndIdx,
+    candles:     drawCandles,
+    fullCandles: candles,
+    fromCache,
+  };
+}
+
+// ─── 單股掃描（含重試，僅 Phase C cache miss 使用） ─────────
 /**
  * @returns {object|null|'429'}
  *   object = 掃描結果
- *   null   = 其他錯誤（略過）
+ *   null   = 其他錯誤 / 粗篩未過（略過）
  *   '429'  = rate limit，無法重試
  */
 async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0) {
-  const { windowSize, featureMode, period, signal, priceMap } = opts;
+  const { windowSize, featureMode, signal, priceMap, similarity, pearsonTh, templateNorm } = opts;
   if (signal?.aborted) return null;
 
   // 最多重試 2 次（僅針對非 429 錯誤）
@@ -211,93 +311,28 @@ async function _scanOneWithRetry(code, templateCandles, opts, consecutive429 = 0
   // ⚠️ 踩雷備忘（永久，2026-06-02）：
   //   傳入的 period（pdPeriod，可能為 3mo）送給 Worker 時 R2 key = yahoo:{sym}:3mo → 永遠 MISS。
   //   GAS 只寫 1y，固定送 '1y' 才能命中 R2。
-  //   型態比對實際上只用最後 windowSize 根（slice(-scanLen)），
-  //   用 1y 資料截尾結果完全等同，且 IndexedDB 命中時完全不打 Worker。
   const FETCH_PERIOD = '1y';
 
   for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
     if (signal?.aborted) return null;
 
     try {
-      // fetchHistoryCached：IndexedDB → Worker R2（key=yahoo:{sym}:1y）→ live Yahoo
       // ⚠️ 踩雷備忘（永久，2026-05-28）：
-      //   resolveYahooSymbol 每檔打兩次 API（.TW + .TWO），全市場 1700 檔 × 2 = 3400 次
-      //   proxy 立刻被打爆，大量 502 → 全部 return null → 結果 0。
-      //   型態比對用 toYahooSymbol + fetchHistoryCached 即可，上櫃比例少且 R2 有快取。
-      const symbol = toYahooSymbol(code);
+      //   resolveYahooSymbol 每檔打兩次 API，全市場會打爆 proxy。
+      //   型態比對用 toYahooSymbol + fetchHistoryCached 即可。
+      const symbol  = toYahooSymbol(code);
       const tLen    = templateCandles.length;
       const scanLen = Math.max(tLen, windowSize);
 
-      // ── 打 Worker 前先看 IDB 既有快取根數 ──────────────────────────────────
-      //   新上市股（如 7803 只有 15 根）K 線不足 scanLen，比對本來就比不了。
-      //   但 fetchHistoryCached 會因「根數 < period 60%」判定快取不足 → 重打 Worker
-      //   → 盤後 Yahoo 502/400 噴一堆 error 又拖速度。
-      //   先檢查 IDB：有快取但根數不足 scanLen → 直接跳過，不打 Worker。
-      try {
-        const sym2 = symbol.endsWith('.TW') ? symbol.replace('.TW', '.TWO') : symbol.replace('.TWO', '.TW');
-        const idbHit = await getKlineCache(symbol, '1y').catch(() => null)
-                    || await getKlineCache(sym2, '1y').catch(() => null);
-        if (idbHit?.candles && idbHit.candles.length < scanLen) {
-          return null;  // IDB 有資料但根數不足 → 新股/資料太短，跳過不打 Worker
-        }
-      } catch (_) {}
-
-      const _t0 = Date.now();
+      // 此函式只處理 Phase A 預載判定為 miss 的代號（IDB 無資料），
+      // 不需再查 IDB 根數，直接走 fetchHistoryCached（→ Worker R2 → live Yahoo）。
       // ⚠️ allowStale:true — 批次掃描接受「差一天」的快取，不為最近一根重打 Worker。
-      //   上櫃股快取常缺今天那根（GAS 寫入時序），無 allowStale 會每支 fall through
-      //   打 Worker 1.5 秒 → 整批龜速。型態比對用截尾資料結果等同。
       const candles = await fetchHistoryCached(symbol, FETCH_PERIOD, { allowStale: true });
-      const fromCache = (Date.now() - _t0) < 30;
 
       if (!candles || candles.length < scanLen) return null;
 
-      // ── 比對段固定為「最新 tLen 根」（貼齊右端，找正在形成此型態的股票）──
-      // 不做歷史滑動：比對段永遠是最近 tLen 根，畫圖時藍框貼右端、最後一根=今天
-      const matchSegment = candles.slice(-tLen);
-
-      // 粗篩：最新 tLen 根降採樣 Pearson，快速剔除明顯不像（省 DTW）
-      const templateNorm = normalizeSeries(templateCandles.map(c => c.close));
-      const matchNorm    = normalizeSeries(matchSegment.map(c => c.close));
-      if (!pearsonPrefilter(templateNorm, matchNorm, 0.1)) return null;
-
-      // 直接比對最新 tLen 根 vs 範本
-      const score = calcSimilarity(templateCandles, matchSegment, featureMode);
-
-      // 畫圖用：前面補一些 context（灰線），藍框=最新 tLen 根貼右端
-      // drawCandles = 最新 (tLen + context) 根，匹配段在最右側 tLen 根
-      const CONTEXT = Math.min(20, candles.length - tLen);  // 前置 context 根數
-      const drawCandles = candles.slice(-(tLen + CONTEXT));
-      // 匹配段（最新 tLen 根）在 drawCandles 裡的座標：[CONTEXT, drawCandles.length-1]
-      const drawStartIdx = CONTEXT;
-      const drawEndIdx   = drawCandles.length - 1;
-
-      const pd = priceMap?.[code] ?? {};
-      // 價格來源：priceMap 優先（當日收盤）；上櫃股 priceMap 常無 price（=0）
-      //   → 用已抓到的 K 線最後一根補（今收），漲跌幅用最後兩根算
-      // 避免上櫃股在型態結果列表顯示「—」
-      let _price  = isFinite(pd.price)  && pd.price  > 0 ? pd.price  : null;
-      let _chgPct = isFinite(pd.chgPct) && pd.chgPct !== 0 ? pd.chgPct : null;
-      if (_price == null && candles.length >= 1) {
-        const last = candles[candles.length - 1];
-        _price = last?.close ?? null;
-        if (_chgPct == null && candles.length >= 2) {
-          const prev = candles[candles.length - 2];
-          if (prev?.close > 0) _chgPct = (last.close - prev.close) / prev.close * 100;
-        }
-      }
-
-      return {
-        code,
-        name:        getChineseName(code) ?? pd.name ?? '',
-        score:       Math.round(score * 10) / 10,
-        price:       _price  ?? 0,
-        chgPct:      _chgPct ?? 0,
-        startIdx:    drawStartIdx,    // 匹配段在 drawCandles 裡的起點
-        endIdx:      drawEndIdx,      // 匹配段終點（貼齊最新）
-        candles:     drawCandles,     // 含 context + 匹配段，畫到今天
-        fullCandles: candles,
-        fromCache,
-      };
+      return _scoreCandles(code, candles, templateCandles, templateNorm,
+                           { featureMode, similarity, pearsonTh, priceMap, fromCache: false });
 
     } catch (err) {
       const msg = String(err?.message || err);

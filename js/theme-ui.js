@@ -6,6 +6,7 @@
 import { saveUserTheme, deleteUserTheme, reloadThemes } from './theme.js';
 import { loadHealthCacheBatch, saveHealthCache, getAllSignalsCache, getKlineCache } from './db.js';
 import { resolveYahooSymbol, getChineseName } from './api.js';
+import { openStockPreview } from './stock-preview.js';
 import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 import { fsGetShared, fsSetShared } from './firebase.js';
 import { scanOneCode } from './signal-scan.js';
@@ -737,6 +738,28 @@ async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap, 
     const codeSet = new Set(codes);
     _healthMap = await loadHealthCacheBatch(codes);
 
+    // ── 健康度補洞（2026-06-10）：loadHealthCacheBatch 只覆蓋掃過的股票，
+    // 沒掃過的用 kline_cache（bundle 全市場灌入）本機現算，不再顯示「—」
+    for (const code of codes) {
+      const h = _healthMap.get(code);
+      if (h?.healthShort != null && h?.healthLong != null) continue;
+      const sym1 = code.length <= 4 ? `${code}.TW` : `${code}.TWO`;
+      let cached = await getKlineCache(sym1, '1y').catch(() => null);
+      if (!cached?.candles?.length) {
+        const sym2 = code.length <= 4 ? `${code}.TWO` : `${code}.TW`;
+        cached = await getKlineCache(sym2, '1y').catch(() => null);
+      }
+      const candles = cached?.candles?.length ? cached.candles : null;
+      _healthMap.set(code, {
+        healthShort: h?.healthShort ?? (candles ? calcHealth(candles) : null),
+        // calcHealthLong 內建優先讀 __healthSnapshot，缺才本機算
+        healthLong:  h?.healthLong  ?? calcHealthLong(candles, null, code),
+        healthSavedAt: h?.healthSavedAt ?? null,
+        healthSource:  h?.healthSource  ?? 'computed',
+        lastPrice:     h?.lastPrice     ?? null,
+      });
+    }
+
     // ── 從 kline_cache 撈最後一根收盤當現價，push 進 PriceHub ──────────
     // 比等 TWSE 批次快，題材 Tab 一開就能顯示價格
     _prefillPriceFromKline(codes).then(() => {
@@ -1083,8 +1106,7 @@ function _bindStockEvents(body, theme, themeIdx, themes, stockThemeMap) {
   body.querySelectorAll('[data-code]').forEach(el => {
     el.addEventListener('click', e => {
       if (e.target.closest('.theme-stock-del')) return;
-      document.dispatchEvent(new CustomEvent('stockSelect', { detail: { code: el.dataset.code } }));
-      document.querySelector('.main-tab[data-tab="chart"]')?.click();
+      openStockPreview(el.dataset.code);   // 點卡片/列 → 個股速覽 modal
     });
   });
 
@@ -2403,8 +2425,7 @@ function _renderRelation(container, themes, stockThemeMap) {
   });
   container.querySelectorAll('.theme-topn-row').forEach(row => {
     row.addEventListener('click', () => {
-      document.dispatchEvent(new CustomEvent('stockSelect',{detail:{code:row.dataset.code}}));
-      document.querySelector('.main-tab[data-tab="chart"]')?.click();
+      openStockPreview(row.dataset.code);   // 點列 → 個股速覽 modal
     });
   });
 }
@@ -2424,7 +2445,7 @@ function _showOverlapPopup(themeA, themeB, stocks) {
   </div>
   <div class="theme-overlap-list">${stocks.map(s=>`<div class="theme-overlap-row" data-code="${s.code}"><span class="theme-stock-code">${s.code}</span><span class="theme-stock-name">${s.name}</span></div>`).join('')}</div>`;
   document.body.appendChild(popup);
-  popup.querySelectorAll('.theme-overlap-row').forEach(r=>{r.addEventListener('click',()=>{document.dispatchEvent(new CustomEvent('stockSelect',{detail:{code:r.dataset.code}}));document.querySelector('.main-tab[data-tab="chart"]')?.click();popup.remove();});});
+  popup.querySelectorAll('.theme-overlap-row').forEach(r=>{r.addEventListener('click',()=>{openStockPreview(r.dataset.code);popup.remove();});});
   document.getElementById('themeOverlapClose').addEventListener('click',()=>popup.remove());
   setTimeout(()=>{document.addEventListener('click',function h(e){if(!popup.contains(e.target)){popup.remove();document.removeEventListener('click',h);}});},100);
 }

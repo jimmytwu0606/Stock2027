@@ -56,9 +56,11 @@ export function candlesToFeatures(candles) {
  * @param {number[]} a 查詢序列（template）
  * @param {number[]} b 目標序列
  * @param {number} [window=Infinity] Sakoe-Chiba 視窗（限制扭曲範圍，提升速度）
+ * @param {number} [abandonAt=Infinity] early abandoning：某一列的最小累積距離已超過此值
+ *                 → 最終距離必定更大 → 直接放棄回傳 Infinity（distToSimilarity 會轉成 0 分）
  * @returns {number} DTW 距離（越小越相似）
  */
-export function calcDTW(a, b, window = Infinity) {
+export function calcDTW(a, b, window = Infinity, abandonAt = Infinity) {
   const n = a.length;
   const m = b.length;
   // 使用 Float32Array 降低 GC 壓力
@@ -67,6 +69,7 @@ export function calcDTW(a, b, window = Infinity) {
   const idx = (i, j) => i * m + j;
 
   for (let i = 0; i < n; i++) {
+    let rowMin = Infinity;
     for (let j = 0; j < m; j++) {
       if (Math.abs(i - j) > window) continue;
       const cost = Math.abs(a[i] - b[j]);
@@ -75,8 +78,12 @@ export function calcDTW(a, b, window = Infinity) {
         j > 0 ? dtw[idx(i, j - 1)]     : Infinity,
         i > 0 && j > 0 ? dtw[idx(i - 1, j - 1)] : Infinity,
       );
-      dtw[idx(i, j)] = cost + (prev === Infinity ? 0 : prev);
+      const v = cost + (prev === Infinity ? 0 : prev);
+      dtw[idx(i, j)] = v;
+      if (v < rowMin) rowMin = v;
     }
+    // DTW 累積距離單調不減：整列最小值已超門檻 → 不可能達標
+    if (rowMin > abandonAt) return Infinity;
   }
 
   return dtw[idx(n - 1, m - 1)];
@@ -89,7 +96,7 @@ export function calcDTW(a, b, window = Infinity) {
  * @param {number} [window=Infinity]
  * @returns {number}
  */
-export function calcDTWMulti(a, b, window = Infinity) {
+export function calcDTWMulti(a, b, window = Infinity, abandonAt = Infinity) {
   const n = a.length;
   const m = b.length;
   const dtw = new Float32Array(n * m).fill(Infinity);
@@ -102,6 +109,7 @@ export function calcDTWMulti(a, b, window = Infinity) {
   };
 
   for (let i = 0; i < n; i++) {
+    let rowMin = Infinity;
     for (let j = 0; j < m; j++) {
       if (Math.abs(i - j) > window) continue;
       const cost = euclidean(a[i], b[j]);
@@ -110,8 +118,11 @@ export function calcDTWMulti(a, b, window = Infinity) {
         j > 0 ? dtw[idx(i, j - 1)]     : Infinity,
         i > 0 && j > 0 ? dtw[idx(i - 1, j - 1)] : Infinity,
       );
-      dtw[idx(i, j)] = cost + (prev === Infinity ? 0 : prev);
+      const v = cost + (prev === Infinity ? 0 : prev);
+      dtw[idx(i, j)] = v;
+      if (v < rowMin) rowMin = v;
     }
+    if (rowMin > abandonAt) return Infinity;
   }
 
   return dtw[idx(n - 1, m - 1)];
@@ -136,24 +147,29 @@ export function distToSimilarity(dtwDist, maxDist = 5) {
  * @param {Candle[]} templateCandles  範本 K 線
  * @param {Candle[]} targetCandles    目標 K 線片段（長度可不同）
  * @param {'simple'|'multi'} [mode='simple']  simple=只用收盤價，multi=多維特徵
+ * @param {number} [minScore=0]  低於此分數的不需要精確值（給 early abandoning 用），0=關閉
  * @returns {number} 相似度分數 0~100
  */
-export function calcSimilarity(templateCandles, targetCandles, mode = 'simple') {
+export function calcSimilarity(templateCandles, targetCandles, mode = 'simple', minScore = 0) {
   if (templateCandles.length < 3 || targetCandles.length < 3) return 0;
 
   if (mode === 'multi') {
     const a = candlesToFeatures(templateCandles);
     const b = candlesToFeatures(targetCandles);
     const w = Math.floor(Math.max(a.length, b.length) * 0.2);
-    const dist = calcDTWMulti(a, b, w);
+    const maxDist = a.length * 1.5;
+    const abandonAt = minScore > 0 ? (1 - minScore / 100) * maxDist : Infinity;
+    const dist = calcDTWMulti(a, b, w, abandonAt);
     // 多維距離 maxDist 調高（維度多距離自然大）
-    return distToSimilarity(dist, a.length * 1.5);
+    return distToSimilarity(dist, maxDist);
   } else {
     const a = normalizeCandles(templateCandles);
     const b = normalizeCandles(targetCandles);
     const w = Math.floor(Math.max(a.length, b.length) * 0.2);
-    const dist = calcDTW(a, b, w);
-    return distToSimilarity(dist, a.length * 0.5);
+    const maxDist = a.length * 0.5;
+    const abandonAt = minScore > 0 ? (1 - minScore / 100) * maxDist : Infinity;
+    const dist = calcDTW(a, b, w, abandonAt);
+    return distToSimilarity(dist, maxDist);
   }
 }
 

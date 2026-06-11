@@ -38,6 +38,7 @@ export async function initStrategyLab() {
   _lazyBind('compare',  () => import('./lab-compare.js'),  m => m.bindCompareRun());
   _lazyBind('experiment', () => import('./lab-experiment.js'), m => m.bindExperimentRun());
   _lazyBind('backtest', () => import('./lab-backtest.js'), m => m.bindBacktestRun());
+  _lazyBind('discovered', () => import('./lab-discovered.js'), m => m.bindDiscoveredRun());
 
   window.addEventListener('authReady', () => _applyTierUI());
 }
@@ -92,6 +93,7 @@ function _switchSub(sub) {
     mc: 'labPanelMC', compare: 'labPanelCompare',
     experiment: 'labPanelExperiment',
     backtest: 'labPanelBacktest',
+    discovered: 'labPanelDiscovered',
   };
   Object.entries(panels).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -103,6 +105,7 @@ function _switchSub(sub) {
     mc: 'labControlsMC', compare: 'labControlsCompare',
     experiment: 'labControlsExperiment',
     backtest: 'labControlsBacktest',
+    discovered: 'labControlsDiscovered',
   };
   Object.entries(controls).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -135,4 +138,8 @@ function _applyTierUI() {
   // 真實驗室：只有 vvvip 才顯示
   const expBtn = document.getElementById('labBtnExperiment');
   if (expBtn) expBtn.style.display = isVVVIP ? '' : 'none';
+
+  // 系統發現策略：只有 vvvip 才顯示
+  const discBtn = document.getElementById('labBtnDiscovered');
+  if (discBtn) discBtn.style.display = isVVVIP ? '' : 'none';
 }
