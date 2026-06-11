@@ -151,6 +151,8 @@ export function initCharts() {
       try { el.remove(); } catch(e){}
     });
   }
+  // BB/ENV 通道填色 canvas 清理（同 Ichimoku：chart.remove 不清外部 appendChild）
+  _clearAllBandFills();
   // C3 分價量表清理
   _clearPVD();
 
@@ -270,12 +272,14 @@ export function renderChartData(candles) {
   _renderVolume(candles);
   _renderMA(candles, closes);
   if (AppState.indicators.BB) _renderBollinger(candles, closes);
+  else _clearBandFill('bb');   // BB 關閉時清掉填色 canvas 殘留
 
   // Advanced 5 主圖 overlay（開關在 AppState.indicators）
   if (AppState.indicators.EMA)  _renderEMA(candles, closes);
   if (AppState.indicators.GMMA) _renderGMMA(candles, closes);
   if (AppState.indicators.SAR)  _renderSAR(candles);
   if (AppState.indicators.ENV)  _renderEnvelope(candles, closes);
+  else _clearBandFill('env');  // ENV 關閉時清掉填色 canvas 殘留
   // C1 一目均衡表（雲帶 + 5 條線）
   if (AppState.indicators.ICHI) {
     _renderIchimoku(candles);
@@ -365,6 +369,8 @@ const MA_COLORS = { 5: '#f59e0b', 10: '#26a69a', 20: '#60a5fa', 60: '#f472b6' };
 function _renderMA(candles, closes) {
   [5, 10, 20, 60].forEach(n => {
     if (!AppState.ma[n]) return;
+    // GMMA 開啟時自動隱藏 MA5/10/20（與顧比短軸語意重複，疊圖變義大利麵），MA60 保留
+    if (AppState.indicators?.GMMA && n !== 60) return;
     const ma  = calcMA(closes, n);
     const key = `ma${n}`;
     _series[key] = _charts.main.addLineSeries({
@@ -388,8 +394,8 @@ function _renderBollinger(candles, closes) {
 
   // 上軌
   _series.bbUpper = _charts.main.addLineSeries({
-    color:                  'rgba(167,139,250,0.7)',
-    lineWidth:              1,
+    color:                  'rgba(189,166,247,0.95)',
+    lineWidth:              2,
     lineStyle:              1,   // dashed
     priceLineVisible:       false,
     lastValueVisible:       false,
@@ -397,7 +403,7 @@ function _renderBollinger(candles, closes) {
   });
   // 中軌（MA20 同色但虛線）
   _series.bbMid = _charts.main.addLineSeries({
-    color:                  'rgba(167,139,250,0.4)',
+    color:                  'rgba(189,166,247,0.55)',
     lineWidth:              1,
     lineStyle:              2,
     priceLineVisible:       false,
@@ -406,8 +412,8 @@ function _renderBollinger(candles, closes) {
   });
   // 下軌
   _series.bbLower = _charts.main.addLineSeries({
-    color:                  'rgba(167,139,250,0.7)',
-    lineWidth:              1,
+    color:                  'rgba(189,166,247,0.95)',
+    lineWidth:              2,
     lineStyle:              1,
     priceLineVisible:       false,
     lastValueVisible:       false,
@@ -426,6 +432,119 @@ function _renderBollinger(candles, closes) {
   _series.bbUpper.setData(upperData);
   _series.bbMid.setData(midData);
   _series.bbLower.setData(lowerData);
+
+  // ── 上下軌間淡填色（通用 band fill，BB/ENV 共用）──
+  _setBandFill('bb', upperData, lowerData, 'rgba(189,166,247,0.07)');
+}
+
+// ─── 通用通道填色 overlay（BB/ENV 共用，name 區分各自 canvas/訂閱）───
+const _bandFills = {};   // name → { canvas, data, unsubs, color }
+
+function _setBandFill(name, upperData, lowerData, color) {
+  _clearBandFill(name);
+  const mainEl = document.getElementById('mainChart');
+  if (!mainEl || !_charts.main) return;
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'band-fill-canvas';
+  canvas.dataset.band = name;
+  canvas.style.cssText = `
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  `;
+  if (getComputedStyle(mainEl).position === 'static') {
+    mainEl.style.position = 'relative';
+  }
+  mainEl.appendChild(canvas);
+
+  const entry = { canvas, data: { upperData, lowerData }, unsubs: [], color };
+  _bandFills[name] = entry;
+
+  const ts = _charts.main.timeScale();
+  const redraw = () => _drawBandFill(name);
+  ts.subscribeVisibleTimeRangeChange(redraw);
+  ts.subscribeVisibleLogicalRangeChange(redraw);
+  const ro = new ResizeObserver(redraw);
+  ro.observe(mainEl);
+  entry.unsubs.push(() => ts.unsubscribeVisibleTimeRangeChange(redraw));
+  entry.unsubs.push(() => ts.unsubscribeVisibleLogicalRangeChange(redraw));
+  entry.unsubs.push(() => ro.disconnect());
+  requestAnimationFrame(redraw);
+}
+
+function _clearBandFill(name) {
+  const entry = _bandFills[name];
+  if (!entry) return;
+  entry.unsubs.forEach(unsub => { try { unsub(); } catch(e){} });
+  try { entry.canvas.remove(); } catch(e){}
+  delete _bandFills[name];
+}
+
+function _clearAllBandFills() {
+  Object.keys(_bandFills).forEach(_clearBandFill);
+  // 防累積殘留：掃掉 #mainChart 內所有 band-fill canvas（同 ichi-cloud-canvas 處理）
+  const mainEl = document.getElementById('mainChart');
+  if (mainEl) {
+    mainEl.querySelectorAll('.band-fill-canvas').forEach(el => {
+      try { el.remove(); } catch(e){}
+    });
+  }
+}
+
+function _drawBandFill(name) {
+  const entry = _bandFills[name];
+  if (!entry || !_charts.main) return;
+  const candleSeries = _series.candle;
+  if (!candleSeries) return;
+  const mainEl = document.getElementById('mainChart');
+  if (!mainEl) return;
+
+  const canvas = entry.canvas;
+  const dpr  = window.devicePixelRatio || 1;
+  const cssW = mainEl.clientWidth;
+  const cssH = mainEl.clientHeight;
+  if (canvas.width  !== cssW * dpr) canvas.width  = cssW * dpr;
+  if (canvas.height !== cssH * dpr) canvas.height = cssH * dpr;
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  // 以 time 配對上下軌，轉像素座標；視窗外/null 斷點切段
+  const lowMap = new Map();
+  entry.data.lowerData.forEach(p => lowMap.set(p.time, p.value));
+  const timeScale = _charts.main.timeScale();
+  const segs = [];
+  let seg = [];
+  for (const p of entry.data.upperData) {
+    const lo = lowMap.get(p.time);
+    const x  = timeScale.timeToCoordinate(p.time);
+    const yu = (lo != null) ? candleSeries.priceToCoordinate(p.value) : null;
+    const yl = (lo != null) ? candleSeries.priceToCoordinate(lo)      : null;
+    if (x == null || yu == null || yl == null) {
+      if (seg.length > 1) segs.push(seg);
+      seg = [];
+      continue;
+    }
+    seg.push({ x, yu, yl });
+  }
+  if (seg.length > 1) segs.push(seg);
+
+  ctx.fillStyle = entry.color;
+  for (const s of segs) {
+    ctx.beginPath();
+    ctx.moveTo(s[0].x, s[0].yu);
+    for (let i = 1; i < s.length; i++) ctx.lineTo(s[i].x, s[i].yu);
+    for (let i = s.length - 1; i >= 0; i--) ctx.lineTo(s[i].x, s[i].yl);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 
@@ -488,7 +607,7 @@ function _renderEMA(candles, closes) {
     if (_series[key]) { try { _charts.main.removeSeries(_series[key]); } catch(e){} }
     _series[key] = _charts.main.addLineSeries({
       color: colors[idx], lineWidth: 1.2, lineStyle: 0,
-      priceLineVisible: false, lastValueVisible: true,
+      priceLineVisible: false, lastValueVisible: false,  // 右軸標籤堆疊互蓋，關閉（crosshair 仍可讀值）
       title: `EMA${p}`,
     });
     _series[key].setData(candles.map((c, i) => ({ time: c.time, value: ema[i] })).filter(d => d.value != null));
@@ -499,10 +618,11 @@ function _renderEMA(candles, closes) {
 function _renderGMMA(candles, closes) {
   if (candles.length < 62) return;
   const { short, long } = calcGMMA(closes);
-  const shortColors = ['rgba(239,83,80,0.6)','rgba(239,83,80,0.5)','rgba(239,83,80,0.4)',
-                       'rgba(239,83,80,0.35)','rgba(239,83,80,0.3)','rgba(239,83,80,0.25)'];
-  const longColors  = ['rgba(38,166,154,0.6)','rgba(38,166,154,0.5)','rgba(38,166,154,0.4)',
-                       'rgba(38,166,154,0.35)','rgba(38,166,154,0.3)','rgba(38,166,154,0.25)'];
+  // alpha 漸層拉寬（外圈最亮→內圈最淡），群組輪廓更清楚
+  const shortColors = ['rgba(239,83,80,0.9)','rgba(239,83,80,0.72)','rgba(239,83,80,0.56)',
+                       'rgba(239,83,80,0.44)','rgba(239,83,80,0.34)','rgba(239,83,80,0.26)'];
+  const longColors  = ['rgba(38,166,154,0.9)','rgba(38,166,154,0.72)','rgba(38,166,154,0.56)',
+                       'rgba(38,166,154,0.44)','rgba(38,166,154,0.34)','rgba(38,166,154,0.26)'];
 
   [...short.map((s, i) => ({ arr: s, color: shortColors[i], key: `gmmaS${i}` })),
    ...long.map((l, i)  => ({ arr: l, color: longColors[i],  key: `gmmaL${i}` }))
@@ -530,13 +650,17 @@ function _renderSAR(candles) {
     else                     bearData.push({ time: c.time, value: sarArr[i] });
   });
 
+  // ⚠️ lineWidth:0 在 LightweightCharts v4 會被強制成 1 仍畫連線（翻轉處拉出長對角假線）
+  //   必須用 lineVisible:false 關掉線段，只留 pointMarkers 純點
   _series.sarBull = _charts.main.addLineSeries({
-    color: '#ef5350', lineWidth: 0, pointMarkersVisible: true,
+    color: '#ef5350', lineVisible: false, pointMarkersVisible: true,
     pointMarkersRadius: 2, priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false,
   });
   _series.sarBear = _charts.main.addLineSeries({
-    color: '#26a69a', lineWidth: 0, pointMarkersVisible: true,
+    color: '#26a69a', lineVisible: false, pointMarkersVisible: true,
     pointMarkersRadius: 2, priceLineVisible: false, lastValueVisible: false,
+    crosshairMarkerVisible: false,
   });
   if (bullData.length) _series.sarBull.setData(bullData);
   if (bearData.length) _series.sarBear.setData(bearData);
@@ -547,19 +671,29 @@ function _renderEnvelope(candles, closes) {
   if (closes.length < 20) return;
   const env = calcEnvelope(closes, 20, 5);
   ['upper', 'mid', 'lower'].forEach((band, idx) => {
-    const colors = ['rgba(168,85,247,0.5)', 'rgba(168,85,247,0.3)', 'rgba(168,85,247,0.5)'];
+    const colors = ['rgba(192,132,252,0.9)', 'rgba(192,132,252,0.45)', 'rgba(192,132,252,0.9)'];
     const styles = [2, 1, 2]; // 虛線/實線/虛線
     const key = `env${band}`;
     if (_series[key]) { try { _charts.main.removeSeries(_series[key]); } catch(e){} }
     _series[key] = _charts.main.addLineSeries({
-      color: colors[idx], lineWidth: 1, lineStyle: styles[idx],
-      priceLineVisible: false, lastValueVisible: idx === 1,
+      color: colors[idx], lineWidth: idx === 1 ? 1 : 2,
+      lineStyle: styles[idx],
+      priceLineVisible: false, lastValueVisible: false,  // 右軸 ENV± 標籤與收盤互蓋，關閉
       title: idx === 0 ? 'ENV+' : idx === 2 ? 'ENV-' : '',
     });
     _series[key].setData(
       candles.map((c, i) => env[i] ? ({ time: c.time, value: env[i][band] }) : null).filter(Boolean)
     );
   });
+
+  // 上下軌間淡填色（與 BB 共用通用 band fill）
+  const upperData = [], lowerData = [];
+  candles.forEach((c, i) => {
+    if (!env[i]) return;
+    upperData.push({ time: c.time, value: env[i].upper });
+    lowerData.push({ time: c.time, value: env[i].lower });
+  });
+  _setBandFill('env', upperData, lowerData, 'rgba(192,132,252,0.06)');
 }
 
 // ══════════════════════════════════════════════════════
@@ -1137,7 +1271,7 @@ function _drawPVD(candles) {
   const candleSeries = _series.candle;
   if (!candleSeries) return;
 
-  const BAR_MAX = Math.max(60, Math.round(cssW * PVD_MAX_RATIO));  // 長條最大長度
+  const BAR_MAX = Math.max(60, Math.round(cssW * Math.min(PVD_MAX_RATIO, 0.22)));  // 長條最大長度（封頂 22% 圖寬，避免蓋住右半邊 K 棒）
   const binY = (b) => {  // bin → { yTop, barH }
     const binLow  = priceLow + b * binSize;
     const yTop = candleSeries.priceToCoordinate(binLow + binSize);
@@ -1163,7 +1297,7 @@ function _drawPVD(candles) {
     const totalW = Math.round((total / maxVol) * BAR_MAX);
     const upW    = Math.round((upVol[b] / total) * totalW);
     const downW  = totalW - upW;
-    const alpha  = b === pocIdx ? 0.62 : 0.42;
+    const alpha  = b === pocIdx ? 0.55 : 0.3;  // 降透明度，POC 仍突出
 
     // 從右緣往左：紅段
     if (upW > 0) {

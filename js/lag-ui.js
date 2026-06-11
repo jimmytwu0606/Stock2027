@@ -12,6 +12,7 @@ import { getChineseName }            from './api.js';
 import { AppState }                  from './state.js';
 import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
 import { getAllSignalsCache } from './db.js';
+import { openStockPreview } from './stock-preview.js';
 
 let _leaderCode = null;
 let _scanning   = false;
@@ -280,9 +281,8 @@ function _renderResults() {
     tr.addEventListener('click', () => {
       const code = tr.dataset.code;
       if (!code) return;
-      document.dispatchEvent(new CustomEvent('stockSelect', {
-        detail: { code, fromScreener: true, strategyId: null, strategyName: '領漲跟漲' },
-      }));
+      // 點列 → 個股速覽 modal；ctx 透傳 stockSelect detail
+      openStockPreview(code, { fromScreener: true, strategyId: null, strategyName: '領漲跟漲' });
     });
   });
 }

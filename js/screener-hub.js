@@ -17,6 +17,7 @@ import { initPatternUI }   from './pattern-ui.js';
 import { initSeedUI }      from './seed-ui.js';
 import { initLagUI }       from './lag-ui.js';
 import { initStrategyAudit } from './strategy-audit.js';
+import { openStockPreview } from './stock-preview.js';
 
 const SUBS = {
   screener: 'hubSubScreener',
@@ -340,16 +341,13 @@ function _renderQuickScanResult(stockHits, strategies) {
       const X_PRIORITY = ['X2','X1','X5','X6'];
       const xStrat = X_PRIORITY.find(id => hitStrats.includes(id)) ?? null;
       const stratObj = xStrat ? stratMap[xStrat] : (hitStrats[0] ? stratMap[hitStrats[0]] : null);
-      // dispatch stockSelect（同 screener-ui.js），讓 main.js 設定 screenerContext
-      document.dispatchEvent(new CustomEvent('stockSelect', {
-        detail: {
-          code,
-          matchedConds:  hitStrats.map(id => stratMap[id]?.name ?? id),
-          strategyId:    stratObj?.id   ?? null,
-          strategyName:  stratObj?.name ?? null,
-          fromScreener:  true,
-        }
-      }));
+      // 點擊 → 個股速覽 modal；ctx 透傳給「進入個股頁面」的 stockSelect
+      openStockPreview(code, {
+        matchedConds:  hitStrats.map(id => stratMap[id]?.name ?? id),
+        strategyId:    stratObj?.id   ?? null,
+        strategyName:  stratObj?.name ?? null,
+        fromScreener:  true,
+      });
     });
   });
 

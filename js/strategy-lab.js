@@ -7,7 +7,6 @@
  *
  * 子模組（lazy import）：
  *   lab-single.js    → 單股回測
- *   lab-industry.js  → 族群回測
  *   lab-mc.js        → MC 模擬
  *   lab-compare.js   → 策略比較
  */
@@ -29,11 +28,6 @@ export async function initStrategyLab() {
   // 各子模組 lazy init（切到對應 tab 才 import）
   // 預先 bind run buttons（import 後才能 bind）
   _lazyBind('single',   () => import('./lab-single.js'),   m => m.bindSingleRun());
-  _lazyBind('industry', () => import('./lab-industry.js'), m => {
-    m.bindIndustryRun();
-    m.bindIndModal();
-    m.preloadHeatMap().catch(() => {});
-  });
   _lazyBind('mc',       () => import('./lab-mc.js'),       m => m.bindMCRun());
   _lazyBind('compare',  () => import('./lab-compare.js'),  m => m.bindCompareRun());
   _lazyBind('experiment', () => import('./lab-experiment.js'), m => m.bindExperimentRun());
@@ -44,11 +38,16 @@ export async function initStrategyLab() {
 }
 
 /** 外部跳轉：從族群 modal 點個股 → 切到 MC 子頁並帶入代號 */
-export function openLabWithCode(code, subPage = 'mc') {
+export function openLabWithCode(code, subPage = 'mc', opts = {}) {
   _switchSub(subPage);
   const idMap = { mc: 'labMCCodeInput', single: 'labCodeInput', compare: 'labCompareCodeInput' };
   const inp = document.getElementById(idMap[subPage] ?? '');
   if (inp) inp.value = code;
+  // autorun：lazy bind 完成後自動觸發 run（族群觀察 modal → MC 直跑）
+  if (opts.autorun) {
+    const runId = { mc: 'labRunMC', single: 'labRunSingle', compare: 'labRunCompare' }[subPage];
+    setTimeout(() => document.getElementById(runId)?.click(), 120);
+  }
 }
 
 // ── lazy bind：切到 tab 時才 import 並初始化 ──────────────────────────────
@@ -89,7 +88,7 @@ function _switchSub(sub) {
   });
 
   const panels = {
-    single: 'labPanelSingle', industry: 'labPanelIndustry',
+    single: 'labPanelSingle',
     mc: 'labPanelMC', compare: 'labPanelCompare',
     experiment: 'labPanelExperiment',
     backtest: 'labPanelBacktest',
@@ -101,7 +100,7 @@ function _switchSub(sub) {
   });
 
   const controls = {
-    single: 'labControlsSingle', industry: 'labControlsIndustry',
+    single: 'labControlsSingle',
     mc: 'labControlsMC', compare: 'labControlsCompare',
     experiment: 'labControlsExperiment',
     backtest: 'labControlsBacktest',

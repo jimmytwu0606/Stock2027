@@ -864,33 +864,17 @@ body.resizing {
 /* ── 節號 18：個股 Header 訊號膠囊列（A 版細框 + 色點 + 文字）──────── */
 .sh-signals {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 7px 16px;
+  gap: 6px;
   margin-top: 2px;
   padding-top: 9px;
   border-top: 1px solid var(--border);
 }
 .sh-signals:empty { display: none; }
 
-/* 每個分類 = 獨立區塊：label 固定在左，膠囊在右側自己換行 */
-.sh-cat-group {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-.sh-cat-label {
-  font-size: 11px;
-  color: var(--hint);
-  letter-spacing: .3px;
-  flex-shrink: 0;
-  padding-top: 6px;
-}
-.sh-cat-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
+/* 收攏改版：sh-cat-group / sh-cat-label / sh-cat-pills 分組包裝已移除
+   pill 平鋪單列，由 cat-* 色點區分類別（stock-tabs.js _renderSignalBubbles）*/
 
 .sh-pill {
   display: inline-flex;
@@ -955,6 +939,20 @@ body.resizing {
 #stockYaoguChip .yaogu-chip-row-warning {
   padding-top: 3px;
   border-top: 1px solid rgba(255,255,255,.08);
+}
+
+/* 收攏改版：X 系列明細 pill 列（從 stockSignalBubbles 移入妖股 chip）*/
+#stockYaoguChip .yaogu-chip-row-x {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  width: 100%;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,.06);
+}
+#stockYaoguChip .yaogu-chip-row-x .sh-pill {
+  font-size: 11px;
+  padding: 2px 8px;
 }
 #stockYaoguChip .yaogu-reset-btn {
   margin-left: 2px;
@@ -1028,3 +1026,117 @@ body.resizing {
   text-align: center;
 }
 
+
+
+/* ── chart-edit 樣式面板（色票/線寬/虛實）──────── */
+.ce-styles {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ce-style-swatch {
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,.25);
+  cursor: pointer;
+  padding: 0;
+}
+.ce-style-swatch:hover { transform: scale(1.15); }
+.ce-style-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  width: 22px; height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.ce-style-btn:hover { color: var(--text); border-color: var(--hint); }
+@media (max-width: 768px) {
+  .ce-styles { display: none; }  /* 手機工具列空間不足，樣式面板桌機限定 */
+}
+
+
+/* ── chart-edit 右鍵選單 ──────── */
+.ce-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  flex-direction: column;
+  min-width: 110px;
+  padding: 4px;
+  background: #1c1f24;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.5);
+}
+.ce-ctx-menu button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ce-ctx-menu button:hover { background: rgba(255,255,255,.08); }
+
+/* ════ 族群觀察 子頁切換（強勢族群 / 族群回測，0611）════ */
+.hg-subtabs {
+  display: flex;
+  gap: 4px;
+  padding: 10px 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.hg-subtab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 14px 8px;
+  cursor: pointer;
+  transition: color .15s;
+}
+.hg-subtab-btn:hover { color: var(--text); }
+.hg-subtab-btn.active {
+  color: var(--text);
+  border-bottom-color: #ef5350;
+  font-weight: 500;
+}
+
+/* 族群回測 toolbar（自 lab 遷入，沿用 .lab-controls 內部樣式）*/
+.hg-bt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+}
+.hg-bt-probanner {
+  margin: 16px;
+  padding: 14px 16px;
+  background: var(--bg3, #1c2128);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* market-mini 強勢類股資料日期 */
+.mm-sector-date {
+  font-size: 10px;
+  color: var(--hint, #6e7681);
+  padding: 2px 0 4px;
+}
+
+/* 族群回測 panel：strategy-lab.css 的 .lab-panel 是 absolute inset:0，
+   搬出 lab 後沒有 positioned 祖先 → 鋪滿 viewport 蓋住全頁吃掉點擊。
+   在族群觀察內改回正常文流。 */
+#hgSubBacktest .lab-panel {
+  position: relative;
+  inset: auto;
+  min-height: calc(100vh - 240px);
+}

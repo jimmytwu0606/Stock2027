@@ -1,8 +1,17 @@
 /**
- * game-bigTwo.js — 燈燈大老二（基礎完整版）
+ * game-bigTwoBloody.js — 血腥大老二（階級制魔改版）
  * 需在 splash-game.js 之前載入
  *
- * 規則（2026/06 定版）：
+ * 魔改規則：
+ *   - 第1局照常打，名次決定階級：👑國王 / 🎩貴族 / 🧑平民 / ⛓奴隸
+ *   - 之後每局發牌完先進「交換階段」：
+ *       國王 → 向其餘三人各指定拿1張（可看對方手牌），各丟回1張不要的
+ *       貴族 → 向平民、奴隸各拿1張、各丟回1張
+ *       平民 → 向奴隸拿1張、丟回1張
+ *       奴隸 → 只能被拿，靠收到的廢牌翻身
+ *   - 罰金：剩牌×5；13張沒出 ×3（取代10張規則）；剩牌≥10張 ×2；手上每張2 ×2
+ *
+ * 基礎規則（沿用標準版）：
  *   - 4人桌（1玩家 + 3AI），梅花3持有者先出且首手必含梅花3
  *   - 牌型：單張 / 對子 / 三條 / 五張（順子、葫蘆、鐵支、同花順）
  *     ※ 無「同花」牌型（同花是13支玩法）
@@ -27,6 +36,8 @@
 
   const PLAYERS = ['玩家','小明AI','阿財AI','老K AI'];
   const AVATARS = ['😺','🤖','🦊','🐯'];
+  const RANK_TITLES = ['👑 國王','🎩 貴族','🧑 平民','⛓ 奴隸'];
+  const RANK_EMOJI  = ['👑','🎩','🧑','⛓'];
   const TYPE_ZH = {single:'單張',pair:'對子',triple:'三條',straight:'順子',
     fullHouse:'葫蘆',fourOfAKind:'鐵支',straightFlush:'同花順'};
 
@@ -46,15 +57,12 @@
   function sortByRank(h){h.sort((a,b)=>a.v!==b.v?a.v-b.v:a.sv-b.sv);}
   function sortBySuit(h){h.sort((a,b)=>a.sv!==b.sv?a.sv-b.sv:a.v-b.v);}
 
-  /* 剩牌罰金：每張5元；≥10張總額×2；2/A/JQK 每張再×2 */
+  /* 血腥罰金：每張5元；13張沒出×3（取代10張規則）；≥10張×2；每張2再×2 */
   function handPenalty(hand){
     let base=hand.length*5;
-    if(hand.length>=10)base*=2;
-    for(const c of hand){
-      if(c.r==='2')base*=2;
-      if(c.r==='A')base*=2;
-      if(['J','Q','K'].includes(c.r))base*=2;
-    }
+    if(hand.length>=13)base*=3;
+    else if(hand.length>=10)base*=2;
+    for(const c of hand)if(c.r==='2')base*=2;
     return base;
   }
 
@@ -207,7 +215,7 @@
   /* ══════════════════════════════════════
      五、IndexedDB 籌碼存取
   ══════════════════════════════════════ */
-  const DB_NAME='stockDashboard', DB_STORE='settings', CHIP_KEY='bigtwo_chips';
+  const DB_NAME='stockDashboard', DB_STORE='settings', CHIP_KEY='bigtwo_bloody_chips';
   function loadChips(cb){
     try{
       const req=indexedDB.open(DB_NAME);
@@ -239,9 +247,9 @@
   ══════════════════════════════════════ */
   window.__GAMES = window.__GAMES || { _q: [], register(d){ this._q.push(d); } };
   window.__GAMES.register({
-    id: 'bigTwo',
-    name: '🃏 燈燈大老二',
-    hint: '點選手牌選牌，按出牌確認；Pass跳過',
+    id: 'bigTwoBloody',
+    name: '🩸 血腥大老二',
+    hint: '第1局定階級；之後國王吸牌、奴隸吃渣。點選手牌選牌，按出牌確認',
     canvasH: 600,
 
     init(canvas, ctx, api){
@@ -277,6 +285,9 @@
       let dealT=0;            // 發牌動畫計時
       let sortMode='rank';    // rank | suit
       let fastMode=false;     // 玩家完牌後加速模擬
+      let ranks=null;         // 上局名次 [playerIdx,...]，null=第1局
+      let roundNum=1;
+      let exTasks=[],exIdx=0,exStep='demand',exTimer=0; // 交換階段
       let fr=0;
       let alive=true;         // init 實例存活旗標（防舊 listener / loop 殘留）
 
@@ -324,9 +335,93 @@
       }
 
       function onDealDone(){
+        if(ranks)startExchange();
+        else startPlaying();
+      }
+
+      function startPlaying(){
         gamePhase='playing';
+        // 交換可能讓梅花3易手，重新定位
+        currentPlayer=hands.findIndex(h=>h.some(c=>c.r==='3'&&c.s==='♣'));
         addLog(`${PLAYERS[currentPlayer]} 先出（持有梅花3）`);
         if(currentPlayer!==0)scheduleAI();
+      }
+
+      /* ══ 交換階段 ══ */
+      function startExchange(){
+        gamePhase='exchange';
+        exTasks=[];
+        // 高階向所有低階各拿1張：國王→3人、貴族→2人、平民→1人
+        for(let r=0;r<3;r++)
+          for(let t=r+1;t<4;t++)
+            exTasks.push({from:ranks[r],to:ranks[t]});
+        exIdx=0; exStep='demand'; exTimer=40;
+        addLog(`🩸 第${roundNum}局 階級交換開始`);
+      }
+
+      function moveCard(from,to,card){
+        const id=cardId(card);
+        hands[from]=hands[from].filter(c=>cardId(c)!==id);
+        hands[to].push(card);
+        sortByRank(hands[to]);
+        if(to===0||from===0)sortHand0();
+      }
+
+      function finishExchange(){
+        addLog('🤝 交換結束，開打！');
+        startPlaying();
+      }
+
+      /* 玩家在交換階段點擊 */
+      function exchangeClick(mx,my){
+        const task=exTasks[exIdx];
+        if(!task||task.from!==0)return;
+        if(exStep==='demand'){
+          const th=hands[task.to];
+          const pos=exGridPos(th.length);
+          for(let i=0;i<th.length;i++){
+            const p=pos[i];
+            if(mx>=p.x&&mx<=p.x+46&&my>=p.y&&my<=p.y+68){
+              const take=th[i];
+              moveCard(task.to,0,take);
+              addLog(`你向 ${PLAYERS[task.to]} 拿走 ${take.r}${take.s}`);
+              exStep='give';
+              return;
+            }
+          }
+        } else { // give：點自己手牌丟一張
+          const hand=hands[0];
+          const cw=46*1.25,ch=68*1.25;
+          const maxSpread=Math.min((hand.length-1)*36+cw,W-50);
+          const step=hand.length>1?(maxSpread-cw)/(hand.length-1):0;
+          const startX=(W-maxSpread)/2;
+          for(let i=hand.length-1;i>=0;i--){
+            const cx=startX+i*step;
+            const cy=H-168;
+            if(mx>=cx&&mx<=cx+cw&&my>=cy&&my<=cy+ch){
+              const give=hand[i];
+              moveCard(0,exTasks[exIdx].to,give);
+              addLog(`你丟 ${give.r}${give.s} 給 ${PLAYERS[exTasks[exIdx].to]}`);
+              exIdx++; exStep='demand'; exTimer=40;
+              return;
+            }
+          }
+        }
+      }
+
+      /* 對方手牌攤開的格狀座標（兩排） */
+      function exGridPos(n){
+        const pos=[];
+        const perRow=Math.ceil(n/2);
+        const gap=Math.min(50,(W-160)/Math.max(perRow,1));
+        for(let i=0;i<n;i++){
+          const row=i<perRow?0:1;
+          const col=row===0?i:i-perRow;
+          const rowN=row===0?perRow:n-perRow;
+          const startX=W/2-((rowN-1)*gap+46)/2;
+          pos.push({x:startX+col*gap,y:H/2-150+row*82});
+        }
+        return pos;
       }
 
       function addLog(msg){
@@ -443,11 +538,13 @@
         saveChips(chips[0]);
         api.setScore(chips[0]);
 
+        ranks=finished.slice();
+        roundNum++;
         const resultLines=finished.map((pidx,rank)=>{
           const delta=rank===0?`+${pot}`:`-${penalties[pidx]}`;
           const cardsLeft=rank===0?'':`（剩${hands[pidx].length}張）`;
-          return `${rank+1}. ${PLAYERS[pidx]} ${delta}元${cardsLeft} → ${chips[pidx]}元`;
-        }).join('\n');
+          return `${RANK_TITLES[rank]}　${PLAYERS[pidx]} ${delta}元${cardsLeft} → ${chips[pidx]}元`;
+        }).join('\n')+'\n\n下一局開打前進行階級交換';
 
         if(chips[0]<=0){
           api.showMsg('破產了 😭',`籌碼歸零！\n\n${resultLines}`,[
@@ -470,11 +567,12 @@
       /* ── 玩家操作 ── */
       function onClick(e){
         if(!alive)return;
-        if(gamePhase!=='playing')return;
+        if(gamePhase!=='playing'&&gamePhase!=='exchange')return;
         const r=canvas.getBoundingClientRect();
         const mx=(e.clientX-r.left)*(W/r.width);
         const my=(e.clientY-r.top)*(H/r.height);
 
+        if(gamePhase==='exchange'){exchangeClick(mx,my);return;}
         if(fastMode&&inBtn(BTNS.skip,mx,my)){simulateToEnd();return;}
         if(currentPlayer!==0)return;
 
@@ -713,6 +811,38 @@
         for(let i=0;i<n;i++) drawCard(startX+i*gap,cy,cards[i],false,true,1.15);
       }
 
+      /* ── 交換階段畫面 ── */
+      function drawExchange(){
+        const task=exTasks[exIdx];
+        if(!task)return;
+        // 橫幅
+        let banner;
+        if(task.from===0){
+          banner=exStep==='demand'
+            ?`👑 向 ${PLAYERS[task.to]} 指定拿一張（點對方的牌）`
+            :`選一張不要的牌丟給 ${PLAYERS[task.to]}（點自己的牌）`;
+        } else {
+          banner=`${RANK_EMOJI[ranks.indexOf(task.from)]} ${PLAYERS[task.from]} 交換中…`;
+        }
+        ctx.save();
+        ctx.font='bold 14px -apple-system,sans-serif';
+        const tw=ctx.measureText(banner).width;
+        ctx.fillStyle='rgba(0,0,0,.65)';
+        ctx.beginPath();ctx.roundRect(W/2-tw/2-16,H/2-205,tw+32,30,15);ctx.fill();
+        ctx.strokeStyle='rgba(239,83,80,.5)';ctx.lineWidth=1;
+        ctx.beginPath();ctx.roundRect(W/2-tw/2-16,H/2-205,tw+32,30,15);ctx.stroke();
+        ctx.fillStyle='#f5c400';ctx.textAlign='center';
+        ctx.fillText(banner,W/2,H/2-185);
+        ctx.restore();
+        // 玩家要牌：攤開對方手牌
+        if(task.from===0&&exStep==='demand'){
+          const th=hands[task.to];
+          const pos=exGridPos(th.length);
+          for(let i=0;i<th.length;i++)
+            drawCard(pos[i].x,pos[i].y,th[i],false,true);
+        }
+      }
+
       /* ── 玩家面板 ── */
       function drawPlayerPanel(idx,px,py,w,h){
         const isActive=currentPlayer===idx&&gamePhase==='playing';
@@ -762,6 +892,11 @@
           const medals=['🥇','🥈','🥉','💀'];
           ctx.font='16px sans-serif';ctx.textAlign='right';
           ctx.fillText(medals[rank-1]||rank,px+w-8,py+34);
+        }
+        // 階級徽章
+        if(ranks){
+          ctx.font='13px sans-serif';ctx.textAlign='right';
+          ctx.fillText(RANK_EMOJI[ranks.indexOf(idx)],px+w-8,py+50);
         }
         // 出牌指示燈
         if(isActive){
@@ -871,7 +1006,7 @@
         ctx.beginPath();ctx.ellipse(W/2,H/2,175,118,0,0,Math.PI*2);ctx.stroke();
         ctx.setLineDash([]);
         // 中央浮水印
-        if(!played&&!tableFade&&gamePhase!=='dealing'){
+        if(!played&&!tableFade&&gamePhase==='playing'){
           ctx.fillStyle='rgba(245,196,0,.07)';
           ctx.font='bold 52px Georgia,serif';
           ctx.textAlign='center';
@@ -902,7 +1037,8 @@
           ctx.fillText('發牌中…',W/2,H/2+72);
         }
 
-        drawTable();
+        if(gamePhase==='exchange')drawExchange();
+        else drawTable();
         drawLog();
         drawButtons();
 
@@ -935,6 +1071,27 @@
         if(gamePhase==='dealing'){
           dealT++;
           if(dealT>=110)onDealDone();
+        }
+        else if(gamePhase==='exchange'){
+          const task=exTasks[exIdx];
+          if(!task)finishExchange();
+          else if(task.from!==0){
+            exTimer--;
+            if(exTimer<=0){
+              // AI：拿對方最大牌、丟自己最小牌
+              const th=[...hands[task.to]].sort((a,b)=>(a.v*4+a.sv)-(b.v*4+b.sv));
+              const fh=[...hands[task.from]].sort((a,b)=>(a.v*4+a.sv)-(b.v*4+b.sv));
+              const take=th[th.length-1], give=fh[0];
+              moveCard(task.to,task.from,take);
+              moveCard(task.from,task.to,give);
+              // 涉及玩家的交換顯示牌面，AI 互換保密
+              if(task.to===0)
+                addLog(`${PLAYERS[task.from]} 拿走你的 ${take.r}${take.s}，丟回 ${give.r}${give.s}`);
+              else
+                addLog(`${PLAYERS[task.from]} 向 ${PLAYERS[task.to]} 換了1張`);
+              exIdx++; exTimer=55;
+            }
+          }
         }
         else if(gamePhase==='playing'&&currentPlayer!==0&&!finished.includes(currentPlayer)){
           aiThinkTimer--;

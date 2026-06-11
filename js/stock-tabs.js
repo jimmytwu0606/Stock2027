@@ -1421,6 +1421,19 @@ async function _renderYaoguChip(code, signals, candles = null) {
   try {
     const record = await getYaoguRecord(code);
 
+    // 收攏改版：X 系列 pill 從 stockSignalBubbles 移進妖股 chip 內顯示
+    const xSigs = (Array.isArray(signals) ? signals : []).filter(s => s.category === 'X 系列');
+    const xRowHtml = xSigs.length
+      ? `<div class="yaogu-chip-row-x">` +
+        xSigs.map(s =>
+          `<span class="sh-pill cat-gold" title="${_escHtml(s.desc ?? s.name)}">` +
+          `<span class="sh-pill-dot"></span>` +
+          `<span class="sh-pill-txt">${_escHtml(s.name)}</span>` +
+          `</span>`
+        ).join('') +
+        `</div>`
+      : '';
+
     // close < MA20 直接在渲染層判斷 exit（不依賴 AppState.yaoguStatus 快取）
     // 原因：AppState.yaoguStatus 由 updateYaoguTracker 寫入，可能是舊狀態
     // 渲染層直接算，確保跌破月線立即顯示出場確認
@@ -1456,7 +1469,10 @@ async function _renderYaoguChip(code, signals, candles = null) {
     const ys = AppState.yaoguStatus?.[code] ?? null;
 
     if (!ys) {
-      el.innerHTML = '';
+      // 無 yaogu 狀態但 X 訊號亮著（tracker 尚未回寫的過渡幀）→ 先顯示 X pill 列
+      el.innerHTML = xRowHtml
+        ? `<div class="yaogu-chip" style="border-color:#f7bc2e">${xRowHtml}</div>`
+        : '';
       import('./chart-exit-lines.js').then(m => m.clearExitLines()).catch(() => {});
       return;
     }
@@ -1508,6 +1524,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
             <span class="yaogu-chip-label" style="color:${ys.color}">${ys.label}</span>
             <span class="yaogu-chip-desc" style="color:${ys.color}">${ys.desc ?? ''}</span>
           </div>
+          ${xRowHtml}
           ${exitLines?.html ?? ''}
           ${exitBtn}
         </div>`;
@@ -1519,6 +1536,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
             <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
           </div>
           ${dropWarnHtml}
+          ${xRowHtml}
           ${exitLines?.html ?? ''}
           ${exitBtn}
         </div>`;
@@ -1616,14 +1634,23 @@ function _renderScreenerCondTags(container, code) {
   const ctx = AppState.screenerContext;
   if (!ctx || ctx.code !== code || !ctx.matchedConds?.length) return;
 
+  // 收攏改版：預設只顯示一顆「篩出原因 ×N」chip，點擊展開條件明細
   const wrap = document.createElement('div');
   wrap.className = 'screener-cond-tags';
-  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px;padding:6px 8px;background:rgba(99,102,241,0.08);border-radius:8px;border:1px solid rgba(99,102,241,0.2)';
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px';
   wrap.innerHTML =
-    `<span class="screener-cond-label" style="font-size:11px;color:var(--muted);white-space:nowrap">🔍 篩出原因</span>` +
+    `<button type="button" class="screener-cond-toggle" style="font-size:11px;padding:3px 9px;border-radius:5px;background:rgba(99,102,241,0.12);color:#818cf8;border:1px solid rgba(99,102,241,0.3);cursor:pointer;white-space:nowrap">🔍 篩出原因 ×${ctx.matchedConds.length}</button>` +
+    `<span class="screener-cond-detail" style="display:none;flex-wrap:wrap;gap:6px">` +
     ctx.matchedConds.map(label =>
       `<span class="screener-cond-tag" style="font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3)">${label}</span>`
-    ).join('');
+    ).join('') +
+    `</span>`;
+
+  // 點擊展開/收合（inline onclick 在 template literal 內易出引號巢狀問題，用 addEventListener）
+  const detail = wrap.querySelector('.screener-cond-detail');
+  wrap.querySelector('.screener-cond-toggle').addEventListener('click', () => {
+    detail.style.display = detail.style.display === 'none' ? 'flex' : 'none';
+  });
 
   // 插在 stockSignalTags 之後
   container.insertAdjacentElement('afterend', wrap);
@@ -1681,19 +1708,19 @@ function _renderSignalBubbles(signals) {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
 
-  host.innerHTML = sortedEntries.map(([cat, sigs]) => {
-    const meta = CAT_MAP[cat] ?? { cls: 'cat-gray', label: cat };
-    const pills = sigs.map(s =>
-      `<span class="sh-pill ${meta.cls}" title="${_escHtml(s.desc ?? s.name)}">` +
-      `<span class="sh-pill-dot"></span>` +
-      `<span class="sh-pill-txt">${_escHtml(s.name)}</span>` +
-      `</span>`
-    ).join('');
-    return `<div class="sh-cat-group">` +
-      `<span class="sh-cat-label">${meta.label}</span>` +
-      `<div class="sh-cat-pills">${pills}</div>` +
-      `</div>`;
-  }).join('');
+  // 收攏改版：全部 pill 平鋪單列（色點區分類別），不再包 sh-cat-group / 分類文字標籤
+  // X 系列 pill 移至妖股 chip（_renderYaoguChip 的 yaogu-chip-row-x），這裡跳過避免重複
+  host.innerHTML = sortedEntries
+    .filter(([cat]) => cat !== 'X 系列')
+    .map(([cat, sigs]) => {
+      const meta = CAT_MAP[cat] ?? { cls: 'cat-gray', label: cat };
+      return sigs.map(s =>
+        `<span class="sh-pill ${meta.cls}" title="${meta.label}｜${_escHtml(s.desc ?? s.name)}">` +
+        `<span class="sh-pill-dot"></span>` +
+        `<span class="sh-pill-txt">${_escHtml(s.name)}</span>` +
+        `</span>`
+      ).join('');
+    }).join('');
 }
 
 function _renderSignalTags(container, signals) {

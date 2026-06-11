@@ -8,11 +8,15 @@ import { STRATEGIES } from './strategy.js';
 import { dengToast } from './loading-deng.js';
 import { getIndustryCache, setIndustryCache, getHeatmapMeta, saveHeatmapMeta, listIndustryCacheKeys, dbGetAll } from './db.js';
 import { fsGetShared } from './firebase.js';
+import { openStockPreview } from './stock-preview.js';
 import { resolveCode, tsToDate, checkProLimit, consumeProLimit, COMPARE_STRATEGIES } from './lab-utils.js';
 
 const INDUSTRY_MAP_URL = './industry_map.js';
 const INDUSTRY_BATCH   = 15;
 const PRO_LIMIT_KEY_INDUSTRY = 'lab_pro_industry_today';
+
+// inline onclick 模板用：點個股 → 個股速覽 modal（不再跳實驗室回測）
+if (typeof window !== 'undefined') window.__openStockPreview = code => openStockPreview(code);
 
 let _industryAbort     = null;
 let _industryMap       = null;
@@ -463,9 +467,9 @@ async function _startIndustryBacktest() {
   const abortBtn = document.getElementById('labAbortIndustry');
   const resultEl = document.getElementById('labIndustryResult');
   const emptyEl  = document.getElementById('labIndustryEmpty');
-  const progressEl  = document.getElementById('labProgress');
-  const progressBar = document.getElementById('labProgressBar');
-  const progressText = document.getElementById('labProgressText');
+  const progressEl  = document.getElementById('hgProgress');
+  const progressBar = document.getElementById('hgProgressBar');
+  const progressText = document.getElementById('hgProgressText');
 
   runBtn.style.display   = 'none';
   abortBtn.style.display = '';
@@ -725,6 +729,255 @@ async function _loadIndustryMap() {
   }
 }
 
+// ════ 交易量熱力（result 區第三 view：全族群 → 族群個股 兩層 drill）════
+// 資料：IDB kline_cache 全市場（bundle 每日灌入），volume 為股數，÷1000 = 張
+let _vhCandles = null;        // { sector: { code: [{t(ms), v(股)}] } }
+let _vhNames   = null;        // { code: name }（無名快取就顯示空）
+let _vhGran    = 'month';
+let _vhSector  = null;        // null = 全族群層
+
+const _VH_GRANS = [
+  { key: 'day',     label: '日' },
+  { key: 'week',    label: '週' },
+  { key: 'month',   label: '月' },
+  { key: 'quarter', label: '季' },
+  { key: 'half',    label: '半年' },
+  { key: 'year',    label: '年' },
+];
+
+function _vhPeriodKey(ms, gran) {
+  const d = new Date(ms);
+  const y = d.getFullYear(), mo = d.getMonth() + 1, dd = d.getDate();
+  if (gran === 'day')     return `${y}/${String(mo).padStart(2,'0')}/${String(dd).padStart(2,'0')}`;
+  if (gran === 'month')   return `${y}/${String(mo).padStart(2,'0')}`;
+  if (gran === 'quarter') return `${y}/Q${Math.ceil(mo / 3)}`;
+  if (gran === 'half')    return `${y}/H${mo <= 6 ? 1 : 2}`;
+  if (gran === 'year')    return `${y}`;
+  if (gran === 'week') {
+    const dt = new Date(Date.UTC(y, mo - 1, dd));
+    const dayNum = (dt.getUTCDay() + 6) % 7;
+    dt.setUTCDate(dt.getUTCDate() - dayNum + 3);
+    const firstThu = new Date(Date.UTC(dt.getUTCFullYear(), 0, 4));
+    const week = 1 + Math.round(((dt - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+    return `${dt.getUTCFullYear()}/W${String(week).padStart(2, '0')}`;
+  }
+  return `${y}/${String(mo).padStart(2,'0')}`;
+}
+
+// 一次性載入全市場 K 線並依族群分組（slim 化只留 t/v）
+async function _vhEnsureData() {
+  if (_vhCandles) return _vhCandles;
+  if (!_industryMap) _industryMap = await _loadIndustryMap();
+
+  const allCache = await dbGetAll('kline_cache').catch(() => []);
+  const bySym = new Map((allCache || []).map(r => [r.symbol, r.candles]));
+
+  _vhCandles = {};
+  _vhNames   = {};
+  for (const [code, sector] of Object.entries(_industryMap)) {
+    const sym1 = toYahooSymbol(code);
+    const sym2 = sym1.endsWith('.TW') ? sym1.replace('.TW', '.TWO') : sym1.replace('.TWO', '.TW');
+    const c = bySym.get(sym1) || bySym.get(sym2);
+    if (!c || c.length < 5) continue;
+    if (!_vhCandles[sector]) _vhCandles[sector] = {};
+    _vhCandles[sector][code] = c.map(k => ({ t: k.time * 1000, v: k.volume || 0 }));
+    _vhNames[code] = getChineseName(code) || '';
+  }
+  return _vhCandles;
+}
+
+// 聚合：{ key: { period: 日均量(張) } }；key 可為 sector 或 code
+function _vhAggregate(entries, gran) {
+  // entries: [key, candles[]][]
+  const map = {};
+  const periodSet = new Set();
+  entries.forEach(([key, lists]) => {
+    const agg = {};
+    lists.forEach(c => c.forEach(k => {
+      const p = _vhPeriodKey(k.t, gran);
+      if (!agg[p]) agg[p] = { vs: 0, n: 0 };
+      agg[p].vs += k.v; agg[p].n++;
+    }));
+    map[key] = {};
+    Object.entries(agg).forEach(([p, a]) => {
+      periodSet.add(p);
+      map[key][p] = a.n ? Math.round(a.vs / a.n / 1000) : 0;  // 張/日均
+    });
+  });
+  let periods = [...periodSet].sort();
+  if (gran === 'day'  && periods.length > 60) periods = periods.slice(-60);
+  if (gran === 'week' && periods.length > 40) periods = periods.slice(-40);
+  return { map, periods: periods.reverse() };  // 由新而舊（最新在最左）
+}
+
+// 通用渲染（藍階，與個股 modal 交易量熱力同設計）
+function _vhTable(rows, map, periods, opts = {}) {
+  if (!periods.length) return '<div style="color:var(--muted);padding:20px">資料不足（請先確認 bundle 已載入）</div>';
+  const lastP = periods[0];  // periods 已反轉：最新在最前
+
+  const vals = rows.flatMap(r => periods.map(p => map[r.key]?.[p] ?? 0)).filter(v => v > 0).sort((a, b) => a - b);
+  const q = f => vals[Math.floor(vals.length * f)] ?? 0;
+  const b10 = q(.10), b30 = q(.30), b50 = q(.50), b70 = q(.70), b90 = q(.90);
+  const vc  = v => !v ? 'rgba(255,255,255,.03)'
+    : v >= b90 ? '#0b2e5e' : v >= b70 ? '#1c4e8f' : v >= b50 ? '#3d85c6'
+    : v >= b30 ? '#6fa8dc' : v >= b10 ? '#9dc3e6' : '#cfe0f2';
+  const vtc = v => !v ? 'rgba(156,163,175,.4)' : v >= b50 ? '#fff' : '#0b2e5e';
+  const fmtV = v => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 10000 ? (v / 1000).toFixed(0) + 'k' : v;
+
+  // 依最新期間量排序（大→小）
+  const sorted = [...rows].sort((a, b) => (map[b.key]?.[lastP] ?? 0) - (map[a.key]?.[lastP] ?? 0));
+
+  let html = `<div class="vh-scroll" style="overflow:auto;max-height:calc(100vh - 360px);border:1px solid var(--border);border-radius:7px">` +
+    `<table style="border-collapse:separate;border-spacing:2px;font-size:11px;white-space:nowrap;padding:6px">` +
+    `<thead><tr>` +
+    `<th style="text-align:right;padding:4px 10px 4px 4px;color:var(--muted);font-weight:400;min-width:96px;position:sticky;left:0;top:0;background:var(--bg2);z-index:3;border-bottom:1px solid var(--border)">${opts.rowLabel ?? ''}</th>`;
+  periods.forEach(p => {
+    const isLast = p === lastP;
+    html += `<th style="text-align:center;color:${isLast ? '#6fa8dc' : 'var(--muted)'};font-weight:${isLast ? '600' : '400'};min-width:52px;padding:4px 2px;position:sticky;top:0;background:var(--bg2);z-index:2;border-bottom:1px solid var(--border)">${p}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  sorted.forEach((r, ri) => {
+    const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+    html += `<tr>` +
+      `<td class="${r.cellCls ?? ''}" ${r.dataAttr ?? ''} style="text-align:right;padding:2px 10px 2px 4px;color:var(--accent);text-decoration:underline;text-underline-offset:2px;font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;cursor:pointer;white-space:nowrap">${r.label}</td>`;
+    periods.forEach(p => {
+      const v = map[r.key]?.[p] ?? 0;
+      if (!v) {
+        html += `<td style="width:52px;height:30px;border-radius:4px;border:1px dashed rgba(255,255,255,.05)"></td>`;
+      } else {
+        html += `<td style="width:52px;height:30px;border-radius:4px;background:${vc(v)};text-align:center;vertical-align:middle"` +
+          ` title="${r.title ?? r.label} ${p}\n日均量 ${v.toLocaleString()} 張">` +
+          `<div style="color:${vtc(v)};font-size:10px;font-weight:700;line-height:1.3">${fmtV(v)}</div>` +
+          `<div style="color:${vtc(v)};font-size:9px;opacity:.7;line-height:1">張</div>` +
+          `</td>`;
+      }
+    });
+    html += `</tr>`;
+  });
+
+  const blues = ['#cfe0f2', '#9dc3e6', '#6fa8dc', '#3d85c6', '#1c4e8f', '#0b2e5e'];
+  html += `</tbody></table></div>` +
+    `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);flex-wrap:wrap">` +
+    `<span>量小</span><div style="display:flex;gap:2px">` +
+    blues.map(c => `<div style="width:22px;height:10px;border-radius:2px;background:${c}"></div>`).join('') +
+    `</div><span>量大</span>` +
+    `<span style="margin-left:6px;opacity:.5">色階依相對百分位（本表內）　每格=該期間日均成交量(張)</span></div>`;
+  return html;
+}
+
+// 單一族群交易量熱力（drill fallback 用：摘要模式無個股訊號資料時顯示）
+async function _vhDrillInto(container, sector) {
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);padding:14px;font-size:12px">讀取 K 線中…</div>';
+  await _vhEnsureData();
+  const stocks = _vhCandles?.[sector];
+  if (!stocks || !Object.keys(stocks).length) {
+    container.innerHTML = '<div style="color:var(--muted);padding:14px;font-size:12px">無此族群 K 線資料</div>';
+    return;
+  }
+  let gran = 'month';
+  const draw = () => {
+    const entries = Object.entries(stocks).map(([code, c]) => [code, [c]]);
+    const { map, periods } = _vhAggregate(entries, gran);
+    const rows = Object.keys(stocks).map(code => ({
+      key: code,
+      label: `${code} ${_vhNames?.[code] ?? ''}`,
+      title: `${code} ${_vhNames?.[code] ?? ''}`,
+      cellCls: 'vh-stock-cell',
+      dataAttr: `data-vhcode="${code}"`,
+    }));
+    container.innerHTML = `
+      <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted);margin-right:4px">粒度：</span>
+        ${_VH_GRANS.map(g =>
+          `<button class="lab-copy-btn vhd-gran-btn${g.key === gran ? ' active' : ''}" data-vgran="${g.key}" style="font-size:11px;padding:2px 8px">${g.label}</button>`
+        ).join('')}
+        <span style="font-size:11px;color:var(--muted);margin-left:10px">摘要模式：無個股訊號明細，顯示交易量熱力（重新掃描可取得完整明細）</span>
+      </div>
+      ${_vhTable(rows, map, periods, { rowLabel: '個股' })}`;
+    container.querySelectorAll('.vhd-gran-btn').forEach(btn => {
+      btn.addEventListener('click', () => { gran = btn.dataset.vgran; draw(); });
+    });
+    container.querySelectorAll('.vh-stock-cell').forEach(td => {
+      td.addEventListener('click', () => openStockPreview(td.dataset.vhcode));
+    });
+  };
+  draw();
+}
+
+// 渲染交易量熱力 view（依 _vhSector 決定層級）
+async function _vhRender(container) {
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);padding:20px">讀取全市場 K 線中…</div>';
+  await _vhEnsureData();
+
+  // 工具列：粒度 + 麵包屑
+  const crumb = _vhSector
+    ? `<button class="lab-copy-btn vh-back-btn" style="font-size:11px;padding:2px 8px">← 全部族群</button>
+       <span style="font-size:12px;color:var(--text);font-weight:500">${_vhSector}</span>`
+    : `<span style="font-size:11px;color:var(--muted)">點擊族群名稱查看個股交易熱力</span>`;
+  const toolbar = `
+    <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--muted);margin-right:4px">粒度：</span>
+      ${_VH_GRANS.map(g =>
+        `<button class="lab-copy-btn vh-gran-btn${g.key === _vhGran ? ' active' : ''}" data-vgran="${g.key}" style="font-size:11px;padding:2px 8px">${g.label}</button>`
+      ).join('')}
+      <span style="margin-left:10px"></span>${crumb}
+    </div>
+    <div id="vhTableWrap"></div>`;
+  container.innerHTML = toolbar;
+  const wrap = container.querySelector('#vhTableWrap');
+
+  if (!_vhSector) {
+    // ── 層 1：全族群（格值 = 族群內所有個股日均量合計）──
+    const entries = Object.entries(_vhCandles).map(([sec, stocks]) => [sec, Object.values(stocks)]);
+    const { map, periods } = _vhAggregate(entries, _vhGran);
+    const rows = Object.keys(_vhCandles).map(sec => ({
+      key: sec,
+      label: `${sec}<span style="color:var(--muted);font-size:10px">（${Object.keys(_vhCandles[sec]).length}）</span>`,
+      title: sec,
+      cellCls: 'vh-sector-cell',
+      dataAttr: `data-vhsec="${sec}"`,
+    }));
+    wrap.innerHTML = _vhTable(rows, map, periods, { rowLabel: '族群' });
+    wrap.querySelectorAll('.vh-sector-cell').forEach(td => {
+      td.addEventListener('click', () => {
+        _vhSector = td.dataset.vhsec;
+        _vhRender(container);
+      });
+    });
+  } else {
+    // ── 層 2：族群內個股 ──
+    const stocks = _vhCandles[_vhSector] ?? {};
+    const entries = Object.entries(stocks).map(([code, c]) => [code, [c]]);
+    const { map, periods } = _vhAggregate(entries, _vhGran);
+    const rows = Object.keys(stocks).map(code => ({
+      key: code,
+      label: `${code} ${_vhNames?.[code] ?? ''}`,
+      title: `${code} ${_vhNames?.[code] ?? ''}`,
+      cellCls: 'vh-stock-cell',
+      dataAttr: `data-vhcode="${code}"`,
+    }));
+    wrap.innerHTML = _vhTable(rows, map, periods, { rowLabel: '個股' });
+    wrap.querySelectorAll('.vh-stock-cell').forEach(td => {
+      td.addEventListener('click', () => openStockPreview(td.dataset.vhcode));
+    });
+  }
+
+  // 粒度切換 / 返回
+  container.querySelectorAll('.vh-gran-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _vhGran = btn.dataset.vgran;
+      _vhRender(container);
+    });
+  });
+  container.querySelector('.vh-back-btn')?.addEventListener('click', () => {
+    _vhSector = null;
+    _vhRender(container);
+  });
+}
+
 // ── 族群回測結果渲染 ──────────────────────────────────────────────────────
 function _renderIndustryResult(el, { indStats }) {
   if (!indStats.length) {
@@ -818,7 +1071,7 @@ function _renderIndustryResult(el, { indStats }) {
       const vr     = s.avgVolRatio ?? 1;
       return `<tr class="lab-ind-row" data-ind="${s.ind}" style="cursor:pointer">
         <td style="color:var(--muted);width:28px">${i + 1}</td>
-        <td style="color:var(--text)">${s.ind}</td>
+        <td style="color:var(--accent);text-decoration:underline;text-underline-offset:2px">${s.ind}</td>
         <td style="color:${wrCol}">${s.wr}%</td>
         <td>
           <div style="display:flex;align-items:center;gap:6px">
@@ -852,14 +1105,54 @@ function _renderIndustryResult(el, { indStats }) {
     _bindRowClicks();
   }
 
+  // ── inline drill：排行榜 / 輪動熱力圖點族群 → 同頁展開個股明細（與交易量熱力同操作）──
+  function _openIndDrill(ind, mode) {
+    const view = el.querySelector('.ind-view-btn.active')?.dataset.view ?? 'rank';
+    mode = mode ?? (view === 'heat' ? 'heat' : 'rank');  // 輪動熱力進來直接看個股熱力
+    const host = el.querySelector(view === 'heat' ? '#indHeatDrill' : '#indRankDrill');
+    const main = el.querySelector(view === 'heat' ? '#indHeatMain' : '#indRankMain');
+    if (!host || !main) { _openIndModal(ind); return; }   // 容錯：結構缺失退回 modal
+
+    host.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <button class="lab-copy-btn ind-drill-back" style="font-size:11px;padding:2px 8px">← 全部族群</button>
+        <span class="ind-drill-title" style="font-size:13px;color:var(--text);font-weight:500"></span>
+      </div>
+      <div class="lab-modal-stats ind-drill-stats"></div>
+      <div class="ind-drill-body"></div>`;
+
+    const ok = _renderIndDetail(ind, {
+      titleEl: host.querySelector('.ind-drill-title'),
+      statsEl: host.querySelector('.ind-drill-stats'),
+      bodyEl:  host.querySelector('.ind-drill-body'),
+    });
+    if (!ok) {
+      // 摘要模式（載入上次排行榜）無個股訊號資料 → fallback 該族群交易量熱力
+      host.querySelector('.ind-drill-title').textContent = ind;
+      host.querySelector('.ind-drill-stats').innerHTML = '';
+      _vhDrillInto(host.querySelector('.ind-drill-body'), ind);
+      mode = null;  // fallback 無 tab 可切
+    }
+
+    main.style.display = 'none';
+    host.style.display = '';
+    // 輪動熱力 drill：自動切到個股熱力圖 tab（與交易量熱力同操作感）
+    if (mode === 'heat') host.querySelector('.modal-view-btn[data-mview="heat"]')?.click();
+    host.querySelector('.ind-drill-back').addEventListener('click', () => {
+      host.style.display = 'none';
+      host.innerHTML = '';
+      main.style.display = '';
+    });
+  }
+
   function _bindRowClicks() {
     el.querySelectorAll('.lab-ind-detail-btn, .lab-ind-row').forEach(btn => {
       btn.addEventListener('click', e => {
         if (e.target.classList.contains('lab-ind-detail-btn')) {
-          _openIndModal(e.target.dataset.ind);
+          _openIndDrill(e.target.dataset.ind);
         } else {
           const ind = e.currentTarget.dataset.ind;
-          if (ind) _openIndModal(ind);
+          if (ind) _openIndDrill(ind);
         }
       });
     });
@@ -914,6 +1207,7 @@ function _renderIndustryResult(el, { indStats }) {
 
     // 依「最新一個時間點熱度」排序族群
     const lastPeriod = periods[periods.length - 1];
+    periods = [...periods].reverse();  // 由新而舊（最新在最左）
     // 所有有資料的族群（Firebase 或本機）
     const allInds = isFirebase
       ? Object.keys(matrix)
@@ -921,9 +1215,7 @@ function _renderIndustryResult(el, { indStats }) {
     const sortedInds = [...allInds]
       .sort((a, b) => (matrix[b]?.[lastPeriod]?.heat ?? 0) - (matrix[a]?.[lastPeriod]?.heat ?? 0));
 
-    let html = `<div style="position:relative">` +
-      `<div id="heatScrollWrap" style="overflow-x:auto;max-height:calc(100vh - 280px);overflow-y:auto;border:1px solid var(--border);border-radius:7px 7px 0 0;cursor:grab;user-select:none;scrollbar-width:none;-ms-overflow-style:none">` +
-      `<style>#heatScrollWrap::-webkit-scrollbar{display:none}</style>` +
+    let html = `<div class="vh-scroll" style="overflow:auto;max-height:calc(100vh - 360px);border:1px solid var(--border);border-radius:7px">` +
       `<table style="border-collapse:separate;border-spacing:2px;font-size:11px;white-space:nowrap;padding:6px">` +
       `<thead><tr>` +
       `<th style="text-align:right;padding:4px 10px 4px 4px;color:var(--muted);font-weight:400;min-width:88px;position:sticky;left:0;top:0;background:var(--bg2);z-index:3;border-bottom:1px solid var(--border)">族群</th>`;
@@ -934,24 +1226,23 @@ function _renderIndustryResult(el, { indStats }) {
       if (h > maxHeat) maxHeat = h;
     }));
     const heatVals = sortedInds.flatMap(ind => periods.map(p => matrix[ind]?.[p]?.heat ?? 0)).filter(h => h > 0).sort((a,b)=>a-b);
-    const p25 = heatVals[Math.floor(heatVals.length*0.25)] ?? 2;
-    const p50 = heatVals[Math.floor(heatVals.length*0.50)] ?? 5;
-    const p75 = heatVals[Math.floor(heatVals.length*0.75)] ?? 15;
-    const p90 = heatVals[Math.floor(heatVals.length*0.90)] ?? 40;
+    const _q = f => heatVals[Math.floor(heatVals.length * f)] ?? 0;
+    const h10 = _q(.10), h30 = _q(.30), h50 = _q(.50), h70 = _q(.70), h90 = _q(.90);
+    const p90 = h90;  // pulse 門檻沿用
 
+    // 紅色單色漸層（淺→深，越深越熱；同交易量熱力的 6 階百分位設計）
     function _relHeatColor(heat) {
       if (!heat) return 'rgba(255,255,255,.03)';
-      if (heat >= p90) return 'rgba(220,38,38,.95)';
-      if (heat >= p75) return 'rgba(185,28,28,.80)';
-      if (heat >= p50) return 'rgba(194,65,12,.70)';
-      if (heat >= p25) return 'rgba(161,98,7,.60)';
-      return 'rgba(22,101,52,.50)';
+      if (heat >= h90) return '#7f1212';
+      if (heat >= h70) return '#a61e1e';
+      if (heat >= h50) return '#cf3a35';
+      if (heat >= h30) return '#e2675f';
+      if (heat >= h10) return '#eb968d';
+      return '#f3c4bd';
     }
     function _relHeatText(heat) {
       if (!heat) return 'rgba(156,163,175,.4)';
-      if (heat >= p50) return '#fff';
-      if (heat >= p25) return '#fde68a';
-      return '#86efac';
+      return heat >= h50 ? '#fff' : '#5c0f0f';
     }
 
     periods.forEach(p => {
@@ -962,7 +1253,7 @@ function _renderIndustryResult(el, { indStats }) {
 
     sortedInds.forEach((ind, ri) => {
       const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
-      html += `<tr data-hm-row="${ind}"><td style="text-align:right;padding:2px 10px 2px 4px;color:var(--text);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;white-space:nowrap">${ind}</td>`;
+      html += `<tr data-hm-row="${ind}"><td data-hm-ind="${ind}" style="text-align:right;padding:2px 10px 2px 4px;color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;white-space:nowrap" title="點擊查看 ${ind} 個股熱力">${ind}</td>`;
       periods.forEach(p => {
         const cell = matrix[ind]?.[p];
         if (!cell) {
@@ -983,18 +1274,14 @@ function _renderIndustryResult(el, { indStats }) {
       html += `</tr>`;
     });
 
-    html += `</tbody></table></div></div>` +
-      `<div id="heatScrollTrack" style="height:14px;background:var(--bg2);border:1px solid var(--border);border-top:none;border-radius:0 0 7px 7px;overflow:hidden;position:relative;cursor:pointer">` +
-      `<div id="heatScrollThumb" style="position:absolute;top:2px;height:10px;background:rgba(255,255,255,.2);border-radius:5px;cursor:grab;transition:background .15s"></div>` +
-      `</div>` +
-      `</div>`;
+    html += `</tbody></table></div>`;
 
     // 圖例
     const src = isFirebase ? '（GAS 每日更新）' : '（本機回測）';
     html += `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);flex-wrap:wrap">` +
       `<span>冷</span>` +
       `<div style="display:flex;gap:2px">` +
-      ['rgba(22,101,52,.50)','rgba(161,98,7,.60)','rgba(194,65,12,.70)','rgba(185,28,28,.80)','rgba(220,38,38,.95)'].map(c =>
+      ['#f3c4bd','#eb968d','#e2675f','#cf3a35','#a61e1e','#7f1212'].map(c =>
         `<div style="width:22px;height:10px;border-radius:2px;background:${c}"></div>`).join('') +
       `</div><span>熱</span>` +
       `<span style="margin-left:6px;opacity:.5">色階依相對百分位　訊號 × min(量比,5)　${src}</span>` +
@@ -1013,10 +1300,13 @@ function _renderIndustryResult(el, { indStats }) {
       <div style="display:flex;gap:4px">
         <button class="lab-copy-btn ind-view-btn active" data-view="rank" style="font-size:12px">📊 排行榜</button>
         <button class="lab-copy-btn ind-view-btn" data-view="heat" style="font-size:12px">🔥 輪動熱力圖</button>
+        <button class="lab-copy-btn ind-view-btn" data-view="vol" style="font-size:12px">💧 交易量熱力</button>
       </div>
     </div>
 
     <div id="indViewRank">
+      <div id="indRankDrill" style="display:none"></div>
+      <div id="indRankMain">
       <div class="lab-table-wrap">
         <table class="lab-table" id="indRankTable">
           <thead><tr>
@@ -1034,9 +1324,12 @@ function _renderIndustryResult(el, { indStats }) {
         </table>
       </div>
       <div class="lab-result-hint">點擊欄位標題排序；點擊族群列或「明細」查看個股排行</div>
+      </div><!-- /indRankMain -->
     </div>
 
     <div id="indViewHeat" style="display:none">
+      <div id="indHeatDrill" style="display:none"></div>
+      <div id="indHeatMain">
       <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
         <span style="font-size:11px;color:var(--muted);margin-right:4px">粒度：</span>
         ${GRAN_DEFS.map(g =>
@@ -1049,7 +1342,10 @@ function _renderIndustryResult(el, { indStats }) {
         </div>
       </div>
       <div id="indHeatContent">${_renderHeatmap('month')}</div>
+      </div><!-- /indHeatMain -->
     </div>
+
+    <div id="indViewVol" style="display:none"></div>
   `;
 
   // Tab 切換
@@ -1060,6 +1356,12 @@ function _renderIndustryResult(el, { indStats }) {
       const view = btn.dataset.view;
       el.querySelector('#indViewRank').style.display = view === 'rank' ? '' : 'none';
       el.querySelector('#indViewHeat').style.display = view === 'heat' ? '' : 'none';
+      const volEl = el.querySelector('#indViewVol');
+      volEl.style.display = view === 'vol' ? '' : 'none';
+      if (view === 'vol' && !volEl.dataset.inited) {
+        volEl.dataset.inited = '1';
+        _vhRender(volEl);
+      }
     });
   });
 
@@ -1235,7 +1537,7 @@ function _renderIndustryResult(el, { indStats }) {
 
   function _bindHeatmapCellClick(container) {
     (container || el).querySelectorAll('[data-hm-ind]').forEach(td => {
-      td.addEventListener('click', () => _openIndModal(td.dataset.hmInd));
+      td.addEventListener('click', () => _openIndDrill(td.dataset.hmInd));
     });
   }
   _bindHeatmapCellClick(el.querySelector('#indHeatContent'));
@@ -1264,13 +1566,22 @@ function _bindIndModal() {
 }
 
 function _openIndModal(ind) {
-  if (!_lastIndustryResult) return;
+  const ok = _renderIndDetail(ind, {
+    titleEl: document.getElementById('labIndModalTitle'),
+    statsEl: document.getElementById('labIndModalStats'),
+    bodyEl:  document.getElementById('labIndModalBody'),
+  });
+  if (ok) document.getElementById('labIndModalBg').style.display = '';
+}
+
+// 族群個股明細渲染（modal 與 inline drill 共用；els = { titleEl, statsEl, bodyEl }）
+function _renderIndDetail(ind, { titleEl, statsEl, bodyEl }) {
+  if (!_lastIndustryResult) return false;
   const indData = _lastIndustryResult.find(x => x.ind === ind);
-  if (!indData) return;
+  if (!indData) return false;
 
-  document.getElementById('labIndModalTitle').textContent = `${ind} — 個股排行`;
+  if (titleEl) titleEl.textContent = `${ind} — 個股排行`;
 
-  const statsEl = document.getElementById('labIndModalStats');
   statsEl.innerHTML = `
     <div class="lab-modal-kpi-row">
       <div class="lab-modal-kpi"><div class="lab-kpi-label">族群勝率</div><div class="lab-kpi-val" style="color:#ef5350">${indData.wr}%</div></div>
@@ -1329,8 +1640,8 @@ function _openIndModal(ind) {
         const days = (Date.now() - new Date(s.last.replace(/\//g,'-')).getTime()) / 86400000;
         return days <= 30 ? '#ef5350' : days <= 90 ? '#f0b429' : 'var(--muted)';
       })();
-      return `<tr>
-        <td style="color:var(--accent)">${s.code}</td>
+      return `<tr class="ind-detail-row" data-code="${s.code}" style="cursor:pointer">
+        <td style="color:var(--accent);text-decoration:underline;text-underline-offset:2px">${s.code}</td>
         <td style="color:var(--text)">${s.name}</td>
         <td style="color:${s.wr >= 70 ? '#ef5350' : s.wr >= 50 ? '#f0b429' : 'var(--text)'}">${s.wr}%</td>
         <td style="color:${s.ret >= 0 ? '#ef5350' : '#26a69a'}">${s.ret >= 0 ? '+' : ''}${s.ret}%</td>
@@ -1349,7 +1660,6 @@ function _openIndModal(ind) {
     }).join('');
   }
 
-  const bodyEl = document.getElementById('labIndModalBody');
 
   function _rebuild() {
     const sorted = _sortedStocks();
@@ -1363,23 +1673,27 @@ function _openIndModal(ind) {
   }
 
   function _bindModalBtns() {
+    // 列點擊 → 個股速覽 modal（點到按鈕時不觸發）
+    bodyEl.querySelectorAll('.ind-detail-row').forEach(tr => {
+      tr.addEventListener('click', e => {
+        if (e.target.closest('button')) return;
+        openStockPreview(tr.dataset.code);
+      });
+    });
     bodyEl.querySelectorAll('.lab-ind-mc-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const code = btn.dataset.code;
         _closeIndModal();
-        // 直接填入代號並觸發 MC
-        _switchSub('mc');
-        const inp = document.getElementById('labMCCodeInput');
-        if (inp) inp.value = code;
+        // 跳轉到策略實驗室 MC 子頁並自動執行（hotgroup-tabs.js 掛的全域）
         const sel = document.getElementById('labMCBarsSelect');
         if (sel) sel.value = '30';
-        setTimeout(() => _runMC(), 50);
+        window.openLabWithCode?.(code, 'mc', { autorun: true });
       });
     });
     bodyEl.querySelectorAll('.lab-ind-single-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         _closeIndModal();
-        openLabWithCode(btn.dataset.code, 'single');
+        window.openLabWithCode?.(btn.dataset.code, 'single');
       });
     });
   }
@@ -1470,7 +1784,9 @@ function _openIndModal(ind) {
     });
     if (!sigPeriodSet.size) return '<div style="color:var(--muted);padding:20px">資料不足</div>';
 
-    const { periods, endMs } = _buildAxis(granKey, minDate, maxDate, sigPeriodSet);
+    const _axis = _buildAxis(granKey, minDate, maxDate, sigPeriodSet);
+    let periods = _axis.periods;
+    const endMs = _axis.endMs;
     if (!periods.length) return '<div style="color:var(--muted);padding:20px">資料不足</div>';
     const lastPeriod = periods[periods.length - 1];
     const winMs = (_WIN_DAYS[granKey] ?? 120) * 86400000;
@@ -1495,11 +1811,16 @@ function _openIndModal(ind) {
       });
     });
 
-    // 每股活躍區間（首末有值的期間 index）
+    // 由新而舊（最新在最左）
+    periods = [...periods].reverse();
+
+    // 每股活躍區間（首末有值的期間 index，取 min/max 以兼容反轉後順序）
     const spanOf = {};
     allStocks.forEach(s => {
       const ks = Object.keys(stockMap[s.code]).sort();
-      spanOf[s.code] = ks.length ? [periods.indexOf(ks[0]), periods.indexOf(ks[ks.length - 1])] : [-1, -1];
+      if (!ks.length) { spanOf[s.code] = [-1, -1]; return; }
+      const i1 = periods.indexOf(ks[0]), i2 = periods.indexOf(ks[ks.length - 1]);
+      spanOf[s.code] = [Math.min(i1, i2), Math.max(i1, i2)];
     });
 
     // ── 排序（升降冪）──
@@ -1529,17 +1850,15 @@ function _openIndModal(ind) {
     const p90 = heatVals[Math.floor(heatVals.length * 0.90)] ?? 40;
     function hc(heat) {
       if (!heat) return 'rgba(255,255,255,.03)';
-      if (heat >= p90) return 'rgba(220,38,38,.95)';
-      if (heat >= p75) return 'rgba(185,28,28,.80)';
-      if (heat >= p50) return 'rgba(194,65,12,.70)';
-      if (heat >= p25) return 'rgba(161,98,7,.60)';
-      return 'rgba(22,101,52,.50)';
+      if (heat >= p90) return '#7f1212';
+      if (heat >= p75) return '#a61e1e';
+      if (heat >= p50) return '#cf3a35';
+      if (heat >= p25) return '#e2675f';
+      return '#eb968d';
     }
     function htc(heat) {
       if (!heat) return 'rgba(156,163,175,.4)';
-      if (heat >= p50) return '#fff';
-      if (heat >= p25) return '#fde68a';
-      return '#86efac';
+      return heat >= p50 ? '#fff' : '#5c0f0f';
     }
 
     let html = `<div style="overflow:auto;max-height:calc(100vh - 340px);border:1px solid var(--border);border-radius:7px">` +
@@ -1557,7 +1876,7 @@ function _openIndModal(ind) {
       const [fi, li] = spanOf[s.code] ?? [-1, -1];
       html += `<tr>` +
         `<td style="text-align:right;padding:2px 10px 2px 4px;color:var(--accent);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;cursor:pointer;white-space:nowrap"` +
-        ` onclick="openLabWithCode('${s.code}','single')">${s.code} ${s.name}</td>`;
+        ` data-spv="${s.code}">${s.code} ${s.name}</td>`;
       periods.forEach((p, pi) => {
         const cell = stockMap[s.code]?.[p];
         if (!cell) {
@@ -1572,7 +1891,7 @@ function _openIndModal(ind) {
           const pulse = cell.heat >= p90 ? 'outline:1px solid rgba(239,83,80,.5);' : '';
           html += `<td class="hm-cell" style="width:52px;height:30px;border-radius:4px;background:${bg};text-align:center;cursor:pointer;vertical-align:middle;${pulse}"` +
             ` title="${s.code} ${s.name} ${p}\n近${_WIN_DAYS[granKey]}日訊號 ${cell.cnt} 筆｜均量比 ${cell.avgVolRatio}x"` +
-            ` onclick="openLabWithCode('${s.code}','single')">` +
+            ` data-spv="${s.code}">` +
             `<div style="color:${tc};font-size:11px;font-weight:700;line-height:1.25">${cell.cnt}</div>` +
             `<div style="color:${tc};font-size:10px;opacity:.85;line-height:1.1">${cell.avgVolRatio}x</div>` +
             `</td>`;
@@ -1581,10 +1900,7 @@ function _openIndModal(ind) {
       html += `</tr>`;
     });
 
-    const legendColors2 = [
-      'rgba(22,101,52,.50)', 'rgba(161,98,7,.60)', 'rgba(194,65,12,.70)',
-      'rgba(185,28,28,.80)', 'rgba(220,38,38,.95)',
-    ];
+    const legendColors2 = ['#eb968d', '#e2675f', '#cf3a35', '#a61e1e', '#7f1212'];
     html += `</tbody></table></div>` +
       `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);flex-wrap:wrap">` +
       `<span>冷</span><div style="display:flex;gap:2px">` +
@@ -1648,6 +1964,7 @@ function _openIndModal(ind) {
     if (granKey === 'day' && periods.length > 90) periods = periods.slice(-90);  // 日粒度只看最近 90 天
     if (!periods.length) return '<div style="color:var(--muted);padding:20px">資料不足</div>';
     const lastPeriod = periods[periods.length - 1];
+    periods = periods.reverse();  // 由新而舊（最新在最左）
 
     // 相對百分位（藍階）
     const vals = codes.flatMap(c => periods.map(p => map[c][p] ?? 0)).filter(v => v > 0).sort((a, b) => a - b);
@@ -1685,7 +2002,7 @@ function _openIndModal(ind) {
       const rowBg = ri % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
       html += `<tr>` +
         `<td style="text-align:right;padding:2px 10px 2px 4px;color:var(--accent);font-size:11px;position:sticky;left:0;background:${rowBg};z-index:1;cursor:pointer;white-space:nowrap"` +
-        ` onclick="openLabWithCode('${s.code}','single')">${s.code} ${s.name}</td>`;
+        ` data-spv="${s.code}">${s.code} ${s.name}</td>`;
       periods.forEach(p => {
         const v = map[s.code]?.[p] ?? 0;
         if (!v) {
@@ -1783,6 +2100,15 @@ function _openIndModal(ind) {
     </div>
   `;
 
+  // 個股點擊委派（熱力圖名稱/格子 data-spv → 個股速覽；innerHTML 重繪不失效）
+  if (!bodyEl.dataset.spvBound) {
+    bodyEl.dataset.spvBound = '1';
+    bodyEl.addEventListener('click', e => {
+      const t = e.target.closest('[data-spv]');
+      if (t) openStockPreview(t.dataset.spv);
+    });
+  }
+
   // Tab 切換
   bodyEl.querySelectorAll('.modal-view-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1830,7 +2156,7 @@ function _openIndModal(ind) {
   });
 
   _bindModalBtns();
-  document.getElementById('labIndModalBg').style.display = '';
+  return true;
 }
 
 

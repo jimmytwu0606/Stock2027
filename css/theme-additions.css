@@ -129,14 +129,18 @@
 
 .theme-stock-row:hover { background: var(--bg3); }
 
-.theme-stock-code {
+.theme-stock-row .theme-stock-code,
+.theme-etf-stock-row .theme-stock-code {
   font-size: 12px;
   color: var(--accent);
   min-width: 44px;
   font-weight: 500;
 }
 
-.theme-stock-name {
+/* scope 限定列表列：原本的通用 .theme-stock-name { flex:1 } 會蓋掉
+   theme.css 卡片版的 flex-basis:100%（股名獨佔第二行），造成卡片股名被截斷 */
+.theme-stock-row .theme-stock-name,
+.theme-etf-stock-row .theme-stock-name {
   flex: 1;
   font-size: 12px;
   color: var(--text);

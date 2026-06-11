@@ -283,7 +283,7 @@
     <!-- 主導覽 Tab -->
     <nav class="main-tabbar">
       <button class="main-tab active" data-tab="chart">看盤</button>
-      <button class="main-tab"        data-tab="hotgroup">強勢族群</button>
+      <button class="main-tab"        data-tab="hotgroup">族群觀察</button>
       <button class="main-tab"        data-tab="theme">題材追蹤</button>
       <button class="main-tab"        data-tab="portfolio">庫存</button>
       <button class="main-tab"        data-tab="hub" data-gate="tab_screener">選股篩選</button>
@@ -1007,10 +1007,6 @@
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1" stroke="currentColor" stroke-width="1.3"/><path d="M5 7h4M7 5v4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
             單股回測
           </button>
-          <button class="lab-sub-btn" data-lab="industry" id="labBtnIndustry">
-            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11V6l3-3 3 3 3-4 3 4v5H1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
-            族群回測
-          </button>
           <button class="lab-sub-btn" data-lab="mc" id="labBtnMC">
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 11 Q4 4 7 7 Q10 10 13 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" fill="none"/></svg>
             MC 模擬
@@ -1038,46 +1034,6 @@
           <input class="lab-code-input" id="labCodeInput" type="text" placeholder="輸入代號或股名" maxlength="10">
           <span style="font-size:11px;color:var(--muted)">全策略分析，自動最佳持有天數</span>
           <button class="lab-run-btn" id="labRunSingle">▶ 開始分析</button>
-        </div>
-        <!-- 族群回測控制 -->
-        <div class="lab-controls" id="labControlsIndustry" style="display:none;position:relative">
-          <button class="lab-copy-btn" id="labIndSettingBtn" style="font-size:12px;padding:3px 10px">⚙ 回測設定</button>
-          <button class="lab-run-btn" id="labRunIndustry">▶ 開始掃描</button>
-          <button class="lab-abort-btn" id="labAbortIndustry" style="display:none">■ 停止</button>
-        </div>
-        <!-- 族群回測設定 Panel -->
-        <div id="labIndSettingPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:960px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,.85)">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <span style="font-size:13px;font-weight:500;color:var(--text)">回測設定</span>
-            <button id="labIndSettingClose" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
-          </div>
-          <!-- 持有天數 -->
-          <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-            <div style="font-size:13px;color:var(--text);opacity:.7;margin-bottom:8px">持有天數</div>
-            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap" id="labIndHoldChecks">
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="5"  checked style="accent-color:#ef5350">5日</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="10" checked style="accent-color:#ef5350">10日</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="15" checked style="accent-color:#ef5350">15日</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="20" checked style="accent-color:#ef5350">20日</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="30" checked style="accent-color:#ef5350">30日</label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="60" checked style="accent-color:#ef5350">60日</label>
-            </div>
-          </div>
-          <!-- 族群選擇 -->
-          <div>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-              <span style="font-size:13px;font-weight:500;color:var(--text)">族群篩選</span>
-              <button id="labIndSelectAll"  class="lab-copy-btn" style="font-size:13px;padding:3px 10px">全選</button>
-              <button id="labIndSelectNone" class="lab-copy-btn" style="font-size:13px;padding:3px 10px">取消全選</button>
-              <span id="labIndSelectedCount" style="font-size:13px;color:var(--text);opacity:.7"></span>
-            </div>
-            <div id="labIndSectorChecks" style="max-height:360px;overflow-y:auto">
-              <span style="color:var(--muted);font-size:12px">載入族群中...</span>
-            </div>
-          </div>
-          <div style="display:flex;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-            <button id="labIndSettingConfirm" class="lab-run-btn" style="padding:5px 20px;font-size:13px">✓ 確定</button>
-          </div>
         </div>
         <!-- MC 控制 -->
         <div class="lab-controls" id="labControlsMC" style="display:none">
@@ -1143,19 +1099,6 @@
             <p class="hint">系統從 R2 拉取 1 年 K 線，自動找出所有歷史觸發點</p>
           </div>
           <div class="lab-single-result" id="labSingleResult" style="display:none"></div>
-        </div>
-
-        <!-- 族群回測面板 -->
-        <div class="lab-panel" id="labPanelIndustry" style="display:none">
-          <div class="lab-empty-state" id="labIndustryEmpty">
-            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-              <path d="M6 36V20l8-8 8 8 8-12 8 12v16H6z" stroke="var(--border2)" stroke-width="1.5" stroke-linejoin="round"/>
-              <circle cx="22" cy="26" r="3" stroke="var(--hint)" stroke-width="1.5"/>
-            </svg>
-            <p>點擊「▶ 開始掃描」</p>
-            <p class="hint">掃描全市場 1940 支股票，按族群統計 X6 歷史勝率</p>
-          </div>
-          <div class="lab-industry-result" id="labIndustryResult" style="display:none"></div>
         </div>
 
         <!-- MC 模擬面板 -->
@@ -1637,6 +1580,15 @@
 
     <!-- ══ Tab：強勢族群 ══ -->
     <div class="tab-panel" id="tabHotgroup">
+
+      <!-- 族群觀察 子頁切換 -->
+      <div class="hg-subtabs">
+        <button class="hg-subtab-btn active" data-hgsub="hot">強勢族群</button>
+        <button class="hg-subtab-btn" data-hgsub="backtest" id="hgSubBtnBacktest">族群回測</button>
+      </div>
+
+      <!-- 子頁：強勢族群 -->
+      <div id="hgSubHot">
       <div class="hotgroup-layout">
 
         <!-- 頂部標題 -->
@@ -1670,6 +1622,77 @@
         </div>
 
       </div>
+      </div><!-- /hgSubHot -->
+
+      <!-- 子頁：族群回測（自策略實驗室遷入，pro 以上）-->
+      <div id="hgSubBacktest" style="display:none">
+        <div class="hg-bt-probanner" id="hgBtProBanner" style="display:none">
+          🔒 族群回測為 Pro 以上會員功能
+        </div>
+        <div class="lab-toolbar hg-bt-toolbar">
+        <!-- 族群回測控制 -->
+        <div class="lab-controls" id="labControlsIndustry" style="position:relative">
+          <button class="lab-copy-btn" id="labIndSettingBtn" style="font-size:12px;padding:3px 10px">⚙ 回測設定</button>
+          <button class="lab-run-btn" id="labRunIndustry">▶ 開始掃描</button>
+          <button class="lab-abort-btn" id="labAbortIndustry" style="display:none">■ 停止</button>
+        </div>
+        <!-- 族群回測設定 Panel -->
+        <div id="labIndSettingPanel" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2000;background:#1c2128;border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:960px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,.85)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span style="font-size:13px;font-weight:500;color:var(--text)">回測設定</span>
+            <button id="labIndSettingClose" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
+          </div>
+          <!-- 持有天數 -->
+          <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+            <div style="font-size:13px;color:var(--text);opacity:.7;margin-bottom:8px">持有天數</div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap" id="labIndHoldChecks">
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="5"  checked style="accent-color:#ef5350">5日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="10" checked style="accent-color:#ef5350">10日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="15" checked style="accent-color:#ef5350">15日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="20" checked style="accent-color:#ef5350">20日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="30" checked style="accent-color:#ef5350">30日</label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);cursor:pointer"><input type="checkbox" value="60" checked style="accent-color:#ef5350">60日</label>
+            </div>
+          </div>
+          <!-- 族群選擇 -->
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:500;color:var(--text)">族群篩選</span>
+              <button id="labIndSelectAll"  class="lab-copy-btn" style="font-size:13px;padding:3px 10px">全選</button>
+              <button id="labIndSelectNone" class="lab-copy-btn" style="font-size:13px;padding:3px 10px">取消全選</button>
+              <span id="labIndSelectedCount" style="font-size:13px;color:var(--text);opacity:.7"></span>
+            </div>
+            <div id="labIndSectorChecks" style="max-height:360px;overflow-y:auto">
+              <span style="color:var(--muted);font-size:12px">載入族群中...</span>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+            <button id="labIndSettingConfirm" class="lab-run-btn" style="padding:5px 20px;font-size:13px">✓ 確定</button>
+          </div>
+        </div>
+        </div>
+        <!-- 族群回測進度條 -->
+        <div class="lab-progress" id="hgProgress" style="display:none">
+          <div class="lab-progress-track">
+            <div class="lab-progress-bar" id="hgProgressBar"></div>
+          </div>
+          <span class="lab-progress-text" id="hgProgressText"></span>
+        </div>
+        <!-- 族群回測面板 -->
+        <div class="lab-panel" id="labPanelIndustry">
+          <div class="lab-empty-state" id="labIndustryEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M6 36V20l8-8 8 8 8-12 8 12v16H6z" stroke="var(--border2)" stroke-width="1.5" stroke-linejoin="round"/>
+              <circle cx="22" cy="26" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>點擊「▶ 開始掃描」</p>
+            <p class="hint">掃描全市場 1940 支股票，按族群統計 X6 歷史勝率</p>
+          </div>
+          <div class="lab-industry-result" id="labIndustryResult" style="display:none"></div>
+        </div>
+
+      </div><!-- /hgSubBacktest -->
+
     </div><!-- /tabHotgroup -->
 
   </main>
@@ -2025,6 +2048,7 @@
 <script src="js/game-runner.js" defer></script>
 <script src="js/game-thunder.js" defer></script>
 <script src="js/game-bigTwo.js" defer></script>
+<script src="js/game-bigTwoBloody.js" defer></script>
 <!-- 新增遊戲只要在這裡加一行 -->
 <script src="js/splash-game.js" defer></script>
 <script type="module" src="js/main.js"></script>

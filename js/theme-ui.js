@@ -228,18 +228,12 @@ async function _renderEtfPanelInner(content, type) {
     });
   });
 
-  // 漸層 + 滾輪
+  // 漸層 + 滾輪 + 拖曳
   requestAnimationFrame(() => {
     bar.querySelector('.theme-tab-btn.active')?.scrollIntoView({ inline: 'center', behavior: 'instant' });
     _updateTabFade(bar);
   });
-  bar.addEventListener('scroll', () => _updateTabFade(bar), { passive: true });
-  bar.addEventListener('wheel', e => {
-    if (e.deltaY === 0) return;
-    e.preventDefault();
-    bar.scrollLeft += e.deltaY * 0.8;
-    _updateTabFade(bar);
-  }, { passive: false });
+  _bindTabbarDrag(bar);
 
   // 渲染第一個 ETF
   _renderStocks(themeContent, themes[activeIdx], activeIdx, themes, stockThemeMap, true);
@@ -563,10 +557,18 @@ function _renderTabBar(themes, stockThemeMap) {
     _updateTabFade(bar);
   });
 
-  // 滾動時即時更新左右漸層
+  // 滾輪 + 拖曳（共用）
+  _bindTabbarDrag(bar);
+}
+
+/**
+ * tabbar 橫向互動共用綁定：滾輪橫捲 + 滑鼠拖曳
+ * 修正：拖曳可從標籤按鈕上啟動（標籤填滿整條 bar 時舊版完全拖不動）；
+ *       位移 >5px 視為拖曳，capture 階段攔掉 click 防誤切 tab
+ */
+function _bindTabbarDrag(bar) {
   bar.addEventListener('scroll', () => _updateTabFade(bar), { passive: true });
 
-  // PC 滑鼠滾輪 → 水平捲動
   bar.addEventListener('wheel', e => {
     if (e.deltaY === 0) return;
     e.preventDefault();
@@ -574,14 +576,12 @@ function _renderTabBar(themes, stockThemeMap) {
     _updateTabFade(bar);
   }, { passive: false });
 
-  // PC 拖曳滑動
-  let _isDragging = false, _dragStartX = 0, _dragScrollLeft = 0;
+  let _isDragging = false, _moved = false, _dragStartX = 0, _dragScrollLeft = 0;
   bar.addEventListener('mousedown', e => {
-    if (e.target.closest('.theme-tab-btn')) return; // 點按鈕不觸發拖曳
     _isDragging = true;
-    _dragStartX = e.pageX - bar.offsetLeft;
+    _moved = false;
+    _dragStartX = e.pageX;
     _dragScrollLeft = bar.scrollLeft;
-    bar.style.cursor = 'grabbing';
     bar.style.userSelect = 'none';
   });
   document.addEventListener('mouseup', () => {
@@ -592,11 +592,21 @@ function _renderTabBar(themes, stockThemeMap) {
   });
   bar.addEventListener('mousemove', e => {
     if (!_isDragging) return;
+    const dx = e.pageX - _dragStartX;
+    if (!_moved && Math.abs(dx) <= 5) return; // 死區：純點擊不動捲軸
+    _moved = true;
     e.preventDefault();
-    const x = e.pageX - bar.offsetLeft;
-    bar.scrollLeft = _dragScrollLeft - (x - _dragStartX);
+    bar.style.cursor = 'grabbing';
+    bar.scrollLeft = _dragScrollLeft - dx;
     _updateTabFade(bar);
   });
+  // 拖曳過就吞掉 click，避免誤觸切 tab
+  bar.addEventListener('click', e => {
+    if (!_moved) return;
+    e.stopPropagation();
+    e.preventDefault();
+    _moved = false;
+  }, true);
 }
 
 function _updateTabFade(bar) {

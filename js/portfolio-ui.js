@@ -13,6 +13,7 @@ import {
 import { getChineseName, ensureChineseName, fetchHistoryCached, toYahooSymbol, resolveYahooSymbol, fetchFundamentalsBatch } from './api.js';
 import { getAllGroups, loadHealthCacheBatch, saveHealthCache, deletePortfolioList } from './db.js';
 import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
+import { openStockPreview } from './stock-preview.js';
 
 // 自製 prompt — 取代瀏覽器原生 prompt(避免醜陋的瀏覽器彈窗)
 function pfPrompt(message, defaultValue = '') {
@@ -613,8 +614,7 @@ function _renderHoldingTable() {
     const code = tr.dataset.code;
     tr.addEventListener('click', (e) => {
       if (e.target.closest('.pf-view-btn')) {
-        document.dispatchEvent(new CustomEvent('loadStockByCode', { detail: { code } }));
-        document.querySelector('.main-tab[data-tab="chart"]')?.click();
+        openStockPreview(code);   // 📊 → 個股速覽 modal（CTA 才進個股頁）
         return;
       }
       _openHoldingModal(code);
@@ -743,8 +743,7 @@ function _renderWatchTable() {
     const code = tr.dataset.code;
     tr.addEventListener('click', (e) => {
       if (e.target.closest('.pf-view-btn')) {
-        document.dispatchEvent(new CustomEvent('loadStockByCode', { detail: { code } }));
-        document.querySelector('.main-tab[data-tab="chart"]')?.click();
+        openStockPreview(code);   // 📊 → 個股速覽 modal（CTA 才進個股頁）
         return;
       }
       _openWatchModal(code);

@@ -22,7 +22,7 @@
 
   /* ── 狀態 ── */
   let idleTimer = null, eggShown = false;
-  let currentDef = null, rafId = null;
+  let currentDef = null, rafId = null, currentDestroy = null;
   const best = {};
 
   /* ══════════════════════════════════════
@@ -113,8 +113,18 @@
   ══════════════════════════════════════ */
   function openPicker() {
     if (!registry.length) return;
-    const def = registry[Math.floor(Math.random() * registry.length)];
-    launchGame(def);
+    // 開啟彈層、顯示遊戲選單（不再純隨機）
+    const ov = document.getElementById('dsGameOverlay');
+    ov.style.display = 'flex';
+    showMsg('🎮 選個遊戲', '', [
+      ...registry.map(d => ({
+        label: d.name, red: false,
+        fn: () => { hideMsg(); launchGame(d); }
+      })),
+      { label: '🎲 隨機', red: true,
+        fn: () => { hideMsg(); launchGame(registry[Math.floor(Math.random() * registry.length)]); } },
+      { label: '✕ 算了', fn: () => { window.__closeGame(); } },
+    ]);
   }
 
   function launchGame(def) {
@@ -126,7 +136,7 @@
     ov.style.display = 'flex';
 
     const canvas = document.getElementById('dsGCanvas');
-    const maxW = Math.min(window.innerWidth, 720);
+    const maxW = Math.min(window.innerWidth - 24, 960);
     canvas.width  = 680;
     canvas.height = def.canvasH || 240;
     canvas.style.width  = maxW + 'px';
@@ -138,7 +148,8 @@
     hideMsg();
 
     const ctx = canvas.getContext('2d');
-    def.init(canvas, ctx, makeAPI(def));
+    const ret = def.init(canvas, ctx, makeAPI(def));
+    currentDestroy = (typeof ret === 'function') ? ret : null;
   }
 
   window.__closeGame = function () {
@@ -150,6 +161,7 @@
 
   function stopGame() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    if (currentDestroy) { try { currentDestroy(); } catch (e) {} currentDestroy = null; }
   }
 
   /* ══════════════════════════════════════
