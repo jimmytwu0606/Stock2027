@@ -91,6 +91,7 @@ import { startSignalTimer, scanWatchlistSignals, restoreSignalsFromCache, scanOn
 import { initAuthUI } from './auth-ui.js';
 import { applyTierGate, loadFeatureGates } from './auth-gate.js';
 import { syncTokenFromCloud } from './config.js';
+import { initStockPreview } from './stock-preview.js';
 
 // ─────────────────────────────────────────────
 // 載入完整股票資料
@@ -1579,6 +1580,7 @@ function _initFullscreen() {
   initSettingsDrawer();
   initStockTabs();
   initMainTabs();
+  initStockPreview();   // 個股速覽 modal（篩選結果點擊入口）
 
   // 觀點 Tab 所需的 window 橋接
   window.__STRATEGIES        = STRATEGIES;

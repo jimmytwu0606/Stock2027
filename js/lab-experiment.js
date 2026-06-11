@@ -4,159 +4,71 @@
  * 模式 A：單股回測
  * 模式 B：全市場掃描（地圖炮）
  *
- * v2 修正（2026-06-08）：
- *   - 所有策略加「同股去重」：同一股票 N 日內只計一次觸發（N = holdDays）
- *   - Z1：RSI 門檻 75→70
- *   - Z2：加 RSI>70 過濾慢牛；同股去重
- *   - Z3：持有天數縮短至 10 日效果更好；同股去重
- *   - Z4：同股去重（最關鍵，過濾 1589 連跌 9 天污染）
- *   - Z5：改條件「跌破 MA20 當天量增（量>均量 0.8x）」
- *   - Z6：條件改為「高位連跌第 2 根確認」，避免洗盤假訊號
+ * v3（2026-06-10）：Z1~Z6 全數移除，策略來源改為系統發現名人堂（/discovered）
+ *   - bindExperimentRun 動態註冊 D1, D2, ...（gasConds → backtest-engine GAS_LIB 逐根判定）
+ *   - 全市場掃描 / 序列回測 / 出場比較三個 R2 viewer 保留（歷史 Z 數據仍可查）
  */
 
 import { fetchHistoryCached, toYahooSymbol, getChineseName } from './api.js';
 import { dengToast } from './loading-deng.js';
 import { resolveCode, tsToDate } from './lab-utils.js';
-import { dbGetAll } from './db.js';
+import { dbGetAll, dbGet, dbPut } from './db.js';
+import { buildGasEvaluator } from './backtest-engine.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Z 系列實驗策略
 // ─────────────────────────────────────────────────────────────────────────────
-export const EXPERIMENTAL_STRATEGIES = {
+export const EXPERIMENTAL_STRATEGIES = {};
+// Z1~Z6 已於 2026-06-10 全數移除（實用性不及系統發現策略；Z6 出場確認邏輯仍留在 signal-scan.js）
+// 策略改為動態註冊：bindExperimentRun 時讀 /discovered 名人堂，註冊為 D1, D2, ...
 
-  // Z1：雙重超買確認（RSI>80 + 布林上軌 + BB擴張）
-  Z1: {
-    id: 'Z1', name: '雙重超買確認', icon: '🔥',
-    desc: 'RSI>80 + 布林上軌觸及 + BB擴張（W6+W7雙超買組合）',
-    minCandles: 25, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 25) return false;
-      const closes = candles.map(c => c.close);
-      const rsi = _calcRSI(closes, 14);
-      if ((rsi[n-1] ?? 0) < 80) return false;
-      const avg = closes.slice(n-20).reduce((a,b)=>a+b,0)/20;
-      const std = Math.sqrt(closes.slice(n-20).reduce((s,v)=>s+(v-avg)**2,0)/20);
-      if (candles[n-1].close < (avg+2*std)*0.99) return false;
-      const avg5p = closes.slice(n-25,n-5).reduce((a,b)=>a+b,0)/20;
-      const std5p = Math.sqrt(closes.slice(n-25,n-5).reduce((s,v)=>s+(v-avg5p)**2,0)/20);
-      if (std5p > 0 && std < std5p*1.3) return false;
-      return true;
-    },
-  },
-
-  // Z2：亢龍有悔進場（加 RSI>70 過濾慢牛，條件更嚴格）
-  Z2: {
-    id: 'Z2', name: '亢龍有悔進場', icon: '☯️',
-    desc: 'MA20 正乖離>15% + RSI>70 + 今收黑 + 量縮',
-    minCandles: 25, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 25) return false;
-      const closes = candles.map(c => c.close);
-      // 正乖離 > 15%
-      const ma20 = _ma(closes, 20);
-      const m = ma20[n-1]; if (!m || m <= 0) return false;
-      if ((closes[n-1] - m) / m * 100 < 15) return false;
-      // RSI > 70（新增：過濾慢牛，只抓真正過熱）
-      const rsi = _calcRSI(closes, 14);
-      if ((rsi[n-1] ?? 0) < 70) return false;
-      // 今日收黑
-      const last = candles[n-1], prev = candles[n-2];
-      if (last.close >= last.open) return false;
-      // 量縮（今日量 < 昨日量 × 0.85）
-      if ((prev.volume ?? 0) > 0 && (last.volume ?? 0) > (prev.volume ?? 0) * 0.85) return false;
-      return true;
-    },
-  },
-
-  // Z3：死亡交叉確認（條件不變，靠去重提升品質）
-  Z3: {
-    id: 'Z3', name: '死亡交叉確認', icon: '💀',
-    desc: 'MA5 下穿 MA20 + MACD<0 + 量放大',
-    minCandles: 28, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 28) return false;
-      const closes = candles.map(c => c.close);
-      const ma5  = _ma(closes, 5);
-      const ma20 = _ma(closes, 20);
-      if (!ma5[n-1] || !ma5[n-2] || !ma20[n-1] || !ma20[n-2]) return false;
-      if (!(ma5[n-2] >= ma20[n-2] && ma5[n-1] < ma20[n-1])) return false;
-      const { dif } = _calcMACD(closes);
-      if ((dif[n-1] ?? 0) >= 0) return false;
-      const avgVol = candles.slice(-11,-1).reduce((s,c) => s+(c.volume??0), 0) / 10;
-      if (avgVol > 0 && (candles[n-1].volume??0) < avgVol * 1.2) return false;
-      return true;
-    },
-  },
-
-  // Z4：跌停板確認（同股去重是關鍵，條件不變）
-  Z4: {
-    id: 'Z4', name: '死叉量增放大', icon: '📉',
-    desc: 'KD死叉 + MACD死叉(柱轉負) + 今量≥均量1.5x（W2強化版）',
-    minCandles: 28, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 28) return false;
-      const closes = candles.map(c => c.close);
-      // KD 死叉
-      const { k, d } = _calcKD(candles);
-      if (!k[n-1]||!d[n-1]||!k[n-2]||!d[n-2]) return false;
-      if (!(k[n-2] >= d[n-2] && k[n-1] < d[n-1])) return false;
-      // MACD 柱轉負
-      const { hist } = _calcMACD(closes);
-      if (hist[n-2] == null || hist[n-1] == null) return false;
-      if (!(hist[n-2] >= 0 && hist[n-1] < 0)) return false;
-      // 量增放大
-      const avgVol = candles.slice(-11,-1).reduce((s,c)=>s+(c.volume??0),0)/10;
-      return avgVol > 0 && (candles[n-1].volume??0) >= avgVol*1.5;
-    },
-  },
-
-  // Z5：葛蘭碧賣出強化（正乖離>10% + MA20下彎 + RSI>75 + 今收黑）
-  Z5: {
-    id: 'Z5', name: '葛蘭碧賣出強化', icon: '④',
-    desc: '曾漲≥15% → 跌破MA20 + 量增（今量>均量0.8x），量增跌更可信',
-    minCandles: 25, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 25) return false;
-      const closes = candles.map(c => c.close);
-      const ma20 = _ma(closes, 20);
-      const m = ma20[n-1]; if (!m || m <= 0) return false;
-      if ((closes[n-1] - m) / m * 100 < 10) return false;
-      if (!ma20[n-2] || ma20[n-1] >= ma20[n-2]) return false;
-      const rsi = _calcRSI(closes, 14);
-      if ((rsi[n-1] ?? 0) < 75) return false;
-      if (candles[n-1].close >= candles[n-1].open) return false;
-      return true;
-    },
-  },
-
-  // Z6：高位連跌第2根確認（改：需連續兩日收黑，避免單日洗盤假訊號）
-  Z6: {
-    id: 'Z6', name: '高位連跌確認', icon: '📉',
-    desc: '創近20日新高後連跌2根 + 今日爆量收黑，確認出貨',
-    minCandles: 23, direction: 'short',
-    calc(candles) {
-      const n = candles.length;
-      if (n < 23) return false;
-      const last  = candles[n-1];
-      const prev  = candles[n-2];
-      const prev2 = candles[n-3];
-      // 今日和昨日都收黑（連續兩根陰線）
-      if (last.close >= last.open) return false;
-      if (prev.close >= prev.open) return false;
-      // 昨日高點碰近20日新高附近（高位）
-      const high20 = Math.max(...candles.slice(-22,-2).map(c=>c.high));
-      if (prev.high < high20 * 0.98) return false;
-      // 今日量爆（> 近10日均量 × 1.3）
-      const avgVol = candles.slice(-11,-1).reduce((s,c)=>s+(c.volume??0),0)/10;
-      return avgVol > 0 && (last.volume??0) >= avgVol * 1.3;
-    },
-  },
+const _COND_ZH = {
+  rsi_min:'RSI≥50',rsi_max:'RSI≥80',rsi_revival:'RSI脫離超賣',kd_k_min:'K≤20',kd_k_max:'K≥80',
+  kd_golden:'KD金叉',kd_dead:'KD死叉',macd_golden:'MACD金叉',macd_dead:'MACD死叉',macd_hist_pos:'MACD柱>0',
+  macd_dead_above_zero:'MACD零上死叉',above_ma20:'站上月線',below_ma20:'跌破月線',ma5_cross_ma20:'5日穿月線',
+  ma20_turn_up:'月線翻揚',ma20_rising:'月線上彎',ma20_declining:'月線下彎',ma20_turn_down:'月線翻空',
+  price_cross_ma20_up:'價穿月線',price_cross_ma20_down:'價破月線',price_bounce_ma20:'月線附近回測',
+  price_far_below_ma20:'深跌破月線8%',price_far_above_ma20:'高乖離月線8%',price_rally_fail_ma20:'反彈月線失敗',
+  bb_squeeze:'布林收斂',bb_expanding:'布林擴張',bb_upper_touch:'觸布林上軌',bb_lower_touch:'觸布林下軌',
+  high_n_days:'創20日新高',drop_n_days:'創20日新低',vol_surge:'爆量1.5x',vol_shrink:'量縮',
+  vol_surge_long:'帶量上攻',vol_surge_short:'帶量收紅',vol_surge_drop:'帶量下殺',limit_up:'漲停',
+  psy_oversold:'PSY超賣',psy_overbought:'PSY超買',bias20_low:'乖離≤-8',rci9_turn_up:'RCI翻揚',
+  dmi_bull:'DMI多頭',dmi_strong:'ADX強趨勢',dmi_bear:'DMI空頭',sar_bull:'SAR多頭',hv_low:'低波動',
+  ema_bull:'EMA多頭排列',ema_cross_up:'EMA上穿',ma_bear_array:'空頭排列',gmma_bull:'GMMA多頭',
+  ichi_cloud_above:'雲上',ichi_below_cloud:'雲下',ichi_bull_cloud:'多頭雲',ichi_tk_cross:'轉換線金叉',
+  ichi_tk_dead:'轉換線死叉',ichi_chikou_above:'遲行線在上',three_peaks:'三頂',three_valleys:'三底',
+  three_soldiers:'紅三兵',bullish_engulfing:'多頭吞噬',tight_consolidation:'緊密盤整帶量',
+  gain_10d:'10日漲>5%',loss_5d:'5日跌>5%',
 };
+
+async function _loadDiscoveredStrategies() {
+  const sel = document.getElementById('expStrategySelect');
+  try {
+    const WORKER = 'https://stock-2027.luffy0606.workers.dev';
+    const TOKEN  = 'e99ecdc813d9a203d1951613de68e7a22f83e5b22ffd458f';
+    const res = await fetch(`${WORKER}/discovered`, { headers: { 'X-Proxy-Token': TOKEN }, cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    (data.top ?? []).forEach((q, i) => {
+      const id = 'D' + (i + 1);
+      const label = q.conds.map(cid => _COND_ZH[cid] ?? cid).join('+');
+      EXPERIMENTAL_STRATEGIES[id] = {
+        id, name: `${label}（${q.hold}日）`, icon: '🔮',
+        desc: `系統發現（${q.foundAt}）驗證超額 ${q.validAvgExcess}%/${q.hold}日`,
+        minCandles: 80, direction: 'long',
+        gasConds: q.conds, hold: q.hold,
+      };
+      if (sel) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = `🔮 ${id} ${label}（${q.hold}日）`;
+        sel.appendChild(opt);
+      }
+    });
+  } catch (e) {
+    console.warn('[exp] discovered 載入失敗:', e.message);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 技術指標（內建）
@@ -239,10 +151,18 @@ function _backtestOne(candles, stratId, holdDays, code) {
   const strat = EXPERIMENTAL_STRATEGIES[stratId];
   if (!strat || candles.length < strat.minCandles) return [];
   const signals = [], max = candles.length - holdDays - 1;
+
+  // 系統發現策略：engine GAS evaluator（預算一次，逐根 O(1)；只取新觸發避免連續灌水）
+  const gasEval = strat.gasConds ? buildGasEvaluator(candles) : null;
+
   for (let i = strat.minCandles; i <= max; i++) {
-    const sliced = candles.slice(0, i+1);
     let hit = false;
-    try { hit = strat.calc(sliced); } catch {}
+    if (gasEval) {
+      hit = gasEval(i, strat.gasConds) && !gasEval(i - 1, strat.gasConds);
+    } else {
+      const sliced = candles.slice(0, i+1);
+      try { hit = strat.calc(sliced); } catch {}
+    }
     if (!hit) continue;
     const entry = candles[i].close, exit = candles[i+holdDays].close;
     const ret = strat.direction === 'short'
@@ -260,6 +180,322 @@ function _backtestOne(candles, stratId, holdDays, code) {
 // 全市場掃描
 // ─────────────────────────────────────────────────────────────────────────────
 let _expAbort = null;
+let _scanAborted = false;
+
+// ── D 系列即時全市場掃描（2026-06-10）──────────────────────────────────
+// 吃 IDB kline_cache（bundle 每日灌入全市場 1y），engine GAS evaluator 逐根判定
+// 取代舊的 Z 系列 R2 閱讀器（_loadGasResult 保留未綁定，要查歷史 Z 數據可手動呼叫）
+async function _runMarketScan() {
+  if (window.__userTier !== 'vvvip') { dengToast('真實驗室為 VVVIP 專屬'); return; }
+  const strats = Object.values(EXPERIMENTAL_STRATEGIES).filter(s => s.gasConds);
+  if (!strats.length) { dengToast('系統發現策略尚未載入（R2 可能還沒有名人堂）'); return; }
+
+  const holdDays = parseInt(document.getElementById('expHoldSelect')?.value ?? '10');
+  const resultEl  = document.getElementById('labExpResult');
+  const emptyEl   = document.getElementById('labExpEmpty');
+  const progressEl  = document.getElementById('labProgress');
+  const progressBar = document.getElementById('labProgressBar');
+  const progressTxt = document.getElementById('labProgressText');
+  const runBtn   = document.getElementById('labRunExperiment');
+  const abortBtn = document.getElementById('labExpAbortBtn');
+
+  _scanAborted = false;
+  if (runBtn)   runBtn.style.display = 'none';
+  if (abortBtn) abortBtn.style.display = '';
+  if (emptyEl)  emptyEl.style.display = 'none';
+  if (progressEl) progressEl.style.display = '';
+
+  try {
+    // 全市場 K 線：IDB kline_cache（bundle 灌入，1y）
+    const rows = (await dbGetAll('kline_cache'))
+      .filter(r => r.period === '1y' && /^\d{4,5}$/.test(r.symbol?.split('.')[0] ?? '') &&
+                   !r.symbol.startsWith('00') && (r.candles?.length ?? 0) >= 80);
+
+    const rawSignals = {};   // sid → signals[]
+    strats.forEach(s => { rawSignals[s.id] = []; });
+
+    for (let si = 0; si < rows.length; si++) {
+      if (_scanAborted) break;
+      const row = rows[si];
+      const code = row.symbol.split('.')[0];
+      const candles = row.candles;
+      let ev;
+      try { ev = buildGasEvaluator(candles); } catch { continue; }
+
+      for (const strat of strats) {
+        const hd = strat.hold ?? holdDays;   // 各策略自帶持有期（名人堂發現值）
+        const max = candles.length - hd - 1;
+        for (let i = 61; i <= max; i++) {
+          if (!ev(i, strat.gasConds)) continue;
+          if (ev(i - 1, strat.gasConds)) continue;   // 只取新觸發
+          const entry = candles[i].close, exit = candles[i + hd].close;
+          if (!(entry > 0)) continue;
+          const ret = (exit - entry) / entry * 100;
+          rawSignals[strat.id].push({
+            code, name: getChineseName(code) || '',
+            date: tsToDate(candles[i].time),
+            entry, exit, ret: +ret.toFixed(2), win: ret > 0,
+          });
+        }
+      }
+
+      if (si % 50 === 0) {
+        const pct = Math.round(si / rows.length * 100);
+        if (progressBar) progressBar.style.width = pct + '%';
+        if (progressTxt) progressTxt.textContent = `掃描中 ${si}/${rows.length}（${strats.length} 個系統發現策略）`;
+        await new Promise(r => setTimeout(r, 0));   // 讓出 UI
+      }
+    }
+
+    // 同股去重 + 統計
+    const stats = {};
+    for (const strat of strats) {
+      const sorted  = rawSignals[strat.id].sort((a, b) => a.date.localeCompare(b.date));
+      const deduped = _dedup(sorted, strat.hold ?? holdDays);
+      const wins = deduped.filter(s => s.win).length;
+      const avg  = deduped.length ? deduped.reduce((a, s) => a + s.ret, 0) / deduped.length : 0;
+      stats[strat.id] = {
+        wins, total: deduped.length, rawTotal: sorted.length,
+        avgRet: avg, samples: deduped.slice(-20).reverse(),
+      };
+    }
+
+    resultEl.style.display = 'block';
+    _renderScanResult(resultEl, { stats, total: rows.length, holdDays });
+    const copyBtn = document.getElementById('labExpCopyBtn');
+    if (copyBtn) copyBtn.style.display = '';
+
+    // 自動留案底：1Y 掃描結果寫 IDB，晉升名人堂時系統鑑定用
+    const today = new Date().toISOString().slice(0, 10);
+    for (const strat of strats) {
+      const st = stats[strat.id];
+      if (!st) continue;
+      const key = 'sv:' + strat.gasConds.join('+') + '@' + (strat.hold ?? holdDays);
+      const prev = await dbGet('config', key).catch(() => null);
+      await dbPut('config', {
+        ...(prev ?? {}), key,
+        scan1y: { wr: +((st.wins / Math.max(st.total, 1)) * 100).toFixed(1), avg: +st.avgRet.toFixed(2), n: st.total, at: today },
+      }).catch(() => {});
+    }
+  } catch (e) {
+    dengToast('掃描失敗：' + e.message);
+  } finally {
+    if (progressEl) progressEl.style.display = 'none';
+    if (runBtn)   runBtn.style.display = '';
+    if (abortBtn) abortBtn.style.display = 'none';
+  }
+}
+
+// ── 共用：全市場收集各 D 策略觸發點（只取新觸發）─────────────────────────
+async function _collectTriggers(strats, progressLabel) {
+  const progressEl  = document.getElementById('labProgress');
+  const progressBar = document.getElementById('labProgressBar');
+  const progressTxt = document.getElementById('labProgressText');
+  if (progressEl) progressEl.style.display = '';
+
+  const rows = (await dbGetAll('kline_cache'))
+    .filter(r => r.period === '1y' && /^\d{4,5}$/.test(r.symbol?.split('.')[0] ?? '') &&
+                 !r.symbol.startsWith('00') && (r.candles?.length ?? 0) >= 80);
+
+  const triggers = {};   // sid → [{code, candles, i}]
+  strats.forEach(s => { triggers[s.id] = []; });
+
+  for (let si = 0; si < rows.length; si++) {
+    if (_scanAborted) break;
+    const row = rows[si];
+    const code = row.symbol.split('.')[0];
+    const candles = row.candles;
+    let ev;
+    try { ev = buildGasEvaluator(candles); } catch { continue; }
+    for (const strat of strats) {
+      for (let i = 61; i < candles.length - 1; i++) {
+        if (!ev(i, strat.gasConds)) continue;
+        if (ev(i - 1, strat.gasConds)) continue;
+        triggers[strat.id].push({ code, candles, i });
+      }
+    }
+    if (si % 50 === 0) {
+      if (progressBar) progressBar.style.width = Math.round(si / rows.length * 100) + '%';
+      if (progressTxt) progressTxt.textContent = `${progressLabel} ${si}/${rows.length}`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  return { triggers, total: rows.length };
+}
+
+function _statLine(rets) {
+  if (!rets.length) return { wr: 0, avg: 0, n: 0 };
+  const wins = rets.filter(r => r > 0).length;
+  return { wr: wins / rets.length * 100, avg: rets.reduce((a, b) => a + b, 0) / rets.length, n: rets.length };
+}
+const _stCell = (st, bold) => {
+  const col = st.avg > 0 ? '#ef5350' : '#26a69a';   // 台股慣例：正紅負綠
+  return `<td style="padding:8px 10px;text-align:right;${bold ? 'font-weight:700;' : ''}color:${col}">
+    ${st.n ? `${st.avg > 0 ? '+' : ''}${st.avg.toFixed(2)}%<div style="font-size:10px;color:var(--muted)">${st.wr.toFixed(0)}% / ${st.n}筆</div>` : '<span style="color:var(--muted)">—</span>'}
+  </td>`;
+};
+
+// ── 本機驗證 ①：持有期比較（取代 Z 序列回測閱讀器）────────────────────────
+const _HOLD_GRID = [5, 10, 20, 40, 60];
+
+async function _runHoldCompare() {
+  if (window.__userTier !== 'vvvip') { dengToast('真實驗室為 VVVIP 專屬'); return; }
+  const strats = Object.values(EXPERIMENTAL_STRATEGIES).filter(s => s.gasConds);
+  if (!strats.length) { dengToast('系統發現策略尚未載入'); return; }
+
+  const resultEl = document.getElementById('labExpResult');
+  const emptyEl  = document.getElementById('labExpEmpty');
+  const progressEl = document.getElementById('labProgress');
+  _scanAborted = false;
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  try {
+    // 同條件組合去重（不同持有期的 D 在矩陣裡完全相同）
+    const seen = new Set();
+    const uniq = strats.filter(s => {
+      const k = s.gasConds.join('+');
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    const { triggers, total } = await _collectTriggers(uniq, '持有期比較');
+
+    const rows = uniq.map(strat => {
+      const cells = _HOLD_GRID.map(hd => {
+        const rets = [];
+        for (const t of triggers[strat.id]) {
+          const exitIdx = t.i + hd;
+          if (exitIdx >= t.candles.length) continue;
+          const e = t.candles[t.i].close, x = t.candles[exitIdx].close;
+          if (e > 0) rets.push((x - e) / e * 100);
+        }
+        return _statLine(rets);
+      });
+      const bestIdx = cells.reduce((b, st, idx) => st.avg > cells[b].avg ? idx : b, 0);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 10px;font-size:12px">🔮 <b>${strat.id}</b> <span style="color:var(--muted);font-size:11px">${strat.name}</span></td>
+        ${cells.map((st, idx) => _stCell(st, idx === bestIdx)).join('')}
+      </tr>`;
+    }).join('');
+
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `
+      <div style="margin-bottom:12px;font-size:13px;font-weight:600">⛓️ 持有期比較（本機・1y K線・收盤進出）<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">掃描 ${total} 支・粗體 = 該策略最佳持有期</span></div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:7px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--bg2);font-size:11px;color:var(--muted)">
+            <th style="padding:7px 10px;text-align:left">策略</th>
+            ${_HOLD_GRID.map(h => `<th style="padding:7px 10px;text-align:right">${h}日</th>`).join('')}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">⚠ 窗口與發現窗重疊（in-sample），用於看持有期的相對形狀，絕對數字以組合回測為準</div>`;
+  } catch (e) {
+    dengToast('持有期比較失敗：' + e.message);
+  } finally {
+    if (progressEl) progressEl.style.display = 'none';
+  }
+}
+
+// ── 本機驗證 ②：出場機制比較（取代 Z 出場比較閱讀器）──────────────────────
+async function _runExitCompare() {
+  if (window.__userTier !== 'vvvip') { dengToast('真實驗室為 VVVIP 專屬'); return; }
+  const strats = Object.values(EXPERIMENTAL_STRATEGIES).filter(s => s.gasConds);
+  if (!strats.length) { dengToast('系統發現策略尚未載入'); return; }
+
+  const resultEl = document.getElementById('labExpResult');
+  const emptyEl  = document.getElementById('labExpEmpty');
+  const progressEl = document.getElementById('labProgress');
+  _scanAborted = false;
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const MAX_HOLD = 60;
+  const EXITS = ['fixed', 'stop8', 'threeLine', 'ma20Break'];
+  const EXIT_LABELS = { fixed: '固定持有（名人堂值）', stop8: '停損8%+滿期', threeLine: '三線出場（-20%/高點-25%）', ma20Break: '跌破MA20' };
+
+  try {
+    const { triggers, total } = await _collectTriggers(strats, '出場比較');
+
+    const rows = strats.map(strat => {
+      const buckets = { fixed: [], stop8: [], threeLine: [], ma20Break: [] };
+      const holdSum = { fixed: 0, stop8: 0, threeLine: 0, ma20Break: 0 };
+
+      for (const t of triggers[strat.id]) {
+        const { candles, i } = t;
+        const entry = candles[i].close;
+        if (!(entry > 0)) continue;
+        const lim = Math.min(candles.length - 1, i + MAX_HOLD);
+        const fixedIdx = i + (strat.hold ?? 20);
+
+        // ma20 即算（只算需要的範圍）
+        const ma20At = idx => {
+          if (idx < 19) return null;
+          let s = 0; for (let k = idx - 19; k <= idx; k++) s += candles[k].close;
+          return s / 20;
+        };
+
+        let peak = entry;
+        let done = { fixed: false, stop8: false, threeLine: false, ma20Break: false };
+
+        for (let j = i + 1; j <= lim; j++) {
+          const px = candles[j].close;
+          peak = Math.max(peak, px);
+
+          if (!done.fixed && (j >= fixedIdx || j === lim)) {
+            buckets.fixed.push((px - entry) / entry * 100); holdSum.fixed += j - i; done.fixed = true;
+          }
+          if (!done.stop8 && (px <= entry * 0.92 || j >= fixedIdx || j === lim)) {
+            buckets.stop8.push((px - entry) / entry * 100); holdSum.stop8 += j - i; done.stop8 = true;
+          }
+          if (!done.threeLine) {
+            const line = Math.max(entry * 0.80, peak * 0.75);
+            if (px < line || j === lim) {
+              buckets.threeLine.push((px - entry) / entry * 100); holdSum.threeLine += j - i; done.threeLine = true;
+            }
+          }
+          if (!done.ma20Break) {
+            const m = ma20At(j);
+            if ((m != null && px < m) || j === lim) {
+              buckets.ma20Break.push((px - entry) / entry * 100); holdSum.ma20Break += j - i; done.ma20Break = true;
+            }
+          }
+          if (done.fixed && done.stop8 && done.threeLine && done.ma20Break) break;
+        }
+      }
+
+      const cells = EXITS.map(k => ({ ...(_statLine(buckets[k])), avgHold: buckets[k].length ? holdSum[k] / buckets[k].length : 0 }));
+      const bestIdx = cells.reduce((b, st, idx) => st.avg > cells[b].avg ? idx : b, 0);
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px 10px;font-size:12px">🔮 <b>${strat.id}</b> <span style="color:var(--muted);font-size:11px">${strat.name}</span></td>
+        ${cells.map((st, idx) => {
+          const col = st.avg > 0 ? '#ef5350' : '#26a69a';
+          return `<td style="padding:8px 10px;text-align:right;${idx === bestIdx ? 'font-weight:700;' : ''}color:${col}">
+            ${st.n ? `${st.avg > 0 ? '+' : ''}${st.avg.toFixed(2)}%<div style="font-size:10px;color:var(--muted)">${st.wr.toFixed(0)}%・均持 ${st.avgHold.toFixed(0)}天・${st.n}筆</div>` : '—'}
+          </td>`;
+        }).join('')}
+      </tr>`;
+    }).join('');
+
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `
+      <div style="margin-bottom:12px;font-size:13px;font-weight:600">🎯 出場機制比較（本機・1y K線・收盤判定收盤出場）<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:8px">掃描 ${total} 支・上限 ${MAX_HOLD} 日・粗體 = 該策略最佳出場</span></div>
+      <div style="overflow-x:auto;border:1px solid var(--border);border-radius:7px">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:var(--bg2);font-size:11px;color:var(--muted)">
+            <th style="padding:7px 10px;text-align:left">策略</th>
+            ${EXITS.map(k => `<th style="padding:7px 10px;text-align:right">${EXIT_LABELS[k]}</th>`).join('')}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">⚠ 出場用收盤判定收盤成交（樂觀近似，實際 T+1 開盤會差一截）；三線出場參數沿用妖股實證（停損-20% / 高點回落25%）</div>`;
+  } catch (e) {
+    dengToast('出場比較失敗：' + e.message);
+  } finally {
+    if (progressEl) progressEl.style.display = 'none';
+  }
+}
+
 
 async function _loadExitResult(btn) {
   const el  = document.getElementById('labExpResult');
@@ -955,7 +1191,7 @@ function _renderScanResult(el, { stats, total, holdDays }) {
           <tr style="background:var(--bg2);font-size:11px;color:var(--muted)">
             <th style="padding:7px 10px;text-align:left">策略</th>
             <th style="padding:7px 10px;text-align:right">勝率</th>
-            <th style="padding:7px 10px;text-align:right">均報（做空）</th>
+            <th style="padding:7px 10px;text-align:right">均報（做多）</th>
             <th style="padding:7px 10px;text-align:right">樣本</th>
             <th style="padding:7px 10px;text-align:center">狀態</th>
           </tr>
@@ -1095,7 +1331,7 @@ function _copyResult() {
   // 舊模式：複製摘要表格
   const table = document.getElementById('expSummaryTable');
   if (!table) { dengToast('尚無結果可複製'); return; }
-  const lines = ['Z 系列掃描結果'];
+  const lines = ['系統發現策略 全市場掃描結果'];
   table.querySelectorAll('tbody tr').forEach(tr => {
     const cells = [...tr.querySelectorAll('td')].map(td => td.textContent.trim().replace(/\s+/g,' '));
     lines.push(cells.join('\t'));
@@ -1109,59 +1345,22 @@ function _copyResult() {
 // 公開 API
 // ─────────────────────────────────────────────────────────────────────────────
 export function bindExperimentRun() {
-  document.getElementById('labRunExperiment')?.addEventListener('click', _loadGasResult);
+  _loadDiscoveredStrategies();   // 系統發現策略動態註冊進策略下拉
+  document.getElementById('labRunExperiment')?.addEventListener('click', _runMarketScan);
 
-  // 序列回測按鈕
-  document.getElementById('labRunSeq')?.addEventListener('click', function() {
-    _loadSeqResult(this);
-  });
+  // 持有期比較（本機，原 Z 序列回測閱讀器改造）
+  document.getElementById('labRunSeq')?.addEventListener('click', _runHoldCompare);
 
-  // 出場機制比較按鈕
-  document.getElementById('labRunExit')?.addEventListener('click', function() {
-    _loadExitResult(this);
-  });
+  // 出場機制比較（本機，原 Z 出場比較閱讀器改造）
+  document.getElementById('labRunExit')?.addEventListener('click', _runExitCompare);
 
   document.getElementById('labExpAbortBtn')?.addEventListener('click', () => {
+    _scanAborted = true;
     _expAbort?.abort();
     document.getElementById('labExpAbortBtn').style.display = 'none';
     document.getElementById('labRunExperiment').style.display = '';
   });
 
-  document.getElementById('labExpSingleBtn')?.addEventListener('click', _runSingle);
   document.getElementById('labExpCopyBtn')?.addEventListener('click', _copyResult);
 
-}
-
-async function _runSingle() {
-  if (window.__userTier !== 'vvvip') { dengToast('真實驗室為 VVVIP 專屬'); return; }
-  const stratId  = document.getElementById('expStrategySelect')?.value ?? '';
-  const codeRaw  = document.getElementById('expCodeInput')?.value?.trim() ?? '';
-  const holdDays = parseInt(document.getElementById('expHoldSelect')?.value ?? '10');
-  const resultEl  = document.getElementById('labExpResult');
-  const emptyEl   = document.getElementById('labExpEmpty');
-  const progressEl = document.getElementById('labProgress');
-  const progressBar= document.getElementById('labProgressBar');
-
-  if (!stratId) { dengToast('請選擇策略'); return; }
-  const code = resolveCode(codeRaw);
-  if (!code)  { dengToast('請輸入有效代號'); return; }
-
-  progressEl.style.display = '';
-  progressBar.style.width  = '40%';
-  if (emptyEl) emptyEl.style.display = 'none';
-
-  try {
-    let candles = await fetchHistoryCached(toYahooSymbol(code), '1y', { allowStale: false });
-    if (!candles || candles.length < 25)
-      candles = await fetchHistoryCached(code+'.TWO', '1y', { allowStale: false }).catch(()=>null);
-    if (!candles || candles.length < 25) { dengToast('K 線不足'); return; }
-    progressBar.style.width = '90%';
-    const name    = getChineseName(code) || code;
-    const signals = _backtestOne(candles, stratId, holdDays, code);
-    _renderSingleResult(resultEl, { stratId, code, name, holdDays, signals });
-  } catch(e) {
-    dengToast('回測失敗：' + e.message);
-  } finally {
-    progressEl.style.display = 'none';
-  }
 }

@@ -16,6 +16,7 @@ import { fetchHistAll, fetchBenchmark, fetchAllHistCodes } from './api-hist.js';
 import { runBacktest, runBacktestAll, runParamScan, isStrategyBacktestable } from './backtest-engine.js';
 import { calcMetrics } from './backtest-metrics.js';
 import { STRATEGIES } from './strategy.js';
+import { dbGet, dbPut } from './db.js';
 import { AppState } from './state.js';
 
 let _bound = false;
@@ -54,6 +55,9 @@ export function bindBacktestRun() {
   if (_bound) return;
   _bound = true;
   _renderPanel();
+  // 系統發現 → 2Y 回測對接：lab-discovered 設好 window.__btCustomEntry 後 dispatch
+  document.addEventListener('bt:customEntry', _applyCustomEntry);
+  _applyCustomEntry();  // bind 時已有就直接套（lazy bind 在切 tab 後才發生）
   document.getElementById('btRunBtn')?.addEventListener('click', _run);
   document.getElementById('btRunAllBtn')?.addEventListener('click', _runAll);
   document.getElementById('btScanBtn')?.addEventListener('click', _runScan);
@@ -211,6 +215,30 @@ function _renderPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 執行回測
 // ─────────────────────────────────────────────────────────────────────────────
+// ── 自訂進場（系統發現策略）注入 select ──────────────────────────────────
+function _applyCustomEntry() {
+  const combo = window.__btCustomEntry;
+  const sel = document.getElementById('btEntrySelect');
+  if (!combo || !sel) return;
+
+  // 移除舊的 CUSTOM option，插入新的並單獨選取
+  sel.querySelector('option[value="CUSTOM"]')?.remove();
+  const opt = document.createElement('option');
+  opt.value = 'CUSTOM';
+  opt.textContent = `🔮 ${combo.name}`;
+  opt.selected = true;
+  sel.insertBefore(opt, sel.firstChild);
+  [...sel.options].forEach(o => { if (o.value !== 'CUSTOM') o.selected = false; });
+
+  // 帶入發現時的持有期（固定天數出場）
+  if (combo.exitDays) {
+    const mode = document.getElementById('btExitMode');
+    const days = document.getElementById('btExitDays');
+    if (mode) { mode.value = 'days'; mode.dispatchEvent(new Event('change')); }
+    if (days) days.value = combo.exitDays;
+  }
+}
+
 async function _run() {
   const status = document.getElementById('btStatus');
   const btn = document.getElementById('btRunBtn');
@@ -220,8 +248,10 @@ async function _run() {
     btn.disabled = true;
 
     // 1. 收集參數
-    const entryIds = [...document.getElementById('btEntrySelect').selectedOptions].map(o => o.value);
-    if (entryIds.length === 0) { setStatus('⚠ 請至少選一個進場訊號'); btn.disabled = false; return; }
+    let entryIds = [...document.getElementById('btEntrySelect').selectedOptions].map(o => o.value);
+    const useCustom = entryIds.includes('CUSTOM') && window.__btCustomEntry;
+    entryIds = entryIds.filter(id => id !== 'CUSTOM');
+    if (entryIds.length === 0 && !useCustom) { setStatus('⚠ 請至少選一個進場訊號'); btn.disabled = false; return; }
     const exitMode = document.getElementById('btExitMode').value;
     const exitDays = parseInt(document.getElementById('btExitDays').value, 10) || 20;
     let maxPositions = parseInt(document.getElementById('btMaxPos').value, 10) || 10;
@@ -251,6 +281,7 @@ async function _run() {
     const useRegime = document.getElementById('btRegime')?.checked;
     const result = runBacktest({
       histMap, entryIds, exitMode, exitDays, stopPct, trailPct,
+      customStrategies: useCustom ? [window.__btCustomEntry] : [],
       regimeCandles: useRegime ? benchCandles : null,
       capital: 1_000_000, maxPositions,
     });
@@ -261,6 +292,23 @@ async function _run() {
     // 6. 渲染
     _renderMetrics(m, result);
     setStatus(`✓ 完成（${histMap.size} 檔 / ${result.config.days} 交易日 / ${m.tradeCount} 筆交易）`);
+
+    // 自動留案底：系統發現策略的 2Y 回測結果寫 IDB（晉升名人堂鑑定用）
+    if (useCustom && window.__btCustomEntry) {
+      try {
+        const ce = window.__btCustomEntry;
+        const conds = ce.conditions.map(x => x.condId.replace(/^gas:/, ''));
+        const key = 'sv:' + conds.join('+') + '@' + (ce.exitDays ?? exitDays);
+        const totalRet = result.equity?.length
+          ? +((result.equity[result.equity.length - 1].value / result.equity[0].value - 1) * 100).toFixed(1)
+          : null;
+        const prev = await dbGet('config', key).catch(() => null);
+        await dbPut('config', {
+          ...(prev ?? {}), key,
+          bt2y: { days: result.config.days, trades: m.tradeCount, totalRet, at: new Date().toISOString().slice(0, 10) },
+        });
+      } catch (e) { console.warn('[bt] 案底寫入失敗:', e.message); }
+    }
   } catch (e) {
     console.error('[backtest]', e);
     setStatus('⚠ ' + e.message);

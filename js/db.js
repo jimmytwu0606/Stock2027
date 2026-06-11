@@ -114,6 +114,10 @@ export async function initDB() {
       if (!db.objectStoreNames.contains('industry_cache')) {
         db.createObjectStore('industry_cache', { keyPath: 'key' });
       }
+      // ⭐ 策略名人堂（系統發現 → 1Y/2Y 驗證後晉升，2026-06-10）
+      if (!db.objectStoreNames.contains('strategy_hall')) {
+        db.createObjectStore('strategy_hall', { keyPath: 'key' });
+      }
     };
 
     req.onblocked = () => {
@@ -134,7 +138,8 @@ export async function initDB() {
   // ── 自動補建缺失的 store(處理 DB 升版沒跑到 onupgradeneeded 的情況)
   const required = ['watchlistGroups','screenerSets','screenerResults','seedSets','config',
                     'annotations','kline_cache','signals_cache','stockInfo','portfolio','portfolio_lists',
-                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes','industry_cache'];
+                    'sector_subscriptions','ai_analysis','yaogu_tracker','userThemes','industry_cache',
+                    'strategy_hall'];
   const missing  = required.filter(s => !_db.objectStoreNames.contains(s));
   if (missing.length > 0) {
     console.warn('[db] 缺失 stores:', missing, '→ 自動升版補建');
@@ -178,6 +183,8 @@ export async function initDB() {
             st.createIndex('order', 'order', { unique: false });
           } else if (s === 'industry_cache') {
             db.createObjectStore('industry_cache', { keyPath: 'key' });
+          } else if (s === 'strategy_hall') {
+            db.createObjectStore('strategy_hall', { keyPath: 'key' });
           } else {
             db.createObjectStore(s, { keyPath: 'id' });
           }
@@ -489,6 +496,18 @@ export async function getAllAnnotations() {
  * @param {string} period  '5d' | '1mo' | '3mo' | '6mo' | '1y' | '2y'
  * @returns {object|null}  { key, symbol, period, candles, cachedAt, validUntil } 或 null
  */
+/**
+ * kline_cache 總筆數（bundle 自癒檢查用，count 不撈資料、極快）
+ */
+export async function countKlineCache() {
+  try {
+    await initDB();
+    return await wrap(tx('kline_cache').count());
+  } catch (e) {
+    return -1;  // 查不到視為未知，不觸發重灌
+  }
+}
+
 export async function getKlineCache(symbol, period) {
   if (!symbol || !period) return null;
   const key = `${symbol}_${period}`;
@@ -896,7 +915,14 @@ export async function syncCloudToLocal() {
           const local = localMap.get(key);
           // 雲端較新（或本地沒有）才覆蓋
           if (!local || (row.updatedAt ?? 0) >= (local.updatedAt ?? 0)) {
-            await dbPut(idb, row);
+            // ⚠️ 踩雷備忘（永久，2026-06-11）：
+            //   screenerResults 雲端只存 metadata（saveScreenerResult 去掉 results 避 1MB 限制），
+            //   且 updatedAt 與本地完整記錄「相同」→ >= 判定成立 → metadata 覆蓋本地，
+            //   results 蒸發變 0 檔。雲端 row 缺 results 而本地有 → 必須保留本地 results。
+            const put = (idb === 'screenerResults' && local?.results?.length && !Array.isArray(row.results))
+              ? { ...row, results: local.results }
+              : row;
+            await dbPut(idb, put);
             merged++;
           }
         }

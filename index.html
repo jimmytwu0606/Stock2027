@@ -804,12 +804,17 @@
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="5" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M4 11c0-2 6-2 6 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
             種子選股
           </button>
+          <button class="hub-mode-btn" data-hub="lag" id="hubBtnLag">
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M1 10 Q3 4 6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><path d="M6 12 Q8 6 11 8 L13 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none" opacity=".55"/></svg>
+            領漲跟漲
+          </button>
         </div>
         <div class="hub-toolbar-spacer"></div>
         <!-- 各模式設定 btn（由 JS 控制顯隱） -->
         <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigScreener" style="display:none">⚙ 設定篩選</button>
         <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigPattern" style="display:none">⚙ 設定型態</button>
         <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigSeed" style="display:none">⚙ 設定種子</button>
+        <button class="sc-btn sc-btn-ghost hub-config-btn" id="hubConfigLag" style="display:none">⚙ 設定領漲股</button>
         <!-- 掃描後才出現 -->
         <button class="sc-btn hub-action-btn" id="hubAddTrackBtn" style="display:none">＋ 加入追蹤</button>
         <button class="sc-btn hub-action-btn" id="hubSaveResultBtn" style="display:none">💾 儲存結果</button>
@@ -884,7 +889,7 @@
         <div class="seed-tb-right">
           <span class="seed-tb-summary" id="prSummaryText"></span>
           <span class="seed-tb-status" id="prProgressText" style="display:none"></span>
-          <button class="seed-tb-btn seed-tb-config" id="pdOpenConfig">⚙ 設定</button>
+          <button class="seed-tb-btn seed-tb-config" id="pdOpenConfig" style="display:none">⚙ 設定</button><!-- 隱藏：設定統一用 hub toolbar 的「設定型態」，此鈕保留供 hubConfigPattern 代理點擊 -->
           <button class="seed-tb-btn seed-tb-scan" id="pdScanBtn" disabled>▶ 開始掃描</button>
           <button class="seed-tb-btn seed-tb-abort" id="prAbortBtn" style="display:none">■ 停止</button>
         </div>
@@ -928,7 +933,7 @@
         <div class="seed-tb-right">
           <span class="seed-tb-summary" id="seedSummary"></span>
           <span class="seed-tb-status" id="seedProgressText" style="display:none"></span>
-          <button class="seed-tb-btn seed-tb-config" id="seedOpenConfig">⚙ 設定</button>
+          <button class="seed-tb-btn seed-tb-config" id="seedOpenConfig" style="display:none">⚙ 設定</button><!-- 隱藏：設定統一用 hub toolbar 的「設定種子」 -->
           <button class="seed-tb-btn seed-tb-scan" id="seedScanBtn" disabled>▶ 開始掃描</button>
           <button class="seed-tb-btn seed-tb-abort" id="seedAbortBtn" style="display:none">■ 停止</button>
           <button class="seed-tb-btn seed-tb-save" id="seedTbSaveBtn" style="display:none">💾 儲存</button>
@@ -957,6 +962,37 @@
       </div>
 
     </div><!-- /hubSubSeed -->
+
+    <!-- ════ 領漲跟漲 ════ -->
+    <div class="hub-sub" id="hubSubLag">
+      <div class="seed-toolbar">
+        <div class="seed-tb-left">
+          <div class="seed-tb-single" id="lagTbLeader">
+            <span class="seed-tb-single-code" id="lagTbLeaderCode">未設定領漲股</span>
+          </div>
+        </div>
+        <div class="seed-tb-right">
+          <span class="seed-tb-summary" id="lagSummary"></span>
+          <span class="seed-tb-status" id="lagProgressText" style="display:none"></span>
+          <button class="seed-tb-btn seed-tb-config" id="lagOpenConfig" style="display:none">⚙ 設定</button>
+          <button class="seed-tb-btn seed-tb-scan" id="lagScanBtn" disabled>▶ 開始掃描</button>
+          <button class="seed-tb-btn seed-tb-abort" id="lagAbortBtn" style="display:none">■ 停止</button>
+        </div>
+      </div>
+      <div class="seed-progress" id="lagProgress">
+        <div class="seed-progress-track"><div class="seed-progress-bar" id="lagProgressBar"></div></div>
+      </div>
+      <div class="seed-result-list" id="lagResultList">
+        <div class="seed-empty-state">
+          <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+            <path d="M8 30 Q14 14 22 20" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+            <path d="M20 36 Q26 20 34 26 L38 14" stroke="var(--hint)" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          </svg>
+          <p>尚未開始掃描</p>
+          <p class="hint">設定領漲股後掃描，找出走勢落後 1~N 天的跟漲候選</p>
+        </div>
+      </div>
+    </div><!-- /hubSubLag -->
 
       </div><!-- /hub-body -->
     </div><!-- /tabHub -->
@@ -990,6 +1026,10 @@
           <button class="lab-sub-btn" data-lab="backtest" id="labBtnBacktest">
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M1 13h12M2 10l3-4 2 2 4-6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             組合回測
+          </button>
+          <button class="lab-sub-btn" data-lab="discovered" id="labBtnDiscovered" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3l2 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            系統發現
           </button>
         </div>
         <div class="lab-toolbar-spacer"></div>
@@ -1049,19 +1089,8 @@
           </select>
           <button class="lab-run-btn" id="labRunMC">▶ 執行模擬</button>
         </div>
-        <!-- 策略比較控制 -->
-        <div class="lab-controls" id="labControlsCompare" style="display:none">
-          <input class="lab-code-input" id="labCompareCodeInput" type="text" placeholder="2330 2454 6116" maxlength="40" style="width:180px">
-          <span style="font-size:11px;color:var(--muted)">多股空格分隔，最多5支</span>
-          <button class="lab-run-btn" id="labRunCompare">▶ 全策略分析</button>
-        </div>
         <!-- 真實驗室控制 -->
         <div class="lab-controls" id="labControlsExperiment" style="display:none;flex-wrap:wrap;gap:6px">
-          <select class="lab-select" id="expHoldSelect">
-            <option value="5">5日</option>
-            <option value="10" selected>10日</option>
-            <option value="20">20日</option>
-          </select>
           <button class="lab-run-btn" id="labRunExperiment" style="background:linear-gradient(135deg,#26a69a,#00796b)">🗺️ 全市場掃描</button>
           <button class="lab-run-btn" id="labRunSeq" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);margin-left:4px">⛓️ 序列回測</button>
           <button class="lab-run-btn" id="labRunExit" style="background:linear-gradient(135deg,#d97706,#92400e);margin-left:4px">🎯 出場比較</button>
@@ -1071,18 +1100,21 @@
             <input type="checkbox" id="expUse2Y" style="accent-color:#26a69a">2Y K線
           </label>
           <button class="lab-copy-btn" id="labExpClearCacheBtn" style="font-size:11px;padding:2px 7px;color:var(--muted)" title="清除 2Y IDB 快取">↺</button>
-          <span style="color:var(--muted);font-size:11px;align-self:center">或</span>
-          <select class="lab-select" id="expStrategySelect" style="width:150px">
-            <option value="">選擇策略</option>
-            <option value="Z1">Z1 飛龍在天反轉</option>
-            <option value="Z2">Z2 亢龍有悔進場</option>
-            <option value="Z3">Z3 死亡交叉確認</option>
-            <option value="Z4">Z4 跌停板確認</option>
-            <option value="Z5">Z5 妖股退潮</option>
-            <option value="Z6">Z6 高檔放量收黑</option>
+          <select class="lab-select" id="expStrategySelect" style="width:190px">
+            <option value="">選擇策略（系統發現）</option>
           </select>
-          <input class="lab-code-input" id="expCodeInput" type="text" placeholder="代號（單股）" maxlength="10" style="width:110px">
-          <button class="lab-copy-btn" id="labExpSingleBtn" style="font-size:12px;padding:3px 10px">▶ 單股</button>
+        </div>
+        <!-- 策略比較控制 -->
+        <div class="lab-controls" id="labControlsCompare" style="display:none">
+          <input class="lab-code-input" id="labCompareCodeInput" type="text" placeholder="2330 2454 6116" maxlength="40" style="width:180px">
+          <span style="font-size:11px;color:var(--muted)">多股空格分隔，最多5支</span>
+          <button class="lab-run-btn" id="labRunCompare">▶ 全策略分析</button>
+        </div>
+        <!-- 真實驗室控制 -->
+        <!-- 系統發現策略控制 -->
+        <div class="lab-controls" id="labControlsDiscovered" style="display:none">
+          <span style="font-size:11px;color:var(--muted)">GAS 每日 18:00 後自動搜尋跑贏大盤的條件組合</span>
+          <button class="lab-run-btn" id="labRunDiscovered">🔄 重新載入</button>
         </div>
       </div>
 
@@ -1140,17 +1172,6 @@
         </div>
 
         <!-- 真實驗室面板 -->
-        <div class="lab-panel" id="labPanelExperiment" style="display:none">
-          <div class="lab-empty-state" id="labExpEmpty">
-            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-              <path d="M16 4v14L8 36h28L28 18V4M16 4h12" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              <circle cx="22" cy="28" r="3" stroke="var(--hint)" stroke-width="1.5"/>
-            </svg>
-            <p>🧪 真實驗室 — VVVIP 專屬</p>
-            <p class="hint">實驗中策略，尚未正式導入系統。選擇 Z 系列策略，輸入代號開始回測</p>
-          </div>
-          <div id="labExpResult" style="display:none"></div>
-        </div>
 
         <!-- 策略比較面板 -->
         <div class="lab-panel" id="labPanelCompare" style="display:none">
@@ -1164,9 +1185,28 @@
           <div class="lab-compare-result" id="labCompareResult" style="display:none"></div>
         </div>
 
+
+        <!-- 真實驗室面板 -->
+        <div class="lab-panel" id="labPanelExperiment" style="display:none">
+          <div class="lab-empty-state" id="labExpEmpty">
+            <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+              <path d="M16 4v14L8 36h28L28 18V4M16 4h12" stroke="var(--border2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="22" cy="28" r="3" stroke="var(--hint)" stroke-width="1.5"/>
+            </svg>
+            <p>🧪 真實驗室 — VVVIP 專屬</p>
+            <p class="hint">系統發現策略的單股 / 全市場驗證場。策略清單來自每日搜尋名人堂</p>
+          </div>
+          <div id="labExpResult" style="display:none"></div>
+        </div>
         <!-- ── 組合回測（內容由 lab-backtest.js 動態生成）── -->
         <div class="lab-panel" id="labPanelBacktest" style="display:none"></div>
         <div class="lab-controls" id="labControlsBacktest" style="display:none"></div>
+
+        <!-- ── 系統發現策略（VVVIP，內容由 lab-discovered.js 動態生成）── -->
+        <div class="lab-panel" id="labPanelDiscovered" style="display:none">
+          <div id="labDiscoveredResult"></div>
+        </div>
+
 
       </div><!-- /lab-body -->
 
@@ -1514,6 +1554,71 @@
         </div>
       </div>
     </div><!-- /seed-modal-bg -->
+
+    <!-- 領漲跟漲設定 Modal -->
+    <div class="seed-modal-bg" id="lagModalBg" style="display:none">
+      <div class="seed-modal">
+        <div class="seed-modal-header">
+          <span class="seed-modal-title">📈 領漲跟漲設定</span>
+          <button class="seed-modal-close" id="lagModalClose">✕</button>
+        </div>
+        <div class="seed-modal-body">
+          <div class="seed-modal-section">
+            <div class="seed-section-title">領漲股（基準）</div>
+            <div class="seed-input-row">
+              <input id="lagLeaderInput" type="text" placeholder="輸入代號，如 2330…" maxlength="8" autocomplete="off" />
+              <button id="lagLeaderSetBtn">設定</button>
+            </div>
+            <div id="lagLeaderChip" style="margin-top:8px"></div>
+          </div>
+          <div class="seed-modal-section">
+            <div class="seed-section-title">最大落後天數（自動取相關性最高的 lag）</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <label class="seed-radio-label"><input type="radio" name="lagMaxLag" value="3"> 3 天</label>
+                <label class="seed-radio-label"><input type="radio" name="lagMaxLag" value="5" checked> 5 天</label>
+                <label class="seed-radio-label"><input type="radio" name="lagMaxLag" value="10"> 10 天</label>
+              </div>
+            </div>
+          </div>
+          <div class="seed-modal-section">
+            <div class="seed-section-title">比對天數</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <label class="seed-radio-label"><input type="radio" name="lagLookback" value="20"> 20 天</label>
+                <label class="seed-radio-label"><input type="radio" name="lagLookback" value="40" checked> 40 天</label>
+                <label class="seed-radio-label"><input type="radio" name="lagLookback" value="60"> 60 天</label>
+              </div>
+            </div>
+          </div>
+          <div class="seed-modal-section">
+            <div class="seed-section-title">相關性門檻</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <input type="range" id="lagThreshold" min="50" max="95" step="5" value="70" style="flex:1">
+                <span id="lagThresholdVal" style="min-width:36px;text-align:right">0.70</span>
+              </div>
+            </div>
+          </div>
+          <div class="seed-modal-section">
+            <div class="seed-section-title">股價篩選（元）</div>
+            <div class="seed-filter-section">
+              <div class="seed-filter-row">
+                <span>範圍</span>
+                <div class="seed-range-inputs">
+                  <input type="number" id="lagPriceMin" placeholder="最低" min="0" step="1">
+                  <span class="seed-range-sep">—</span>
+                  <input type="number" id="lagPriceMax" placeholder="最高" min="0" step="1">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="seed-modal-footer">
+          <button class="seed-modal-start" id="lagModalStart">▶ 開始掃描</button>
+        </div>
+      </div>
+    </div><!-- /lagModalBg -->
 
     <!-- 儲存組合 Modal -->
     <div class="seed-save-modal-bg" id="seedSaveModalBg" style="display:none">

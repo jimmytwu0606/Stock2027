@@ -22,7 +22,7 @@ import { getDataSource, getFinMindToken, getNewsSource } from './config.js';
  *   false 時完全不打 Yahoo 5m，避免 IP 被 Yahoo throttle 連帶影響 K 線 prewarm
  */
 export const FEATURE_INTRADAY_5M = !!getFinMindToken();
-import { getKlineCache, setKlineCache, bulkSetKlineCache } from './db.js';
+import { getKlineCache, setKlineCache, bulkSetKlineCache, countKlineCache } from './db.js';
 // Advanced 1 — 讀取 Cron Worker 寫入的 Firestore 共享資料
 import { fsGetShared } from './firebase.js';
 
@@ -2460,8 +2460,15 @@ export async function preloadBundles(opts = {}) {
     if (!opts.force) {
       try {
         if (localStorage.getItem(flagKey) === today) {
-          console.log('[bundle] 今日已灌入，跳過');
-          return { seeded: 0, skipped: true };
+          // 自癒檢查（2026-06-10）：旗標在但 IDB 可能被重建清空（旗標活在 localStorage 不隨 IDB 死）
+          // kline_cache 筆數遠低於全市場 → 視為空殼，無視旗標重灌
+          const n = await countKlineCache();
+          if (n >= 0 && n < 500) {
+            console.warn(`[bundle] 旗標在但 kline_cache 僅 ${n} 筆（疑似 IDB 重建），無視旗標重灌`);
+          } else {
+            console.log('[bundle] 今日已灌入，跳過');
+            return { seeded: 0, skipped: true };
+          }
         }
       } catch (_) {}
     }
@@ -2509,7 +2516,11 @@ export async function preloadBundles(opts = {}) {
       }
     }
 
-    try { localStorage.setItem(flagKey, today); } catch (_) {}
+    // ⚠️ 只有實際灌入成功才立旗標（2026-06-10）：
+    // 否則 part 全失敗 / IDB 被清空後，旗標殘留導致每天「今日已灌入」永久跳過
+    if (totalSeeded > 0) {
+      try { localStorage.setItem(flagKey, today); } catch (_) {}
+    }
     console.log(`[bundle] 預載完成：共 ${totalSeeded} 檔，耗時 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     return { seeded: totalSeeded, skipped: false };
   })();

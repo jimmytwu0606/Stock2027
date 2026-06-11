@@ -163,14 +163,282 @@ const COND_LIB = {
 
 export const SUPPORTED_CONDS = Object.keys(COND_LIB);
 
+// ═════════════════════════════════════════════════════════════════════════════
+// GAS 對齊條件庫（2026-06-10，系統發現策略 2Y 回測用）
+//   condId 用 'gas:' 前綴，固定門檻 boolean，語意照 heatmap_calc.gs _calcConditions
+//   與上方 COND_LIB（strategy.js 參數化語意）並存，互不干擾
+// ═════════════════════════════════════════════════════════════════════════════
+
+function _ema(arr, n) {
+  const out = new Array(arr.length).fill(null);
+  const k = 2 / (n + 1);
+  let prev = null;
+  for (let i = 0; i < arr.length; i++) {
+    prev = prev == null ? arr[i] : arr[i] * k + prev * (1 - k);
+    out[i] = i >= n - 1 ? prev : null;
+  }
+  return out;
+}
+
+function _gasPre(candles, base) {
+  const n = candles.length;
+  const closes = base.closes;
+  const highs = candles.map(c => c.h ?? c.c);
+  const lows  = candles.map(c => c.l ?? c.c);
+  const opens = candles.map(c => c.o ?? c.c);
+  const vols  = base.vols;
+
+  const ema5 = _ema(closes, 5), ema10 = _ema(closes, 10), ema20 = _ema(closes, 20), ema60 = _ema(closes, 60);
+
+  // GMMA（標準參數）
+  const gS = [3,5,8,10,12,15].map(p => _ema(closes, p));
+  const gL = [30,35,40,45,50,60].map(p => _ema(closes, p));
+
+  // DMI(14) Wilder
+  const pdi = new Array(n).fill(null), mdi = new Array(n).fill(null), adx = new Array(n).fill(null);
+  {
+    const P = 14;
+    let sTR = 0, sDP = 0, sDM = 0, adxSum = 0, adxCnt = 0, prevAdx = null;
+    const dxArr = [];
+    for (let i = 1; i < n; i++) {
+      const tr = Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1]));
+      const up = highs[i] - highs[i-1], dn = lows[i-1] - lows[i];
+      const dP = up > dn && up > 0 ? up : 0;
+      const dM = dn > up && dn > 0 ? dn : 0;
+      if (i <= P) { sTR += tr; sDP += dP; sDM += dM; }
+      else { sTR = sTR - sTR / P + tr; sDP = sDP - sDP / P + dP; sDM = sDM - sDM / P + dM; }
+      if (i >= P && sTR > 0) {
+        const p = 100 * sDP / sTR, m = 100 * sDM / sTR;
+        pdi[i] = p; mdi[i] = m;
+        const dx = (p + m) > 0 ? 100 * Math.abs(p - m) / (p + m) : 0;
+        dxArr.push(dx);
+        if (dxArr.length === P) { prevAdx = dxArr.reduce((a,b)=>a+b,0) / P; adx[i] = prevAdx; }
+        else if (dxArr.length > P) { prevAdx = (prevAdx * (P - 1) + dx) / P; adx[i] = prevAdx; }
+      }
+    }
+  }
+
+  // SAR(0.02, 0.2)
+  const sar = new Array(n).fill(null);
+  if (n >= 2) {
+    let bull = closes[1] >= closes[0];
+    let af = 0.02, ep = bull ? highs[1] : lows[1], s = bull ? lows[0] : highs[0];
+    sar[1] = s;
+    for (let i = 2; i < n; i++) {
+      s = s + af * (ep - s);
+      if (bull) {
+        s = Math.min(s, lows[i-1], lows[i-2]);
+        if (lows[i] < s) { bull = false; s = ep; ep = lows[i]; af = 0.02; }
+        else if (highs[i] > ep) { ep = highs[i]; af = Math.min(af + 0.02, 0.2); }
+      } else {
+        s = Math.max(s, highs[i-1], highs[i-2]);
+        if (highs[i] > s) { bull = true; s = ep; ep = highs[i]; af = 0.02; }
+        else if (lows[i] < ep) { ep = lows[i]; af = Math.min(af + 0.02, 0.2); }
+      }
+      sar[i] = s;
+    }
+  }
+
+  // Bollinger(20,2) + 帶寬
+  const bbU = new Array(n).fill(null), bbL = new Array(n).fill(null), bbW = new Array(n).fill(null);
+  for (let i = 19; i < n; i++) {
+    let sum = 0; for (let k = i - 19; k <= i; k++) sum += closes[k];
+    const mid = sum / 20;
+    let sq = 0; for (let k = i - 19; k <= i; k++) sq += (closes[k] - mid) ** 2;
+    const sd = Math.sqrt(sq / 20);
+    bbU[i] = mid + 2 * sd; bbL[i] = mid - 2 * sd;
+    bbW[i] = mid > 0 ? (bbU[i] - bbL[i]) / mid * 100 : null;
+  }
+
+  // PSY(12) / bias20 / RCI(9) / HV(20)
+  const psy = new Array(n).fill(null), bias = new Array(n).fill(null), rci = new Array(n).fill(null), hv = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    if (i >= 12) {
+      let up = 0; for (let k = i - 11; k <= i; k++) if (closes[k] > closes[k-1]) up++;
+      psy[i] = up / 12 * 100;
+    }
+    if (base.ma20[i] != null && base.ma20[i] > 0) bias[i] = (closes[i] - base.ma20[i]) / base.ma20[i] * 100;
+    if (i >= 8) {
+      const win = closes.slice(i - 8, i + 1);
+      const ranked = win.map((v, idx) => ({ v, idx })).sort((a, b) => b.v - a.v);
+      const pr = new Array(9); ranked.forEach((o, r) => { pr[o.idx] = r + 1; });
+      let d2 = 0; for (let k = 0; k < 9; k++) { const dr = (9 - k) - pr[k]; d2 += dr * dr; }
+      rci[i] = (1 - 6 * d2 / (9 * 80)) * 100;
+    }
+    if (i >= 20) {
+      let m = 0; const rets = [];
+      for (let k = i - 19; k <= i; k++) { const r = Math.log(closes[k] / closes[k-1]); rets.push(r); m += r; }
+      m /= 20;
+      let v = 0; rets.forEach(r => { v += (r - m) ** 2; });
+      hv[i] = Math.sqrt(v / 20) * Math.sqrt(250) * 100;
+    }
+  }
+
+  // 一目均衡表（轉換9/基準26/先行52/位移26）
+  const _hl = (i, p) => {
+    if (i < p - 1) return null;
+    let h = -Infinity, l = Infinity;
+    for (let k = i - p + 1; k <= i; k++) { h = Math.max(h, highs[k]); l = Math.min(l, lows[k]); }
+    return (h + l) / 2;
+  };
+  const tenkan = new Array(n).fill(null), kijun = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) { tenkan[i] = _hl(i, 9); kijun[i] = _hl(i, 26); }
+  const spanA = new Array(n).fill(null), spanB = new Array(n).fill(null);
+  for (let i = 26; i < n; i++) {
+    if (tenkan[i-26] != null && kijun[i-26] != null) spanA[i] = (tenkan[i-26] + kijun[i-26]) / 2;
+    spanB[i] = _hl(i - 26, 52);
+  }
+
+  // 含今日的 20 日高低 / 20 日均量（GAS slice(i-19, i+1) 語意）
+  const hi20 = new Array(n).fill(null), lo20 = new Array(n).fill(null), vol20 = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const from = Math.max(0, i - 19);
+    let h = -Infinity, l = Infinity, vs = 0;
+    for (let k = from; k <= i; k++) { h = Math.max(h, closes[k]); l = Math.min(l, closes[k]); vs += vols[k]; }
+    hi20[i] = h; lo20[i] = l; vol20[i] = vs / 20;
+  }
+
+  return { closes, opens, highs, lows, vols, ema5, ema10, ema20, ema60, gS, gL, pdi, mdi, adx, sar, bbU, bbL, bbW, psy, bias, rci, hv, tenkan, kijun, spanA, spanB, hi20, lo20, vol20, ma5: base.ma5, ma20: base.ma20, rsi: base.rsi, K: base.K, D: base.D, macd: base.macd };
+}
+
+// ── 共用小工具 ──
+const _g_chg = (g, i) => i >= 1 && g.closes[i-1] > 0 ? (g.closes[i] / g.closes[i-1] - 1) * 100 : 0;
+const _g_volSurge = (g, i) => g.vol20[i] > 0 && g.vols[i] >= g.vol20[i] * 1.5;
+const _g_limitUp = (g, i) => _g_chg(g, i) >= 9.5 && Math.abs(g.closes[i] - g.highs[i]) < 0.01;
+const _g_crossUp = (g, i) => i >= 1 && g.ma20[i] != null && g.ma20[i-1] != null && g.closes[i] > g.ma20[i] && g.closes[i-1] <= g.ma20[i-1];
+
+const GAS_LIB = {
+  rsi_min:    (g,i) => g.rsi[i] != null && g.rsi[i] >= 50,
+  rsi_max:    (g,i) => g.rsi[i] != null && g.rsi[i] >= 80,
+  rsi_revival:(g,i) => i >= 1 && g.rsi[i] != null && g.rsi[i-1] != null && g.rsi[i] > 30 && g.rsi[i-1] <= 30,
+  kd_k_min:   (g,i) => g.K[i] != null && g.K[i] <= 20,
+  kd_k_max:   (g,i) => g.K[i] != null && g.K[i] >= 80,
+  kd_golden:  (g,i) => i >= 1 && g.K[i] != null && g.K[i] > g.D[i] && g.K[i-1] <= g.D[i-1],
+  kd_dead:    (g,i) => i >= 1 && g.K[i] != null && g.K[i] < g.D[i] && g.K[i-1] >= g.D[i-1],
+  macd_golden:(g,i) => i >= 1 && g.macd.dif[i] > g.macd.dea[i] && g.macd.dif[i-1] <= g.macd.dea[i-1],
+  macd_dead:  (g,i) => i >= 1 && g.macd.dif[i] < g.macd.dea[i] && g.macd.dif[i-1] >= g.macd.dea[i-1],
+  macd_hist_pos: (g,i) => g.macd.hist[i] > 0,
+  macd_dead_above_zero: (g,i) => GAS_LIB.macd_dead(g,i) && g.macd.dif[i] > 0,
+  above_ma20: (g,i) => g.ma20[i] != null && g.closes[i] > g.ma20[i],
+  below_ma20: (g,i) => g.ma20[i] != null && g.closes[i] < g.ma20[i],
+  ma5_cross_ma20: (g,i) => i >= 1 && g.ma5[i] != null && g.ma20[i] != null && g.ma5[i] > g.ma20[i] && g.ma5[i-1] <= g.ma20[i-1],
+  ma20_turn_up:   (g,i) => i >= 2 && g.ma20[i] != null && g.ma20[i] > g.ma20[i-1] && g.ma20[i-1] <= g.ma20[i-2],
+  ma20_rising:    (g,i) => i >= 1 && g.ma20[i] != null && g.ma20[i] > g.ma20[i-1],
+  ma20_declining: (g,i) => i >= 1 && g.ma20[i] != null && g.ma20[i] < g.ma20[i-1],
+  ma20_turn_down: (g,i) => i >= 2 && g.ma20[i] != null && g.ma20[i] < g.ma20[i-1] && g.ma20[i-1] >= g.ma20[i-2],
+  price_cross_ma20_up:   _g_crossUp,
+  price_reclaim_ma20:    _g_crossUp,
+  price_cross_ma20_down: (g,i) => i >= 1 && g.ma20[i] != null && g.ma20[i-1] != null && g.closes[i] < g.ma20[i] && g.closes[i-1] >= g.ma20[i-1],
+  price_bounce_ma20:     (g,i) => g.ma20[i] != null && Math.abs(g.closes[i] - g.ma20[i]) / g.ma20[i] < 0.02 && g.closes[i] > g.ma20[i],
+  price_far_below_ma20:  (g,i) => g.ma20[i] != null && g.closes[i] < g.ma20[i] * 0.92,
+  price_far_above_ma20:  (g,i) => g.ma20[i] != null && g.closes[i] > g.ma20[i] * 1.08,
+  price_rally_fail_ma20: (g,i) => i >= 1 && g.ma20[i] != null && g.ma20[i-1] != null && g.closes[i] < g.ma20[i] && g.closes[i-1] >= g.ma20[i-1],
+  bb_squeeze:    (g,i) => g.bbW[i] != null && g.bbW[i] < 3,
+  bb_expanding:  (g,i) => i >= 5 && g.bbW[i] != null && g.bbW[i-5] != null && g.bbW[i] > g.bbW[i-5] * 1.3,
+  bb_upper_touch:(g,i) => g.bbU[i] != null && g.closes[i] >= g.bbU[i] * 0.99,
+  bb_lower_touch:(g,i) => g.bbL[i] != null && g.closes[i] <= g.bbL[i] * 1.01,
+  high_n_days: (g,i) => g.closes[i] >= g.hi20[i] * 0.99,
+  drop_n_days: (g,i) => g.closes[i] <= g.lo20[i] * 1.01,
+  vol_surge:  _g_volSurge,
+  vol_shrink: (g,i) => g.vol20[i] > 0 && g.vols[i] <= g.vol20[i] * 0.5,
+  limit_up:   _g_limitUp,
+  limit_down: (g,i) => _g_chg(g,i) <= -9.5 && Math.abs(g.closes[i] - g.lows[i]) < 0.01,
+  vol_surge_long:  (g,i) => (_g_volSurge(g,i) && i >= 1 && g.closes[i] > g.closes[i-1]) || _g_limitUp(g,i),
+  vol_surge_short: (g,i) => (_g_volSurge(g,i) && i >= 1 && g.closes[i] < g.closes[i-1]) || _g_limitUp(g,i),
+  vol_surge_drop:  (g,i) => _g_volSurge(g,i) && i >= 1 && g.closes[i] < g.closes[i-1],
+  psy_oversold:   (g,i) => g.psy[i] != null && g.psy[i] <= 25,
+  psy_overbought: (g,i) => g.psy[i] != null && g.psy[i] >= 75,
+  bias20_low:     (g,i) => g.bias[i] != null && g.bias[i] <= -8,
+  rci9_turn_up:   (g,i) => i >= 1 && g.rci[i] != null && g.rci[i-1] != null && g.rci[i] > -80 && g.rci[i-1] <= -80,
+  dmi_bull:   (g,i) => g.pdi[i] != null && g.mdi[i] != null && g.adx[i] != null && g.pdi[i] > g.mdi[i] && g.adx[i] > 20,
+  dmi_strong: (g,i) => g.adx[i] != null && g.adx[i] > 30 && g.pdi[i] > g.mdi[i],
+  dmi_bear:   (g,i) => g.pdi[i] != null && g.mdi[i] != null && g.mdi[i] > g.pdi[i],
+  sar_bull:   (g,i) => g.sar[i] != null && g.closes[i] > g.sar[i],
+  hv_low:     (g,i) => g.hv[i] != null && g.hv[i] < 20,
+  ema_bull:   (g,i) => g.ema5[i] != null && g.ema60[i] != null && g.ema5[i] > g.ema10[i] && g.ema10[i] > g.ema20[i] && g.ema20[i] > g.ema60[i],
+  ema_cross_up: (g,i) => i >= 1 && g.ema5[i] != null && g.ema20[i] != null && g.ema5[i-1] != null && g.ema20[i-1] != null && g.ema5[i] > g.ema20[i] && g.ema5[i-1] <= g.ema20[i-1],
+  ma_bear_array: (g,i) => g.ema5[i] != null && g.ema60[i] != null && g.ema5[i] < g.ema10[i] && g.ema10[i] < g.ema20[i] && g.ema20[i] < g.ema60[i],
+  gmma_bull: (g,i) => {
+    let sMin = Infinity, lMax = -Infinity;
+    for (const a of g.gS) { if (a[i] == null) return false; sMin = Math.min(sMin, a[i]); }
+    for (const a of g.gL) { if (a[i] == null) return false; lMax = Math.max(lMax, a[i]); }
+    return sMin > lMax;
+  },
+  ichi_cloud_above: (g,i) => g.spanA[i] != null && g.spanB[i] != null && g.closes[i] > Math.max(g.spanA[i], g.spanB[i]),
+  ichi_below_cloud: (g,i) => g.spanA[i] != null && g.spanB[i] != null && g.closes[i] < Math.min(g.spanA[i], g.spanB[i]),
+  ichi_bull_cloud:  (g,i) => g.spanA[i] != null && g.spanB[i] != null && g.spanA[i] > g.spanB[i],
+  ichi_tk_cross: (g,i) => i >= 1 && g.tenkan[i] != null && g.kijun[i] != null && g.tenkan[i-1] != null && g.kijun[i-1] != null && g.tenkan[i] > g.kijun[i] && g.tenkan[i-1] <= g.kijun[i-1],
+  ichi_tk_dead:  (g,i) => i >= 1 && g.tenkan[i] != null && g.kijun[i] != null && g.tenkan[i-1] != null && g.kijun[i-1] != null && g.tenkan[i] < g.kijun[i] && g.tenkan[i-1] >= g.kijun[i-1],
+  ichi_chikou_above: (g,i) => i >= 26 && g.closes[i] > g.closes[i-26],
+  three_peaks: (g,i) => {
+    if (i < 4) return false;
+    let p = 0;
+    for (let pi = 1; pi < Math.min(20, i); pi++) {
+      const idx = i - pi;
+      if (g.closes[idx] > g.closes[idx-1] && g.closes[idx] > g.closes[idx+1]) p++;
+    }
+    return p >= 3;
+  },
+  three_valleys: (g,i) => {
+    if (i < 4) return false;
+    let v = 0;
+    for (let vi = 1; vi < Math.min(20, i); vi++) {
+      const idx = i - vi;
+      if (g.closes[idx] < g.closes[idx-1] && g.closes[idx] < g.closes[idx+1]) v++;
+    }
+    return v >= 3;
+  },
+  three_soldiers: (g,i) => i >= 2 &&
+    g.closes[i] > g.opens[i] && g.closes[i-1] > g.opens[i-1] && g.closes[i-2] > g.opens[i-2] &&
+    g.closes[i] > g.closes[i-1] && g.closes[i-1] > g.closes[i-2],
+  bullish_engulfing: (g,i) => i >= 1 &&
+    g.closes[i] > g.opens[i] && g.closes[i-1] < g.opens[i-1] &&
+    g.opens[i] < g.closes[i-1] && g.closes[i] > g.opens[i-1],
+  tight_consolidation: (g,i) => {
+    if (i < 4) return false;
+    let hh = -Infinity, ll = Infinity;
+    for (let k = i - 4; k <= i; k++) { hh = Math.max(hh, g.closes[k]); ll = Math.min(ll, g.closes[k]); }
+    return ll > 0 && (hh - ll) / ll < 0.03 && _g_volSurge(g, i);
+  },
+  gain_10d: (g,i) => i >= 10 && g.closes[i-10] > 0 && (g.closes[i] - g.closes[i-10]) / g.closes[i-10] > 0.05,
+  loss_5d:  (g,i) => i >= 5  && g.closes[i-5]  > 0 && (g.closes[i] - g.closes[i-5])  / g.closes[i-5]  < -0.05,
+};
+
+export const GAS_SUPPORTED_CONDS = Object.keys(GAS_LIB);
+
+/**
+ * 對外：把一段 K 線（{time,open,high,low,close,volume} 或 {t,o,h,l,c,v} 皆可）
+ * 預算成 GAS 條件 evaluator。供真實驗室等模組做系統發現策略的逐根判定。
+ * 回傳 (i, condIds[]) => bool（暖機 < 60 根一律 false，一目雲等由各條件 null 防護兜底）
+ */
+export function buildGasEvaluator(rawCandles) {
+  const candles = rawCandles.map(c => ({
+    t: c.t ?? c.time, o: c.o ?? c.open, h: c.h ?? c.high,
+    l: c.l ?? c.low,  c: c.c ?? c.close, v: c.v ?? c.volume ?? 0,
+  }));
+  const base = _precompute(candles);
+  const g = _gasPre(candles, base);
+  return (i, condIds) => {
+    if (i < 60) return false;
+    return condIds.every(id => { const f = GAS_LIB[id]; return f ? f(g, i) : false; });
+  };
+}
+
+
 export function isStrategyBacktestable(strategy) {
-  return strategy.conditions.every(c => COND_LIB[c.condId]);
+  return strategy.conditions.every(c =>
+    c.condId.startsWith('gas:') ? !!GAS_LIB[c.condId.slice(4)] : !!COND_LIB[c.condId]
+  );
 }
 
 /** 該日該檔是否觸發指定訊號 */
 function _signalAt(ind, i, strategy) {
   if (i < 35) return false;   // 暖機保護（MACD/RSI 需要 ~35 根）
   return strategy.conditions.every(c => {
+    if (c.condId.startsWith('gas:')) {
+      const gfn = GAS_LIB[c.condId.slice(4)];
+      return gfn && ind.gas ? gfn(ind.gas, i) : false;
+    }
     const fn = COND_LIB[c.condId];
     return fn ? fn(ind, i, c.value) : false;
   });
@@ -190,10 +458,15 @@ export function runBacktest(opts) {
     startTs = null, onProgress = null,
   } = opts;
 
-  const entryStrats = STRATEGIES.filter(s => entryIds.includes(s.id) && isStrategyBacktestable(s));
+  const customStrategies = (opts.customStrategies ?? []).filter(isStrategyBacktestable);
+  const entryStrats = [
+    ...STRATEGIES.filter(s => entryIds.includes(s.id) && isStrategyBacktestable(s)),
+    ...customStrategies,
+  ];
   if (entryStrats.length === 0) throw new Error('無可回測的進場訊號（條件未支援）');
 
-  const prep = _prepStocks(histMap, startTs, onProgress);
+  const needGas = entryStrats.some(s => s.conditions.some(c => c.condId.startsWith('gas:')));
+  const prep = _prepStocks(histMap, startTs, onProgress, needGas);
   const regime = _prepRegime(regimeCandles);
   const result = _replay(prep, entryStrats, { exitMode, exitDays, capital, maxPositions, feeRate, taxRate, stopPct, trailPct, maxHoldDays, regime });
   if (onProgress) onProgress(1, 1);
@@ -236,7 +509,7 @@ export function runBacktestAll(opts) {
 }
 
 // ── 內部：股票池預處理（指標預算 + 交易日曆）──────────────────────────────
-function _prepStocks(histMap, startTs, onProgress) {
+function _prepStocks(histMap, startTs, onProgress, needGas = false) {
   const stocks = [];
   const allTs  = new Set();
   const codes = [...histMap.keys()];
@@ -247,6 +520,7 @@ function _prepStocks(histMap, startTs, onProgress) {
     const candles = (hist?.candles ?? []).filter(c => c.a != null && c.c > 0);
     if (candles.length < 60) { prepDone++; continue; }
     const ind = _precompute(candles);
+    if (needGas) ind.gas = _gasPre(candles, ind);
     const tsIndex = new Map();
     candles.forEach((c, i) => { tsIndex.set(c.t, i); allTs.add(c.t); });
     stocks.push({ code, candles, ind, tsIndex });

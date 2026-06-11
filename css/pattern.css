@@ -150,12 +150,12 @@
 }
 .pd-tag--up {
   background: rgba(239,83,80,.15);
-  color: var(--up);
+  color: #ef5350;
   border-color: rgba(239,83,80,.25);
 }
 .pd-tag--down {
   background: rgba(38,166,154,.15);
-  color: var(--down);
+  color: #26a69a;
   border-color: rgba(38,166,154,.25);
 }
 
@@ -347,8 +347,8 @@
   font-weight: 700;
   color: var(--text);
 }
-.pr-bt-val.up   { color: var(--up); }
-.pr-bt-val.down { color: var(--down); }
+.pr-bt-val.up   { color: #ef5350; }
+.pr-bt-val.down { color: #26a69a; }
 
 .pr-bt-label {
   font-size: 10px;
@@ -450,8 +450,8 @@
 }
 
 .pr-row-chg { font-size: 12px; font-weight: 600; }
-.pr-row-chg.up   { color: var(--up); }
-.pr-row-chg.down { color: var(--down); }
+.pr-row-chg.up   { color: #ef5350; }   /* 台股：漲=紅 */
+.pr-row-chg.down { color: #26a69a; } /* 台股：跌=綠 */
 
 /* 妖股 pill（與 theme-ui 同風格）*/
 .pr-yaogu-cell {
