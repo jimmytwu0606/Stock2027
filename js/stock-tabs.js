@@ -1447,7 +1447,13 @@ async function _renderYaoguChip(code, signals, candles = null) {
       });
       const lastMA20  = ma20arr[closes.length - 1];
       const lastClose = closes[closes.length - 1];
-      if (lastMA20 && lastClose < lastMA20 && record) forceExit = true;
+      // v2.9.2 重生豁免：rebirth 期間 close<MA20 是常態，不可蓋成出場確認；
+      // 剛升級的軋空型二波（_rebirthPromo）可能仍在 MA20 下回升中，同樣豁免
+      const ys0 = AppState.yaoguStatus?.[code] ?? null;
+      const rebirthGuard = record?.status === 'rebirth'
+        || record?.status === 'exited'   // 已出場 → 顯示 ⚫ 看板，不重複蓋紅色出場確認
+        || (ys0 && (ys0.status === 'rebirth' || ys0._rebirthPromo));
+      if (lastMA20 && lastClose < lastMA20 && record && !rebirthGuard) forceExit = true;
     }
 
     if (forceExit) {
@@ -1499,8 +1505,34 @@ async function _renderYaoguChip(code, signals, candles = null) {
          </div>`
       : '';
 
+    // v2.9.2 rebirth 狀態：紫色 chip（重生失敗時 ys.color 為灰，同分支）
+    // 不掛出場線（尚無進場基準），exitLines 條件已排除 rebirth → 上方自動 clear
+    if (ys.status === 'rebirth') {
+      el.innerHTML = `
+        <div class="yaogu-chip yaogu-chip-dual" style="border-color:${ys.color}">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label" style="color:${ys.color}">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
+          </div>
+          ${xRowHtml}
+        </div>`;
+      return;
+    }
+
+    // v2.9.2 exited 看板：灰色，顯示重生倒數（出場後 20 日窗口內）
+    if (ys.status === 'exited') {
+      el.innerHTML = `
+        <div class="yaogu-chip" style="border-color:#9ca3af">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label" style="color:#9ca3af">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
+          </div>
+        </div>`;
+      return;
+    }
+
     // exit 狀態：紅色單行，最高優先顯示
-    if (ys.status === 'exit' || ys.status === 'exited') {
+    if (ys.status === 'exit') {
       el.innerHTML = `
         <div class="yaogu-chip" style="border-color:#ef4444;color:#ef4444">
           <div class="yaogu-chip-row-active">

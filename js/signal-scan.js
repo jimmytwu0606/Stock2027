@@ -117,7 +117,7 @@ export function matchSignals(candles, twseRow = null, opts = {}) {
  */
 export function injectYaoguSignals(signals, record) {
   if (!record) return signals;
-  if (record.status === 'exited' || record.status === 'exit') return signals;
+  if (record.status === 'exited' || record.status === 'exit' || record.status === 'rebirth') return signals;
 
   const sigIds   = new Set(signals.map(s => s.id));
   const strength = record.strength ?? 'medium';
@@ -394,7 +394,14 @@ export function buildIndustryContext(code, candleMap) {
 // ═══════════════════════════════════════════════════════════════════
 // v2.8 妖股狀態機（Yaogu Tracker）
 // 數據依據：ROADMAP_YAOGU_EXIT_0525_1304
+// v2.9.2 重生機制（rebirth）：exited 後 X 重亮不直接回 active
 // ═══════════════════════════════════════════════════════════════════
+
+// ── 重生機制參數 ──────────────────────────────────────────────
+const REBIRTH_WINDOW_DAYS = 20;  // exit 後 N 交易日內 X 重亮 → 進 rebirth；超過 → 隔代妖（當全新）
+const REBIRTH_OBSERVE_MAX = 5;   // rebirth 最長觀察根數，超過未升級 → 重生失敗
+const REBIRTH_VOL_RATIO   = 1.0; // 換手型量能門檻：今日量 ≥ 5日均量 × 此倍率
+const REBIRTH_HOLD_DAYS   = 2;   // 控盤型（無量站回月線）需連續守住天數
 
 /**
  * 計算妖股當前狀態（純計算，不打 DB）
@@ -411,6 +418,10 @@ export function buildIndustryContext(code, candleMap) {
  *   warning1  🟡 準備警示  W14 MACD高位死叉（出場前4-5天前兆）
  *   warning2  🟠 出貨警示  W5 急跌訊號（出場前3-4天前兆）
  *   exit      🔴 出場確認  跌破 MA20（W1 或 W18）
+ *   rebirth   🟣 重生觀察  exited 後 20 交易日內 X 重亮（v2.9.2）
+ *             升級路徑：⚡軋空型(連2根漲停鎖死) / 🔄換手型(站回MA20+量足)
+ *                       / 🔵控盤型(無量站回MA20連守2日) / 🔴二波猛妖(突破prevPeak)
+ *             失敗路徑：跌破反彈起點低點 或 5 根內未升級 → 回 exited
  *   watching  ⚪ 觀察中   曾是妖股但目前無相關訊號
  *   null      未追蹤（從未是妖股）
  *
@@ -501,6 +512,189 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
     };
   }
 
+  // ══ 重生機制（v2.9.2）══════════════════════════════════════════
+  // 必須在 W1/W18 exit 之前攔截：rebirth 期間 close<MA20 是常態，
+  // W1 family 會亮，不能讓它把 rebirth 打成 exit。
+  // 死貓跳判別不靠單日量能否決（漲停鎖死/高控盤都可無量），
+  // 靠「位置 + 鎖死 + 連續性」三維度。
+  // 升降級只在收盤後確認（盤中 scanOneCode 只更新顯示，不寫升降級）。
+
+  // ── rebirth 進行中：每日升降級判斷 ──
+  if (record?.status === 'rebirth') {
+    const { lastClose, lastMA20, volRatio, limitUpLockedStreak, cyclePeak } = klineCtx;
+    const prevPeak    = record.prevPeak ?? cyclePeak ?? null;
+    const rebirthDays = record.rebirthAt ? _tradingDaysSince(record.rebirthAt) : 1;
+    const gen         = record.gen ?? 1;
+    const intraday    = _isTradingHours();
+    const canJudge    = !intraday && Number.isFinite(lastClose);
+
+    const _promo = (type, label, desc, st) => ({
+      status: 'active',
+      label,
+      color: '#4ade80',
+      desc,
+      strength: st ?? (strength !== 'none' ? strength : (record.strength ?? 'medium')),
+      streak, streakLabel,
+      activatedAt: record.rebirthAt ?? now,
+      gen: gen + 1,
+      _rebirthPromo: type,
+    });
+
+    if (canJudge) {
+      // ① 收盤突破前波高 → 二波猛妖（最強確認，籌碼換手完成）
+      if (prevPeak && lastClose > prevPeak) {
+        return _promo('breakout', `🔴 二波猛妖 · 第 ${gen + 1} 代`,
+          `收盤突破前波高 ${prevPeak.toFixed(2)}，籌碼換手完成，上檔無壓`, 'strong');
+      }
+      // ② 連 2 根漲停鎖死 → 軋空型（量縮是買不到，不是沒人買）
+      if ((limitUpLockedStreak ?? 0) >= 2) {
+        return _promo('squeeze', `⚡ 軋空型二波 · 第 ${gen + 1} 代`,
+          `連續 ${limitUpLockedStreak} 根漲停鎖死，軋空啟動（無量豁免）`);
+      }
+      // ③ 收盤站回 MA20
+      if (lastMA20 && lastClose >= lastMA20) {
+        if ((volRatio ?? 0) >= REBIRTH_VOL_RATIO) {
+          return _promo('turnover', `🔄 換手型二波 · 第 ${gen + 1} 代`,
+            `站回月線且量能足（量比 ${(volRatio ?? 0).toFixed(1)}），換手型二波確認`);
+        }
+        // 無量站回 → 控盤型候選，連守 REBIRTH_HOLD_DAYS 日才轉正
+        const hold = (record.rebirthHold ?? 0) + 1;
+        if (hold >= REBIRTH_HOLD_DAYS) {
+          return _promo('control', `🔵 控盤型二波 · 第 ${gen + 1} 代`,
+            `無量站回月線並連守 ${hold} 日，高控盤型二波`);
+        }
+        return {
+          status: 'rebirth',
+          label: `🟣 重生觀察 · 第 ${rebirthDays} 天`,
+          color: '#a78bfa',
+          desc: `🔵 控盤型觀察：無量站回月線第 ${hold} 日（連守 ${REBIRTH_HOLD_DAYS} 日轉正）｜前波高 ${prevPeak ? prevPeak.toFixed(2) : '—'}`,
+          strength: record.strength ?? strength,
+          streak, streakLabel,
+          activatedAt: record.activatedAt,
+          gen, prevPeak,
+          _holdCount: hold,
+        };
+      }
+      // ④ 失敗：跌破反彈起點低點 或 觀察期滿未升級 → 死貓跳確認
+      const brokeLow = record.rebirthLow != null && lastClose < record.rebirthLow;
+      if (brokeLow || rebirthDays > REBIRTH_OBSERVE_MAX) {
+        return {
+          status: 'rebirth',
+          _rebirthFail: true,
+          label: '⚪ 重生失敗',
+          color: '#9ca3af',
+          desc: brokeLow
+            ? `跌破反彈起點低點 ${record.rebirthLow}，死貓跳確認，回到出場狀態`
+            : `觀察 ${REBIRTH_OBSERVE_MAX} 根未站回月線，重生失敗，回到出場狀態`,
+          strength: record.strength ?? 'none',
+          streak, streakLabel,
+          activatedAt: record.activatedAt,
+          gen,
+        };
+      }
+    }
+
+    // ⑤ 維持觀察（含盤中：不升降級，只顯示）
+    const dist = (lastMA20 && Number.isFinite(lastClose))
+      ? ((lastClose - lastMA20) / lastMA20 * 100) : null;
+    return {
+      status: 'rebirth',
+      label: `🟣 重生觀察 · 第 ${rebirthDays} 天${intraday ? '（盤中）' : ''}`,
+      color: '#a78bfa',
+      desc: `前波高 ${prevPeak ? prevPeak.toFixed(2) : '—'}｜距月線 ${dist != null ? dist.toFixed(1) + '%' : '—'}｜鎖死×2 / 站回月線 → 升級二波`,
+      strength: record.strength ?? strength,
+      streak, streakLabel,
+      activatedAt: record.activatedAt,
+      gen, prevPeak,
+      _holdCount: (lastMA20 && lastClose >= lastMA20) ? (record.rebirthHold ?? 0) : 0,
+    };
+  }
+
+  // ── exited 記錄 + X 重亮：重生入口 ──
+  if (record?.status === 'exited') {
+    if (!(hasX1 || hasX2 || hasX5)) {
+      // exited 且無 X：重生窗口內顯示「已出場」看板（標籤不消失，監控重生倒數）
+      const dse = record.exitedAt ? _tradingDaysSince(record.exitedAt) : Infinity;
+      if (dse <= REBIRTH_WINDOW_DAYS) {
+        const pp = record.prevPeak ?? klineCtx.cyclePeak ?? null;
+        const cycTxt = record.prevCycleDays ? `｜前段妖股 ${record.prevCycleDays} 天` : '';
+
+        // ── 第二重生入口（v2.9.2b）：收盤站回 MA20 ──────────────
+        // 出場的定義是跌破月線，收復月線是對稱的重生訊號。
+        // X 未亮也進 rebirth（觀察成本低）；升級規則照舊把關。
+        // 注意：均線視窗滾動會讓 MA20 下彎迎接價格（如 6116），
+        //       這種「月線降下來」的收復更需要觀察期過濾，不能直接 active。
+        // 盤中不觸發，收盤確認才算。
+        const { lastClose: _lc, lastMA20: _ma20 } = klineCtx;
+        const aboveMA20 = _ma20 != null && Number.isFinite(_lc) && _lc >= _ma20;
+        if (aboveMA20 && !_isTradingHours()) {
+          return {
+            status: 'rebirth',
+            isRebirthNew: true,
+            rebirthTrigger: 'ma20',   // 入口標記：月線收復（另一入口為 X 重亮）
+            label: '🟣 重生觀察 · 第 1 天',
+            color: '#a78bfa',
+            desc:  `出場後 ${dse} 個交易日收盤站回月線（X 未亮）${cycTxt}｜前波高 ${pp ? pp.toFixed(2) : '—'}｜量能或 X 補上 → 升級二波`,
+            strength: record.strength ?? 'none',
+            streak: null, streakLabel: '',
+            activatedAt: record.activatedAt,
+            gen: record.gen ?? 1,
+            prevPeak: pp,
+          };
+        }
+
+        return {
+          status: 'exited',
+          label:  `⚫ 已出場 · 第 ${dse} 天`,
+          color:  '#9ca3af',
+          desc:   `前波高 ${pp ? pp.toFixed(2) : '—'}${cycTxt}｜${REBIRTH_WINDOW_DAYS - dse} 個交易日內 X 重亮或站回月線 → 進重生觀察`
+                  + (aboveMA20 ? '｜⏳ 盤中已站上月線，收盤確認後啟動' : ''),
+          strength: record.strength ?? 'none',
+          streak: null, streakLabel: '',
+          activatedAt: record.activatedAt,
+          gen: record.gen ?? 1,
+        };
+      }
+      // 窗口已過 → 真正沉默
+      return null;
+    } else {
+      const daysSinceExit = record.exitedAt ? _tradingDaysSince(record.exitedAt) : Infinity;
+      if (daysSinceExit > REBIRTH_WINDOW_DAYS) {
+        // 隔代妖：舊週期無意義，當全新妖股（gen 繼承 +1 留歷史）
+        return {
+          status: 'active',
+          label: `🟢 主升段${streakLabel}`,
+          color: '#4ade80',
+          desc: `${_strengthTag[strength]} ${_strengthDesc[strength] || ''}（第 ${(record.gen ?? 1) + 1} 輪妖股）`,
+          strength,
+          streak: streak ?? 1,
+          streakLabel,
+          activatedAt: now,
+          isNew: true,
+          _genCarry: (record.gen ?? 1) + 1,
+        };
+      }
+      // 20 交易日內 X 重亮 → 進重生觀察（不直接掛主升段！）
+      const prevPeak = record.prevPeak ?? klineCtx.cyclePeak ?? null;
+      const prevCycleTxt = record.prevCycleDays ? `｜前段妖股 ${record.prevCycleDays} 天` : '';
+      const lockNote = (klineCtx.limitUpLockedStreak ?? 0) >= 1
+        ? '｜今日漲停鎖死（連 2 根升級軋空型）'
+        : ((klineCtx.volRatio ?? 1) < 0.5 ? '｜⚠️ 低量反彈，死貓跳風險' : '');
+      return {
+        status: 'rebirth',
+        isRebirthNew: true,
+        label: '🟣 重生觀察 · 第 1 天',
+        color: '#a78bfa',
+        desc: `出場後 ${daysSinceExit} 個交易日 X 重亮${prevCycleTxt}${lockNote}｜前波高 ${prevPeak ? prevPeak.toFixed(2) : '—'}`,
+        strength: record.strength ?? strength,
+        streak, streakLabel,
+        activatedAt: record.activatedAt,
+        gen: record.gen ?? 1,
+        prevPeak,
+      };
+    }
+  }
+
   // ── 底線：跌破 MA20 → 有記錄才出場確認 ──
   if ((hasW1 || hasW18) && record) {
     return {
@@ -516,7 +710,8 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
   }
 
   // ── 沒記錄：X1/X2/X5 任一亮就啟動 ──
-  if (!record || record.status === 'exited') {
+  // （v2.9.2：exited 記錄已由上方重生入口攔截，這裡只剩真正的全新股）
+  if (!record) {
     if (hasX1 || hasX2 || hasX5) {
       const stTag = _strengthTag[strength];
       const desc  = _strengthDesc[strength] || '';
@@ -602,6 +797,62 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
 }
 
 /**
+ * 殭屍記錄正規化（v2.9.2 惰性自癒）
+ *
+ * 殭屍成因（舊版洩漏鏈）：exited → X 重亮 → forceExit 轉 'exit' →
+ *   exit 寫入被 record.status !== 'exited' 擋掉 → 一般更新把 status 寫成
+ *   'exit'/'warning2' 但 spread 保留 exitedAt → 矛盾狀態永久卡死。
+ *
+ * 正規化規則：
+ *   ① status === 'exit'（非法持久狀態，合法為 'exited'）→ 轉 'exited'
+ *   ② exitedAt 存在但 status 是 active/watching/warning1/warning2 → 轉 'exited'
+ *      （exitedAt 是出場鐵證；若其實還活著，下次掃描 X 亮會走重生入口復活，
+ *        20 日內 → rebirth 觀察，超過 → 隔代妖直接 active，最多降級一天，安全）
+ *   ③ 非 rebirth 狀態殘留 rebirth 暫存欄位 → 清除
+ *   ④ gen 缺漏 → 補 1
+ *
+ * 觸發點：updateYaoguTracker 每次讀取後（每日重建會掃全自選 = 每天全面清一遍）
+ *
+ * @param {object|null} record
+ * @returns {{ record: object|null, changed: boolean, reason: string|null }}
+ */
+function _normalizeYaoguRecord(record) {
+  if (!record) return { record, changed: false, reason: null };
+  const r = { ...record };
+  let changed = false;
+  const reasons = [];
+
+  // ① 'exit' 不是合法持久狀態
+  if (r.status === 'exit') {
+    r.status   = 'exited';
+    r.exitedAt = r.exitedAt ?? r.lastUpdated ?? Date.now();
+    changed = true;
+    reasons.push("status 'exit'→'exited'");
+  }
+
+  // ② exitedAt 與存活狀態並存 = 殭屍
+  const ALIVE = new Set(['active', 'watching', 'warning1', 'warning2']);
+  if (r.exitedAt != null && ALIVE.has(r.status)) {
+    reasons.push(`殭屍 '${r.status}'+exitedAt→'exited'`);
+    r.status = 'exited';
+    changed = true;
+  }
+
+  // ③ 非 rebirth 狀態的 rebirth 暫存殘渣
+  if (r.status !== 'rebirth'
+      && (r.rebirthAt != null || r.rebirthLow != null || (r.rebirthHold ?? 0) !== 0)) {
+    r.rebirthAt = null; r.rebirthLow = null; r.rebirthHold = 0;
+    changed = true;
+    reasons.push('清 rebirth 殘渣');
+  }
+
+  // ④ gen 補預設
+  if (r.gen == null) { r.gen = 1; changed = true; }
+
+  return { record: r, changed, reason: reasons.join('; ') || null };
+}
+
+/**
  * 更新妖股追蹤記錄（讀 DB → 計算 → 寫 DB）
  * 在 scanOneCode / scanWatchlistSignals 結束後自動呼叫
  *
@@ -618,7 +869,17 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
  */
 export async function updateYaoguTracker(code, signals, candles = null) {
   try {
-    const record = await getYaoguRecord(code);
+    let record = await getYaoguRecord(code);
+
+    // ── v2.9.2 惰性自癒：殭屍記錄就地正規化並寫回 ──
+    {
+      const norm = _normalizeYaoguRecord(record);
+      if (norm.changed) {
+        record = norm.record;
+        await putYaoguRecord({ ...record, lastUpdated: Date.now() });
+        console.log(`[yaogu] 🧹 殭屍記錄修復: ${code}（${norm.reason}）`);
+      }
+    }
     const sigIds = new Set((signals || []).map(s => s.id));
     const hasX1  = sigIds.has('X1');
     const hasX2  = sigIds.has('X2');
@@ -763,14 +1024,56 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         isLimitDown = chg <= -9.5 && Math.abs(last.close - (last.low ?? last.close)) < 0.01;
       }
 
-      return { belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop, z6Triggered, isLimitDown };
+      // ── 重生機制輔助計算（v2.9.2）─────────────────────────────
+      // 量比：今日量 / 5 日均量（不含今日）
+      const volsAll = candles.map(c => c.volume ?? 0);
+      const avg5 = n >= 6
+        ? volsAll.slice(n - 6, n - 1).reduce((s, v) => s + v, 0) / 5 : 0;
+      const volRatio = avg5 > 0 ? (volsAll[n - 1] / avg5) : 0;
+
+      // 漲停鎖死連續根數（從今天往回，最多看 5 根；鎖死 = 漲幅≥9.5% 且收=最高）
+      const _locked = (i) => {
+        if (i <= 0) return false;
+        const chg2 = closes[i - 1] > 0 ? (closes[i] - closes[i - 1]) / closes[i - 1] * 100 : 0;
+        return chg2 >= 9.5 && Math.abs(candles[i].close - (candles[i].high ?? candles[i].close)) < 0.01;
+      };
+      let limitUpLockedStreak = 0;
+      for (let i = n - 1; i > n - 6 && i > 0; i--) {
+        if (_locked(i)) limitUpLockedStreak++;
+        else break;
+      }
+
+      // cyclePeak：上一輪妖股週期（activatedAt 起到今天）的最高 high
+      // 用途：exit 時存入 prevPeak；舊 exited 記錄沒有 prevPeak 時的 fallback
+      let cyclePeak = null;
+      const actTs = record?.activatedAt ?? null;
+      if (actTs) {
+        let aIdx = 0;
+        for (let i = 0; i < n; i++) {
+          const ts = candles[i].time > 1e10 ? candles[i].time : candles[i].time * 1000;
+          if (ts >= actTs - 86400000) { aIdx = i; break; }
+        }
+        cyclePeak = Math.max(...highs.slice(aIdx));
+      } else {
+        cyclePeak = Math.max(...highs.slice(Math.max(0, n - 60)));
+      }
+
+      return {
+        belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop,
+        z6Triggered, isLimitDown,
+        // v2.9.2 重生機制
+        lastClose, lastLow, lastMA20, volRatio, limitUpLockedStreak, cyclePeak,
+      };
     })();
 
     // close < MA20 直接強制 exit（不依賴 screener W1 策略條件）
     let status = getYaoguStatus(code, signals, record, streak, klineCtx);
     if (!status) return null;
 
-    if (status.status !== 'exit' && record && candles?.length >= 20) {
+    // v2.9.2：rebirth 期間 close<MA20 是常態，不可被強制 exit；
+    //         剛升級的軋空型二波可能仍在 MA20 下（連續漲停回升中），同樣豁免
+    if (status.status !== 'exit' && status.status !== 'rebirth' && !status._rebirthPromo
+        && record && candles?.length >= 20) {
       const closes    = candles.map(c => c.close);
       const ma20arr   = calcMA(closes, 20);
       const lastMA20  = ma20arr[closes.length - 1];
@@ -812,11 +1115,12 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         streak:      activatedStreak,
         strength:    status.strength,
         status:      'active',
+        gen:         status._genCarry ?? 1,   // v2.9.2：隔代妖繼承 gen+1，全新股 gen=1
         lastUpdated: now,
         exitedAt:    null,
       };
       await putYaoguRecord(newRecord);
-      console.log(`[yaogu] 🟢 新妖股啟動: ${code} activatedAt=${new Date(activatedAt).toISOString().slice(0,10)} streak=${activatedStreak}`);
+      console.log(`[yaogu] 🟢 新妖股啟動: ${code} activatedAt=${new Date(activatedAt).toISOString().slice(0,10)} streak=${activatedStreak} gen=${newRecord.gen}`);
       // isNew 路徑也要寫 AppState，否則 _renderYaoguChip 拿不到 ys
       if (typeof AppState !== 'undefined') {
         if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
@@ -825,10 +1129,92 @@ export async function updateYaoguTracker(code, signals, candles = null) {
       return status;
     }
 
-    if (status.status === 'exit' && record?.status !== 'exited') {
-      const updated = { ...record, status: 'exited', exitedAt: now, lastUpdated: now };
+    // ── 重生機制寫入路徑（v2.9.2）──────────────────────────────
+    if (status.status === 'rebirth') {
+      if (status._rebirthFail) {
+        // 死貓跳確認 → 回 exited（exitedAt 保留原值，20 日窗口不刷新）
+        const updated = {
+          ...record, status: 'exited',
+          rebirthAt: null, rebirthLow: null, rebirthHold: 0,
+          lastUpdated: now,
+        };
+        await putYaoguRecord(updated);
+        console.log(`[yaogu] ⚪ 重生失敗: ${code}（窗口不刷新）`);
+        if (typeof AppState !== 'undefined') {
+          if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
+          AppState.yaoguStatus[code] = status;  // 顯示一次「重生失敗」，隔天自然消失
+        }
+        return status;
+      }
+      // 進入 / 維持 rebirth
+      const klineTs = (() => {
+        const c = candles?.[candles.length - 1];
+        if (!c) return now;
+        return c.time > 1e10 ? c.time : c.time * 1000;
+      })();
+      const updated = {
+        ...record,
+        status:      'rebirth',
+        rebirthAt:   record.rebirthAt ?? klineTs,
+        rebirthLow:  record.rebirthLow ?? klineCtx.lastLow ?? null,
+        prevPeak:    record.prevPeak ?? status.prevPeak ?? klineCtx.cyclePeak ?? null,
+        rebirthHold: status._holdCount ?? 0,
+        gen:         record.gen ?? 1,
+        lastUpdated: now,
+      };
       await putYaoguRecord(updated);
-      console.log(`[yaogu] 🔴 妖股出場確認: ${code}`);
+      if (status.isRebirthNew) {
+        console.log(`[yaogu] 🟣 重生觀察啟動: ${code} prevPeak=${updated.prevPeak} rebirthLow=${updated.rebirthLow}`);
+      }
+      if (typeof AppState !== 'undefined') {
+        if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
+        AppState.yaoguStatus[code] = status;
+      }
+      return status;
+    }
+
+    if (status._rebirthPromo) {
+      // 二波升級：activatedAt 改用 rebirthAt（二波天數從重亮日起算），gen+1
+      const updated = {
+        ...record,
+        status:      'active',
+        activatedAt: record.rebirthAt ?? now,
+        streak:      _tradingDaysSince(record.rebirthAt ?? now),
+        strength:    status.strength,
+        gen:         status.gen ?? ((record.gen ?? 1) + 1),
+        rebirthType: status._rebirthPromo,   // squeeze / turnover / control / breakout
+        rebirthAt:   null,
+        rebirthLow:  null,
+        rebirthHold: 0,
+        warningAt:   null,
+        exitedAt:    null,
+        lastUpdated: now,
+      };
+      await putYaoguRecord(updated);
+      console.log(`[yaogu] 🟢 二波升級: ${code} type=${status._rebirthPromo} gen=${updated.gen}`);
+      if (typeof AppState !== 'undefined') {
+        if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
+        AppState.yaoguStatus[code] = status;
+      }
+      return status;
+    }
+
+    if (status.status === 'exit' && record?.status !== 'exited') {
+      // v2.9.2：exit 時保存本輪週期最高點 → prevPeak（供重生判斷「突破前波高」）
+      //         並結算前段妖股持續天數 → prevCycleDays（重生觀察時顯示）
+      //         起點優先用 K 線回溯值（record.activatedAt 可能是殭屍垃圾）
+      const cyclePeakNow = klineCtx.cyclePeak ?? klineCtx.warningPeak ?? null;
+      const cycStart = _klineActivatedAt ?? record.activatedAt ?? null;
+      const updated = {
+        ...record, status: 'exited', exitedAt: now,
+        prevPeak:   Math.max(record.prevPeak ?? 0, cyclePeakNow ?? 0) || (record.prevPeak ?? null),
+        prevCycleStart: cycStart,
+        prevCycleDays:  cycStart ? _tradingDaysSince(cycStart) : null,
+        rebirthAt:  null, rebirthLow: null, rebirthHold: 0,
+        lastUpdated: now,
+      };
+      await putYaoguRecord(updated);
+      console.log(`[yaogu] 🔴 妖股出場確認: ${code} prevPeak=${updated.prevPeak}`);
       if (typeof AppState !== 'undefined') {
         if (!AppState.yaoguStatus) AppState.yaoguStatus = {};
         AppState.yaoguStatus[code] = status;
@@ -837,7 +1223,11 @@ export async function updateYaoguTracker(code, signals, candles = null) {
     }
 
     // 一般更新：streak 和 strength 每次都更新
-    if (record) {
+    // ⚠️ v2.9.2 殭屍防護：status='exit' 的轉移只能由上方專屬 exit 寫入區塊處理。
+    //   若 record 已是 exited 而 status 算出 exit（如 exited+W1 fall-through），
+    //   一般更新會把 status 寫成 'exit' 並保留 exitedAt → 殭屍記錄
+    //   （'exit' ≠ 'exited'，下次掃描走一般分支變 warning2，永遠卡死）。
+    if (record && status.status !== 'exit' && status.status !== 'exited') {
       const newWarningAt = (() => {
         const isWarning = status.status === 'warning1' || status.status === 'warning2';
         if (!isWarning) return null;
@@ -851,9 +1241,21 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         // warningAt：用上方預算的 newWarningAt（已含 K 線校正）
         const warningAt = newWarningAt;
 
-        // activatedAt 自動校正：若 K 線找到更早的觸發點，更新記錄
-        const correctedActivatedAt = (_klineActivatedAt && _klineActivatedAt < (record.activatedAt ?? Infinity))
-          ? _klineActivatedAt : record.activatedAt;
+        // activatedAt 自動校正（v2.9.2 改雙向）：
+        //   往更早修：K 線找到更早觸發點 → 採用（原行為）
+        //   往更晚修：record 值比 K 線回溯值早超過 10 個交易日 → 殭屍垃圾值
+        //            （如 6116 的 2026-01-07 → 113 天），以 K 線為準
+        //   差距 ≤10 天保留 record 值，避免 MAX_GAP 短斷點誤殺合法的舊起點
+        let correctedActivatedAt = record.activatedAt;
+        if (_klineActivatedAt) {
+          if (_klineActivatedAt < (record.activatedAt ?? Infinity)) {
+            correctedActivatedAt = _klineActivatedAt;
+          } else if (record.activatedAt
+              && _tradingDaysSince(record.activatedAt) - _tradingDaysSince(_klineActivatedAt) > 10) {
+            console.log(`[yaogu] 🧹 activatedAt 垃圾值校正: ${code} ${new Date(record.activatedAt).toISOString().slice(0,10)} → ${new Date(_klineActivatedAt).toISOString().slice(0,10)}`);
+            correctedActivatedAt = _klineActivatedAt;
+          }
+        }
         const correctedStreak = correctedActivatedAt ? _tradingDaysSince(correctedActivatedAt) : (streak ?? record.streak);
 
         const updated = {

@@ -45,6 +45,107 @@ export async function initScreener() {
   _bindStrategyEvents();
   await _renderSavedSets();
   await _renderSavedResultsList();
+  // 系統發現「🔍 個篩」在 hub lazy init 前就 dispatch → 事件已掉，從全域暫存消化
+  if (window.__screenerPresetConds) {
+    const d = window.__screenerPresetConds;
+    window.__screenerPresetConds = null;
+    _applyPresetConds(d);
+  }
+}
+
+// ── 系統發現/名人堂 → 個篩自訂條件 套用 ─────────────────────────────────
+// GAS 條件與前端同名不同義者（踩雷備忘：kd_k_min 反義、vol_surge/bb 系列門檻不同）
+const _GAS_SEMANTIC_WARN = new Set(['kd_k_min', 'vol_surge', 'bb_squeeze', 'bb_expanding']);
+
+// GAS 固定門檻等效值（heatmap_calc.gs _calcConditions 語意）：
+// 套用系統發現條件時用這些值，不用前端 default（門檻不同會讓命中數對不上，
+// 例：gain_10d GAS >5%，前端 default 10% → 直接篩掉一半）
+const _GAS_EQUIV_VALUES = {
+  gain_10d: 5,      // 近10日漲 >5%
+  loss_5d: 5,       // 近5日跌 >5%
+  rsi_min: 50,      // RSI ≥50
+  rsi_max: 80,      // RSI ≥80
+  kd_k_max: 80,     // K ≥80
+  vol_surge: 1.5,   // 量 ≥1.5x
+};
+
+function _applyPresetConds(detail, opts = {}) {
+  const { conds, name } = detail ?? {};
+  const autorun = opts.autorun !== false;
+  if (!Array.isArray(conds) || !conds.length) return;
+  _conditions = [];
+  const missing = [], warned = [];
+  for (const id of conds) {
+    const def = CONDITION_DEFS.find(d => d.id === id);
+    if (!def) { missing.push(id); continue; }
+    if (_GAS_SEMANTIC_WARN.has(id)) warned.push(id);
+    const value = (id in _GAS_EQUIV_VALUES) ? _GAS_EQUIV_VALUES[id] : def.default;
+    _conditions.push({ id, def, value });
+  }
+  _currentStrategyName = name ?? '系統發現';
+  _currentStrategyId   = null;
+  _renderConditionArea();
+
+  let note = `已套用：${name ?? conds.join('+')}`;
+  if (warned.length)  note += `｜⚠ ${warned.join(',')} 前端與 GAS 語意/門檻不同，結果可能與系統發現命中數有出入`;
+  if (missing.length) note += `｜❌ 個篩無此條件已略過：${missing.join(',')}`;
+  _updateStatus(note);
+  if (missing.length || !autorun) {
+    openScreenerModal();             // 缺漏或匯入模式 → 開 modal 讓使用者確認
+    _switchToCustomTabLocal();
+  } else {
+    requestAnimationFrame(() => _runScreener());  // 全數套用 → 直接開篩
+  }
+}
+
+/* 📥 匯入條件清單：解析貼上的文字，抽出合法 condition id（吃 lab-discovered 📋 複製格式或任意含 id 的文字） */
+function _injectImportUI() {
+  const pc = document.getElementById('scPanelCustom');
+  if (!pc || pc.querySelector('#scImportCondsBtn')) return;
+  const row = document.createElement('div');
+  row.style.cssText = 'margin-top:10px;border-top:1px solid var(--border,#222);padding-top:10px';
+  row.innerHTML = `
+    <button id="scImportCondsBtn" class="sc-add-cond-btn" type="button"
+      style="font-size:12px">📥 匯入條件清單</button>
+    <div id="scImportCondsBox" style="display:none;margin-top:8px">
+      <textarea id="scImportCondsTa" rows="5" placeholder="貼上系統發現 📋 複製的條件清單（或任何含 condition id 的文字）"
+        style="width:100%;background:var(--bg,#0d1117);color:var(--text,#ddd);border:1px solid var(--border,#333);border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+        <button id="scImportCondsApply" class="sc-add-cond-btn" type="button" style="font-size:12px">套用</button>
+      </div>
+      <div id="scImportCondsMsg" style="font-size:11px;color:var(--muted,#888);margin-top:4px"></div>
+    </div>`;
+  pc.appendChild(row);
+
+  row.querySelector('#scImportCondsBtn').addEventListener('click', () => {
+    const box = row.querySelector('#scImportCondsBox');
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+  });
+  row.querySelector('#scImportCondsApply').addEventListener('click', () => {
+    const ta  = row.querySelector('#scImportCondsTa');
+    const msg = row.querySelector('#scImportCondsMsg');
+    const text = ta.value ?? '';
+    // 抽 token、按出現順序比對合法 condition id，去重
+    const ids = new Set(CONDITION_DEFS.map(d => d.id));
+    const found = [];
+    for (const tok of text.match(/[a-z][a-z0-9_]+/gi) ?? []) {
+      const t = tok.toLowerCase();
+      if (ids.has(t) && !found.includes(t)) found.push(t);
+    }
+    if (!found.length) { msg.textContent = '❌ 沒有解析到任何合法 condition id'; return; }
+    _applyPresetConds({ conds: found, name: '匯入清單' }, { autorun: false });
+    msg.textContent = `✅ 已套用 ${found.length} 個條件：${found.join(', ')}（按「開始篩選」執行）`;
+  });
+}
+
+// 切到自訂條件 tab（與 _switchToStrategyTab 對稱）
+function _switchToCustomTabLocal() {
+  document.querySelectorAll('.sc-left-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.sc-left-tab[data-left-tab="custom"]')?.classList.add('active');
+  const pc = document.getElementById('scPanelCustom');
+  const ps = document.getElementById('scPanelStrategy');
+  if (pc) pc.style.display = '';
+  if (ps) ps.style.display = 'none';
 }
 
 // ─────────────────────────────────────────────
@@ -72,6 +173,11 @@ function _bindStrategyEvents() {
     if (_conditions.find(c => c.id === condId)) return;
     _conditions.push({ id: condId, def, value: value ?? def.default });
     _renderConditionArea();
+  });
+
+  document.addEventListener('screener:applyConds', (e) => {
+    window.__screenerPresetConds = null; // 已由事件接手，清掉暫存防 init 重複消化
+    _applyPresetConds(e.detail);
   });
 
   document.addEventListener('strategyApplied', (e) => {
@@ -248,6 +354,7 @@ export function openScreenerModal() {
   const bg = document.getElementById('screenerModalBg');
   if (bg) bg.style.display = 'flex';
   _renderConditionArea();
+  _injectImportUI();
   _renderSavedSets();
   // 預設顯示策略庫 tab（每次開啟都切回，不殘留上次的 custom）
   _switchToStrategyTab();

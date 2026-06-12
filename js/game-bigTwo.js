@@ -204,6 +204,69 @@
     return combos[0];
   }
 
+
+  /* ══════════════════════════════════════
+     四之二、強化 AI：手牌拆解 + 計牌
+  ══════════════════════════════════════ */
+  /* 混花順子候選（保護對子：消耗≥2組複數張的順子放棄） */
+  function findRunMixed(rest){
+    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
+    const vs=Object.keys(byV).map(Number).sort((a,b)=>a-b);
+    for(let i=0;i<vs.length;i++){
+      const run=[vs[i]];
+      for(let j=i+1;j<vs.length&&run.length<5;j++){
+        if(vs[j]===run[run.length-1]+1)run.push(vs[j]);else break;
+      }
+      if(run.length===5&&run[4]<=11){
+        const pairsUsed=run.filter(v=>byV[v].length>=2).length;
+        if(pairsUsed<=1)
+          return run.map(v=>[...byV[v]].sort((a,b)=>a.sv-b.sv)[0]);
+      }
+    }
+    return null;
+  }
+  /* 同花順候選 */
+  function findRunSuited(rest){
+    const bySuit={};rest.forEach(c=>{(bySuit[c.s]=bySuit[c.s]||[]).push(c);});
+    for(const s in bySuit){
+      const cs=[...bySuit[s]].sort((a,b)=>a.v-b.v);
+      for(let i=0;i+4<cs.length;i++){
+        if(cs[i+4].v-cs[i].v===4&&cs[i+4].v<=11&&new Set(cs.slice(i,i+5).map(c=>c.v)).size===5)
+          return cs.slice(i,i+5);
+      }
+    }
+    return null;
+  }
+  /* 手牌最優拆解：同花順→鐵支→順子→三條→對子→單張，回傳完整單位列表 */
+  function partitionHand(hand){
+    let rest=[...hand].sort((a,b)=>a.v-b.v||a.sv-b.sv);
+    const units=[];
+    const remove=cards=>{const ids=new Set(cards.map(cardId));rest=rest.filter(c=>!ids.has(cardId(c)));};
+    let run;
+    while((run=findRunSuited(rest))){units.push(run);remove(run);}
+    // 鐵支先取出，稍後配最小單張湊成五張炸彈
+    const fours=[];
+    const byV4={};rest.forEach(c=>{(byV4[c.v]=byV4[c.v]||[]).push(c);});
+    for(const v in byV4)if(byV4[v].length===4){fours.push([...byV4[v]]);remove(byV4[v]);}
+    while((run=findRunMixed(rest))){units.push(run);remove(run);}
+    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
+    for(const v in byV){
+      if(byV[v].length===3){units.push([...byV[v]]);remove(byV[v]);}
+      else if(byV[v].length===2){units.push([...byV[v]]);remove(byV[v]);}
+    }
+    // 鐵支配腳：最小剩餘單張；沒有單張就拆成兩對
+    for(const fc of fours){
+      if(rest.length){
+        const kicker=rest[0];
+        units.push([...fc,kicker]);remove([kicker]);
+      } else {
+        units.push(fc.slice(0,2));units.push(fc.slice(2,4));
+      }
+    }
+    rest.forEach(c=>units.push([c]));
+    return units.map(cards=>({cards,cl:classify(cards)})).filter(u=>u.cl);
+  }
+
   /* ══════════════════════════════════════
      五、IndexedDB 籌碼存取
   ══════════════════════════════════════ */
@@ -276,6 +339,7 @@
       let tableFade=null;     // 清桌淡出 {cards,by,alpha}
       let dealT=0;            // 發牌動畫計時
       let sortMode='rank';    // rank | suit
+      let playedRecord=[];    // 已亮牌（計牌用，AI 不偷看手牌）
       let fastMode=false;     // 玩家完牌後加速模擬
       let fr=0;
       let alive=true;         // init 實例存活旗標（防舊 listener / loop 殘留）
@@ -316,6 +380,7 @@
         lastAction=['','','',''];
         animCards=[]; tableFade=null;
         mustFirst=true;
+        playedRecord=[];
         fastMode=false;
         msgLog=[];
         dealT=0;
@@ -347,6 +412,7 @@
         const ids=cards.map(cardId);
         hands[pidx]=hands[pidx].filter(c=>!ids.includes(cardId(c)));
         played=cl; playedBy=pidx; passCount=0; mustFirst=false;
+        playedRecord.push(...cards);
         tableFade=null;
         lastAction[pidx]=`出${TYPE_ZH[cl.type]}`;
 
@@ -407,6 +473,69 @@
         if(currentPlayer!==0)scheduleAI();
       }
 
+      /* 該單張是否為「場上王牌」：所有未現身的牌都壓不過它（公平計牌：只看已亮牌+自己手牌） */
+      function isBossSingle(card,pidx){
+        const seen=new Set([...playedRecord,...hands[pidx]].map(cardId));
+        const k=card.v*4+card.sv;
+        for(const s of SUITS)for(const r of RANKS){
+          if(seen.has(r+s))continue;
+          if(RANK_VAL[r]*4+SUIT_VAL[s]>k)return false;
+        }
+        return true;
+      }
+
+      /**
+       * 強化 AI 決策：
+       *  1. 一手出完直接贏
+       *  2. 殘局（≤8張）：出完此手後剩牌恰為一個合法牌型 → 兩步收尾
+       *  3. 領出：優先丟「完整單位」中最小的；有人快出完改領多張牌型或王牌單張保控制權
+       *  4. 壓牌：完整單位優先最小可壓；需拆牌時只有在危險或殘局才拆，否則 Pass 保牌型
+       */
+      function smartAiPlay(pidx,mustC3){
+        const hand=hands[pidx];
+        const combos=legalCombos(hand,played,mustC3);
+        if(!combos.length)return null;
+        const finish=combos.find(c=>c.cards.length===hand.length);
+        if(finish)return finish;
+        if(hand.length<=8){
+          for(const c of combos){
+            const ids=new Set(c.cards.map(cardId));
+            const restCards=hand.filter(x=>!ids.has(cardId(x)));
+            if(restCards.length&&classify(restCards))return c;
+          }
+        }
+        const units=partitionHand(hand);
+        const ukey=cs=>cs.map(cardId).sort().join(',');
+        const unitSet=new Set(units.map(u=>ukey(u.cards)));
+        const isWhole=c=>unitSet.has(ukey(c.cards));
+        const danger=minOppLen(pidx)<=2;
+        const whole=combos.filter(isWhole);
+        if(!played){
+          const pool=whole.length?whole:combos;
+          if(danger){
+            // 有人快出完：領王牌單張保控制權 > 多張牌型 > 最大單張
+            const boss=pool.find(c=>c.cards.length===1&&isBossSingle(c.cards[0],pidx));
+            if(boss)return boss;
+            const multi=pool.filter(c=>c.cards.length>=2);
+            if(multi.length)return multi[0];
+            return pool[pool.length-1];
+          }
+          return pool[0];
+        }
+        if(whole.length){
+          if(danger)return whole[whole.length-1];
+          const pick=whole[0];
+          // 非危急時不輕易動用含2的單張/對子，留一手（也給別人活路）
+          if(pick.cl.key>=48&&(pick.cl.type==='single'||pick.cl.type==='pair')&&Math.random()<0.45)return null;
+          return pick;
+        }
+        if(danger||hand.length<=6)return combos[0];
+        // 拆單張/對子去壓低牌可接受；拆五張牌型或動用炸彈不值得 → Pass
+        const cheap=combos.find(c=>c.cards.length<=2&&c.cl.type!=='fourOfAKind');
+        if(cheap&&(played.type==='single'||played.type==='pair')&&played.key<8*4)return cheap;
+        return null;
+      }
+
       function scheduleAI(){
         aiThinkTimer=fastMode?5:aiThinkDelay+Math.floor(Math.random()*40);
       }
@@ -418,7 +547,7 @@
           const p=currentPlayer;
           if(finished.includes(p)){nextPlayer();continue;}
           const mustC3=mustFirst&&hands[p].some(c=>c.r==='3'&&c.s==='♣');
-          const r=aiPlay(hands[p],played,mustC3,minOppLen(p));
+          const r=smartAiPlay(p,mustC3);
           if(r)playCards(p,r.cards); else pass(p);
         }
         animCards=[];
@@ -940,7 +1069,7 @@
           aiThinkTimer--;
           if(aiThinkTimer<=0){
             const mustC3=mustFirst&&hands[currentPlayer].some(c=>c.r==='3'&&c.s==='♣');
-            const result=aiPlay(hands[currentPlayer],played,mustC3,minOppLen(currentPlayer));
+            const result=smartAiPlay(currentPlayer,mustC3);
             if(result)playCards(currentPlayer,result.cards);
             else pass(currentPlayer);
             scheduleAI();
