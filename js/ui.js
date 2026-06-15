@@ -91,7 +91,30 @@ export function updateHeader(code, quote) {
   document.getElementById('sLow').textContent     = fmt(quote.low);
   document.getElementById('sPrev').textContent    = fmt(quote.prev);
   document.getElementById('sVol').textContent     = fmtVol(quote.volume);
+  renderRSBadge(code);
   return { chg, chgPct };
+}
+
+// ─────────────────────────────────────────────
+// T-1 RS Rating 角標（從 snapshot 讀 rs_v；≥87 金框）
+// ─────────────────────────────────────────────
+export function renderRSBadge(code) {
+  const el = document.getElementById('shRSBadge');
+  if (!el) return;
+  const snap = window.__snapshot;
+  const rsv = snap?.stocks?.[code]?.rs_v;
+  if (rsv == null) { el.style.display = 'none'; return; }
+  // ≥95 精英(金) / ≥87 強勢(金框) / 其餘 中性
+  let cls = 'sh-rs-badge';
+  if (rsv >= 95) cls += ' rs-elite';
+  else if (rsv >= 87) cls += ' rs-strong';
+  const lineHigh = snap?.stocks?.[code]?.rs_line_high === true;
+  el.className = cls;
+  el.textContent = `RS ${rsv}` + (lineHigh ? ' ↗' : '');
+  el.title = `相對強度 ${rsv}（強於 ${rsv}% 個股）` +
+             (rsv >= 95 ? '｜精英級' : rsv >= 87 ? '｜強勢級' : '') +
+             (lineHigh ? '｜RS 線創 60 日新高（領先價格的最強前兆）' : '');
+  el.style.display = '';
 }
 
 // ─────────────────────────────────────────────

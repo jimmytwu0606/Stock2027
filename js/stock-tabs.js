@@ -1306,7 +1306,7 @@ export async function renderStockSignals(candles, code) {
     // 只有 ys 有實質內容（status 不是 null/watching+無 streak）才認為是最終結果
     // 避免 stock-tabs 自己的 updateYaoguTracker（signals 無 X，回 null/watching）
     // 先到並移除監聽，導致後來 signal-scan.js 的完整結果收不到
-    const isSubstantial = evtYs && (evtYs.status === 'active' || evtYs.status === 'warning1' || evtYs.status === 'warning2' || evtYs.status === 'exit' || evtYs.status === 'exited');
+    const isSubstantial = evtYs && (evtYs.status === 'active' || evtYs.status === 'warning1' || evtYs.status === 'warning2' || evtYs.status === 'exit' || evtYs.status === 'exited' || evtYs.status === 'rebirth');
     if (!isSubstantial) return;  // 繼續等更完整的 event
     document.removeEventListener('yaoguUpdated', _onYaoguUpdated);
 
@@ -1447,7 +1447,13 @@ async function _renderYaoguChip(code, signals, candles = null) {
       });
       const lastMA20  = ma20arr[closes.length - 1];
       const lastClose = closes[closes.length - 1];
-      if (lastMA20 && lastClose < lastMA20 && record) forceExit = true;
+      // v2.9.2 重生豁免：rebirth 期間 close<MA20 是常態，不可蓋成出場確認；
+      // 剛升級的軋空型二波（_rebirthPromo）可能仍在 MA20 下回升中，同樣豁免
+      const ys0 = AppState.yaoguStatus?.[code] ?? null;
+      const rebirthGuard = record?.status === 'rebirth'
+        || record?.status === 'exited'   // 已出場 → 顯示 ⚫ 看板，不重複蓋紅色出場確認
+        || (ys0 && (ys0.status === 'rebirth' || ys0._rebirthPromo));
+      if (lastMA20 && lastClose < lastMA20 && record && !rebirthGuard) forceExit = true;
     }
 
     if (forceExit) {
@@ -1499,8 +1505,48 @@ async function _renderYaoguChip(code, signals, candles = null) {
          </div>`
       : '';
 
+    // v2.9.2 rebirth 狀態：紫色 chip（重生失敗時 ys.color 為灰，同分支）
+    // 重生防線：rebirthLow（反彈起點低點）為停損基準，跌破=死貓跳確認
+    if (ys.status === 'rebirth') {
+      const rbLow = record?.rebirthLow ?? ys.rebirthLow ?? null;
+      const liveP = window.__priceCache?.[code]?.price ?? candles?.[candles.length - 1]?.close ?? null;
+      const rbLineHtml = (rbLow && liveP)
+        ? `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(167,139,250,.25)">
+             <span class="yaogu-chip-label" style="color:#a78bfa">🛡 重生防線 ${rbLow.toFixed(2)}</span>
+             <span class="yaogu-chip-desc" style="color:var(--muted)">距 ${(((liveP - rbLow) / rbLow) * 100).toFixed(1)}%，跌破=死貓跳確認</span>
+           </div>`
+        : '';
+      // 重生防線畫到 K 線圖（用既有 guardLine 機制，守本模式紅虛線）
+      import('./chart-exit-lines.js').then(m => {
+        if (rbLow) m.setExitLines({ guardLine: rbLow, guardMode: 'capital' });
+        else m.clearExitLines();
+      }).catch(() => {});
+      el.innerHTML = `
+        <div class="yaogu-chip yaogu-chip-dual" style="border-color:${ys.color}">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label" style="color:${ys.color}">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
+          </div>
+          ${xRowHtml}
+          ${rbLineHtml}
+        </div>`;
+      return;
+    }
+
+    // v2.9.2 exited 看板：灰色，顯示重生倒數（出場後 20 日窗口內）
+    if (ys.status === 'exited') {
+      el.innerHTML = `
+        <div class="yaogu-chip" style="border-color:#9ca3af">
+          <div class="yaogu-chip-row-active">
+            <span class="yaogu-chip-label" style="color:#9ca3af">${ys.label}</span>
+            <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.desc ?? ''}</span>
+          </div>
+        </div>`;
+      return;
+    }
+
     // exit 狀態：紅色單行，最高優先顯示
-    if (ys.status === 'exit' || ys.status === 'exited') {
+    if (ys.status === 'exit') {
       el.innerHTML = `
         <div class="yaogu-chip" style="border-color:#ef4444;color:#ef4444">
           <div class="yaogu-chip-row-active">
@@ -1517,7 +1563,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
       el.innerHTML = `
         <div class="yaogu-chip yaogu-chip-dual" style="border-color:${ys.color}">
           <div class="yaogu-chip-row-active">
-            <span class="yaogu-chip-label" style="color:#4ade80">${ys.activeLabel}</span>
+            <span class="yaogu-chip-label" style="color:#8b949e">${ys.activeLabel}</span>
             <span class="yaogu-chip-desc" style="color:var(--muted)">${ys.activeDesc ?? ''}</span>
           </div>
           <div class="yaogu-chip-row-warning">

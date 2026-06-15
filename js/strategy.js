@@ -21,7 +21,7 @@
 //
 // 升版號的副作用:所有使用者下次開 app 自動清快取重掃(無痛)
 // ─────────────────────────────────────────────
-export const STRATEGY_VERSION = 15;  // v2.9.4 — S46 口袋支點（Pocket Pivot）實驗導入
+export const STRATEGY_VERSION = 16;  // v2.9.5 — T-1 RS Rating 三 cond（rs_strong/rs_elite/rs_line_high）
 
 export const STRATEGIES = [
   // ══════════════════════════════════════════

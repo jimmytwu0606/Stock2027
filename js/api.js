@@ -19,6 +19,6 @@ export { fetchFinMindRevenue, fetchEarningsDate, fetchFundamentals, fetchFundame
          fetchFundamentalsBatch, fetchHealthData, fetchChipData, fetchForeignBuyDays,
          fetchVerifyData, fetchFundSnapshot, fetchChipSnapshot } from './api-fund.js';
 export { fetchNews, fetchAnnouncements } from './api-news.js';
-export { fetchMisIntraday, fetchTWSEPrices } from './api-prices.js';
+export { fetchMisIntraday, fetchTWSEPrices, isMisCooling, misCooldownRemainSec } from './api-prices.js';
 export { fetchHealthSnapshot, fetchSnapshot, fetchCondHistory, runSnapshotScreener } from './api-snapshot.js';
 

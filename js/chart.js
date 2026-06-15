@@ -14,6 +14,7 @@
  */
 
 import { AppState } from './state.js';
+import { computeConviction } from './conviction.js';
 import { calcMA, calcKD, calcRSI, calcMACD, calcBollinger,
          calcEMA, calcGMMA, calcSAR, calcDMI, calcPSY, calcRCI, calcHV, calcEnvelope,
          calcIchimoku } from './indicators.js';
@@ -165,6 +166,7 @@ export function initCharts() {
   const psyEl  = document.getElementById('psyChart');
   const rciEl  = document.getElementById('rciChart');
   const hvEl   = document.getElementById('hvChart');
+  const convEl = document.getElementById('convChart');
 
   // ─────────────────────────────────────────────────────────────
   // 固定高度策略 (v3 — 0523 修正副圖擠壓)
@@ -179,7 +181,7 @@ export function initCharts() {
   const SUB_CHART_H = 135;   // ind-panel 內 chart 部份高度 (160 - label ~25)
 
   // 算出啟用了幾個副圖
-  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV']
+  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV']
     .filter(k => AppState.indicators[k]).length;
 
   // 寫入 CSS 變數讓 chart-area 撐高
@@ -210,6 +212,7 @@ export function initCharts() {
   if (psyEl) _charts.psy = LightweightCharts.createChart(psyEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (rciEl) _charts.rci = LightweightCharts.createChart(rciEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (hvEl)  _charts.hv  = LightweightCharts.createChart(hvEl,  { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
+  if (convEl) _charts.conviction = LightweightCharts.createChart(convEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.12, bottom: 0.12 } } });
 
   _charts.main.applyOptions({
     watermark: {
@@ -231,7 +234,7 @@ export function initCharts() {
 // ─────────────────────────────────────────────
 function _syncCrosshair() {
   const all = [_charts.main, _charts.kd, _charts.rsi, _charts.macd,
-               _charts.dmi, _charts.psy, _charts.rci, _charts.hv].filter(Boolean);
+               _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction].filter(Boolean);
   all.forEach((chart, idx) => {
     chart.subscribeCrosshairMove(param => {
       if (!param.time) return;
@@ -305,10 +308,11 @@ export function renderChartData(candles) {
   if (AppState.indicators.PSY)  _renderPSY(candles, closes);
   if (AppState.indicators.RCI)  _renderRCI(candles, closes);
   if (AppState.indicators.HV)   _renderHV(candles, closes);
+  if (AppState.indicators.CONV) _renderConviction(candles);
 
   try {
     const range = _charts.main.timeScale().getVisibleRange();
-    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv]
+    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction]
       .filter(Boolean)
       .forEach(c => c.timeScale().setVisibleRange(range));
   } catch (e) { /**/ }
@@ -1068,6 +1072,61 @@ function _renderHV(candles, closes) {
   );
 }
 
+// Advanced 8 — Conviction C 曲線副窗
+function _renderConviction(candles) {
+  if (!_charts.conviction) return;
+  // C 需要 z 窗 60 + 暖機，至少 ~80 根才有意義 → 短週期（5日/1月/3月）資料不足
+  const labelEl = document.querySelector('#convPanel .ind-panel-label');
+  if (candles.length < 90) {
+    if (labelEl) labelEl.innerHTML =
+      '<span style="color:var(--hint)">⚡ 確信度 C 需要較長資料（z 窗 60 日），請切換到 6月 / 1年 / 2年 週期</span>';
+    // 清掉舊線
+    ['conviction', 'convP80', 'convP20', 'convZero'].forEach(k => {
+      if (_series[k]) { try { _charts.conviction.removeSeries(_series[k]); } catch (e) {} _series[k] = null; }
+    });
+    return;
+  }
+  // 恢復正常 label
+  if (labelEl) labelEl.innerHTML =
+    '<span style="color:#fbbf24">● C 確信度</span>' +
+    '<span style="color:rgba(96,165,250,.6)">▬ 股性帶 P20-P80</span>' +
+    '<span style="color:var(--hint);margin-left:4px">動能×量能流×勝率 · 觀察工具非進場訊號</span>';
+  const bars = candles.map(c => ({
+    open: c.open, high: c.high, low: c.low, close: c.close,
+    volume: c.volume ?? c.value ?? 0,
+  }));
+  const res = computeConviction(bars);
+  if (!res.C.length) return;
+
+  // P20-P80 股性帶（藍色淡帶，先畫帶再畫線，帶在底層）
+  const upperData = candles.map((c, i) => res.p80[i] != null ? { time: c.time, value: res.p80[i] } : null).filter(Boolean);
+  const lowerData = candles.map((c, i) => res.p20[i] != null ? { time: c.time, value: res.p20[i] } : null).filter(Boolean);
+  // 帶的上下界線（淡，本身不顯眼，靠填色）
+  _series.convP80 = _charts.conviction.addLineSeries({ color: 'rgba(96,165,250,0.25)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convP20 = _charts.conviction.addLineSeries({ color: 'rgba(96,165,250,0.25)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convP80.setData(upperData);
+  _series.convP20.setData(lowerData);
+
+  // 0 軸虛線（C 正負分界）
+  _series.convZero = _charts.conviction.addLineSeries({ color: 'rgba(255,255,255,0.18)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convZero.setData(candles.map(c => ({ time: c.time, value: 0 })));
+
+  // C 曲線（琥珀 #fbbf24）
+  _series.conviction = _charts.conviction.addLineSeries({ color: '#fbbf24', lineWidth: 1.6, priceLineVisible: false, lastValueVisible: true, title: 'C' });
+  _series.conviction.setData(
+    candles.map((c, i) => res.C[i] != null ? { time: c.time, value: +res.C[i].toFixed(3) } : null).filter(Boolean)
+  );
+
+  // Guard 事件標記（guard 由 1 掉到 veto 的那一日 = 爆量長黑硬否決）
+  const markers = [];
+  for (let i = 1; i < res.guard.length; i++) {
+    if (res.guard[i] < 1 && res.guard[i - 1] >= 0.95 && res.C[i] != null) {
+      markers.push({ time: candles[i].time, position: 'belowBar', color: '#ef5350', shape: 'arrowDown', text: 'Guard' });
+    }
+  }
+  if (markers.length) _series.conviction.setMarkers(markers);
+}
+
 // ── Export helpers for Advanced 5 sub-charts ──
 export function getDmiChart()  { return _charts.dmi  || null; }
 export function getPsyChart()  { return _charts.psy  || null; }
@@ -1088,7 +1147,7 @@ export function setChartFixed(fixed) {
  */
 export function setSubChartsActive(active) {
   const subCharts = [_charts.kd, _charts.rsi, _charts.macd,
-                     _charts.dmi, _charts.psy, _charts.rci, _charts.hv].filter(Boolean);
+                     _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction].filter(Boolean);
   subCharts.forEach(c => {
     try {
       c.applyOptions({

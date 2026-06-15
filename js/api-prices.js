@@ -11,6 +11,36 @@ import { _nameCache } from './api-names.js';
 // ─────────────────────────────────────────────
 // 盤中即時批次報價（mis.twse.com.tw）
 // ─────────────────────────────────────────────
+
+// ── MIS 熔斷（v2.9.3）────────────────────────────────────────────
+// 背景：MIS 對 Cloudflare 出口 IP 限流/封鎖（2026-06-12 全 502 實證）。
+// Worker 打 Yahoo/R2 正常、只有 MIS 502 = MIS 端 ban，不是 Worker 故障。
+// 持續每 15s 撞牆只會延長 ban，必須熔斷退避。
+const MIS_FAIL_THRESHOLD = 3;                 // 連續 N 輪「整輪零回應」→ 熔斷
+const MIS_COOLDOWN_MS    = 10 * 60 * 1000;    // 冷卻 10 分鐘
+let   _misFailStreak    = 0;
+let   _misDisabledUntil = 0;
+let   _misCoolLogged    = false;
+
+export function isMisCooling() {
+  return Date.now() < _misDisabledUntil;
+}
+export function misCooldownRemainSec() {
+  const r = _misDisabledUntil - Date.now();
+  return r > 0 ? Math.ceil(r / 1000) : 0;
+}
+function _onMisRoundSuccess() {
+  _misFailStreak = 0;
+  _misCoolLogged = false;
+}
+function _onMisRoundFail() {
+  _misFailStreak++;
+  if (_misFailStreak >= MIS_FAIL_THRESHOLD) {
+    _misDisabledUntil = Date.now() + MIS_COOLDOWN_MS;
+    _misFailStreak = 0;
+    console.warn(`[api] MIS 連續 ${MIS_FAIL_THRESHOLD} 輪零回應（出口 IP 疑似被 MIS 限流），冷卻 ${MIS_COOLDOWN_MS / 60000} 分鐘，期間沿用快取價格`);
+  }
+}
 /**
  * fetchMisIntraday(codes)
  * 用 TWSE mis API 一次拉多檔盤中即時報價，Worker 白名單已包含此網域。
@@ -27,10 +57,32 @@ import { _nameCache } from './api-names.js';
 export async function fetchMisIntraday(codes) {
   if (!codes || codes.length === 0) return {};
 
+  // ── MIS 熔斷短路（v2.9.3）：冷卻期間不打，小批次改走 Yahoo fallback ──
+  if (isMisCooling()) {
+    if (!_misCoolLogged) {
+      console.warn(`[api] MIS 冷卻中（剩 ${misCooldownRemainSec()}s），跳過輪詢`);
+      _misCoolLogged = true;
+    }
+    // 小批次（個股輪詢 ≤3 檔）→ Yahoo quote fallback（Worker 打 Yahoo 沒被擋）
+    // 大批次（自選清單）不走 Yahoo（37 檔逐檔打會撞 Yahoo 限流），沿用快取
+    if (codes.length <= 3) {
+      return _yahooQuoteFallback(codes);
+    }
+    return {};
+  }
+
+  // 本輪是否有任何一次網路層成功（即使資料為空也算成功——盤後/停牌是正常空）
+  let _roundNetOk = false;
+
   // ── 內部：打一次 MIS 批次，解析回傳 ──────────────────────────────────────
+  // ⚠️ v2.9.3：MIS 改 fastFail（只試 Worker 一次）。
+  //   公開 proxy 對 MIS URL 已實證全滅：codetabs 對含 | 的 URL 回 400、
+  //   allorigins 無 CORS header。fallback 純粹浪費時間 + 刷 log。
+  //   （注意：fetchTWSEPrices 的批次操作仍禁用 fastFail，不在此列——那是另一條規則）
   async function _fetchBatch(exCh) {
     const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(exCh)}&json=1&delay=0`;
-    const text = await fetchWithProxy(url, 8000);
+    const text = await fetchWithProxy(url, 8000, { fastFail: true });
+    _roundNetOk = true;
     if (!text || text.trim().startsWith('<')) return {};
     let data;
     try { data = JSON.parse(text); } catch (_) { return {}; }
@@ -81,8 +133,18 @@ export async function fetchMisIntraday(codes) {
       const exCh1 = batch.map(code =>
         `${_otcSet.has(code) ? 'otc' : 'tse'}_${code}.tw`
       ).join('|');
-      const map1 = await _fetchBatch(exCh1).catch(() => ({}));
+      // ⚠️ v2.9.3：主批網路失敗 → 直接跳過本批补送。
+      //   失敗時 missed = 整批 → 补送又打一輪 = 請求翻倍，
+      //   在被 MIS 限流時等於自己 DDoS 自己加速被 ban。
+      let map1 = {};
+      let _batchNetFail = false;
+      try { map1 = await _fetchBatch(exCh1); }
+      catch (_) { _batchNetFail = true; }
       Object.assign(result, map1);
+      if (_batchNetFail) {
+        if (i + BATCH < codes.length) await new Promise(r => setTimeout(r, 200));
+        continue;  // 本批放棄，下一批（熔斷會在輪末結算）
+      }
 
       // ── 第二次:第一次沒拿到的 code,雙前綴並送 ────────────────────────
       // ⚠️ 踩雷備忘(永久):
@@ -114,7 +176,9 @@ export async function fetchMisIntraday(codes) {
         for (let j = 0; j < exChItems.length; j += MISSED_BATCH * 2) {
           const sub = exChItems.slice(j, j + MISSED_BATCH * 2);
           const exCh2 = sub.join('|');
-          const map2 = await _fetchBatch(exCh2).catch(() => ({}));
+          let map2 = {};
+          try { map2 = await _fetchBatch(exCh2); }
+          catch (_) { break; }  // v2.9.3：补送網路失敗 → 中止补送（網路已死，別再打）
           Object.assign(result, map2);
           if (j + MISSED_BATCH * 2 < exChItems.length) {
             await new Promise(r => setTimeout(r, 150));  // 拆批之間短暫間隔
@@ -130,7 +194,46 @@ export async function fetchMisIntraday(codes) {
     }
   }
 
+  // ── 熔斷結算（v2.9.3）：整輪零網路回應 → 計一次失敗 ──
+  if (_roundNetOk) _onMisRoundSuccess();
+  else _onMisRoundFail();
+
   return result;
+}
+
+/**
+ * Yahoo quote fallback（v2.9.3）— MIS 冷卻期間的小批次替代
+ * 只用於 ≤3 檔（個股輪詢），延遲 15-20 分鐘但盤後工具可接受。
+ * fetchQuote 來自 api-kline.js，動態 import 避免循環依賴。
+ * 任一步驟失敗都靜默跳過（fallback 不該製造新 log 風暴）。
+ */
+async function _yahooQuoteFallback(codes) {
+  const out = {};
+  try {
+    const { fetchQuote } = await import('./api-kline.js');
+    if (typeof fetchQuote !== 'function') return out;
+    for (const code of codes) {
+      try {
+        const q = await fetchQuote(toYahooSymbol(code));
+        const price = q?.price ?? q?.regularMarketPrice ?? null;
+        const prev  = q?.prev ?? q?.prevClose ?? q?.previousClose ?? null;
+        if (price == null || !(price > 0)) continue;
+        const p     = Number(price);
+        const pv    = Number(prev) > 0 ? Number(prev) : p;
+        out[code] = {
+          price: p, prev: pv,
+          chgPct: pv > 0 ? (p - pv) / pv * 100 : 0,
+          volume: Math.round(Number(q?.volume ?? 0) / 1000) || 0,
+          name: q?.name ?? code,
+          open: Number(q?.open) || p,
+          high: Number(q?.high) || p,
+          low:  Number(q?.low)  || p,
+          _src: 'yahoo',  // 標記來源（延遲報價）
+        };
+      } catch (_) { /* 單檔失敗跳過 */ }
+    }
+  } catch (_) { /* import 失敗整體放棄 */ }
+  return out;
 }
 
 // ─────────────────────────────────────────────

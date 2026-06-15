@@ -53,14 +53,19 @@
   /* ══════════════════════════════════════
      一、常數
   ══════════════════════════════════════ */
-  const SUITS = ['♣','♦','♥','♠']; // 0梅花(小)~3黑桃(大)
-  const RANKS = ['3','4','5','6','7','8','9','10','J','Q','K','A','2']; // 0最小~12最大
-  const RANK_VAL = {}; RANKS.forEach((r,i)=>RANK_VAL[r]=i);
-  const SUIT_VAL = {}; SUITS.forEach((s,i)=>SUIT_VAL[s]=i);
+  /* ══ 共用核心：牌規/AI/存檔/牌繪 由 game-bigTwoBloody-core.js 提供（window.__BB）══ */
+  const BB=window.__BB;
+  const {SUITS,RANKS,RANK_VAL,SUIT_VAL,TYPE_ZH,EQ_NAMES,
+    makeDeck,shuffle,cardId,sortByRank,sortBySuit,handPenalty,
+    classify,canBeat,legalCombos,partitionHand,rollSlots}=BB;
+  /* 合併式存檔：persist 只併入傳入欄位，冒險模式的 adv 不會被洗掉 */
+  const loadChips=BB.loadShared;
+  const saveChips=BB.persist;
 
   const PLAYERS = ['玩家','小明AI','阿財AI','老K AI'];
   const AVATARS = ['😺','🤖','🦊','🐯'];
   const RANK_TITLES = ['👑 國王','🎩 貴族','🧑 平民','⛓ 奴隸'];
+  const RANK_EMOJI  = ['👑','🎩','🧑','⛓'];
 
   /* 魔王池：憤怒滿百降臨時加權抽一隻。技能模組化，王=參數組合 */
   const BOSSES=[
@@ -80,317 +85,6 @@
     for(const b of BOSSES){r-=b.w;if(r<=0)return b;}
     return BOSSES[0];
   }
-  const EQ_NAMES={weapon:'🗡 弒神之刃',armor:'🛡 暗黑骨甲',helm:'👹 暗黑面具',ring:'💍 喬丹之石',amulet:'📿 淨化護符'};
-  /* 裝備插槽：50% 無槽，否則 1~6（低槽機率高） */
-  function rollSlots(){
-    if(Math.random()<0.5)return 0;
-    const w=[30,25,20,12,8,5];
-    let r=Math.random()*100;
-    for(let i=0;i<6;i++){r-=w[i];if(r<=0)return i+1;}
-    return 1;
-  }
-  const RANK_EMOJI  = ['👑','🎩','🧑','⛓'];
-  const TYPE_ZH = {single:'單張',pair:'對子',triple:'三條',straight:'順子',
-    fullHouse:'葫蘆',fourOfAKind:'鐵支',straightFlush:'同花順'};
-
-  /* ══════════════════════════════════════
-     二、牌組工具
-  ══════════════════════════════════════ */
-  function makeDeck(){
-    const d=[];
-    for(const s of SUITS) for(const r of RANKS) d.push({s,r,v:RANK_VAL[r],sv:SUIT_VAL[s]});
-    return d;
-  }
-  function shuffle(arr){
-    for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
-    return arr;
-  }
-  function cardId(c){return c.r+c.s;}
-  function sortByRank(h){h.sort((a,b)=>a.v!==b.v?a.v-b.v:a.sv-b.sv);}
-  function sortBySuit(h){h.sort((a,b)=>a.sv!==b.sv?a.sv-b.sv:a.v-b.v);}
-
-  /* 血腥罰金：每張5元；13張沒出×3（取代10張規則）；≥10張×2；每張2再×2 */
-  function handPenalty(hand){
-    let base=hand.length*5;
-    if(hand.length>=13)base*=3;
-    else if(hand.length>=10)base*=2;
-    for(const c of hand)if(c.r==='2')base*=2;
-    return base;
-  }
-
-  /* ══════════════════════════════════════
-     三、牌型判斷
-  ══════════════════════════════════════ */
-  function classify(cards){
-    const n=cards.length;
-    if(n===0)return null;
-    const sorted=[...cards].sort((a,b)=>a.v!==b.v?a.v-b.v:a.sv-b.sv);
-
-    if(n===1)return{type:'single',cards:sorted,key:sorted[0].v*4+sorted[0].sv};
-    if(n===2){
-      if(sorted[0].v===sorted[1].v)return{type:'pair',cards:sorted,key:sorted[1].v*4+sorted[1].sv};
-      return null;
-    }
-    if(n===3){
-      if(sorted[0].v===sorted[1].v&&sorted[1].v===sorted[2].v)
-        return{type:'triple',cards:sorted,key:sorted[2].v*4+sorted[2].sv};
-      return null;
-    }
-    if(n===5){
-      const flush=sorted.every(c=>c.s===sorted[0].s);
-      const straight=isStraight(sorted);
-      if(flush&&straight){
-        // 同花順：以順子大小為主，花色為輔（取頂牌花色）
-        return{type:'straightFlush',cards:sorted,key:straightKey(sorted)*4+SUIT_VAL[sorted[0].s]};
-      }
-      const four=findFour(sorted);
-      if(four!==null)
-        return{type:'fourOfAKind',cards:sorted,key:four};
-      const full=findFullHouse(sorted);
-      if(full!==null)
-        return{type:'fullHouse',cards:sorted,key:full};
-      if(straight)
-        return{type:'straight',cards:sorted,key:straightKey(sorted)*4+sorted[4].sv};
-      // 純同花（非順）不是合法牌型
-      return null;
-    }
-    return null;
-  }
-
-  /*
-   * 順子合法性：
-   *   一般連續順（34567~10JQKA）：vals 連續且不含2（vals[4]<=11）
-   *   A2345：vals=[0,1,2,11,12]（最小，key=-1）
-   *   23456：vals=[0,1,2,3,12]（最大，key=14）
-   *   JQKA2（vals=[8,9,10,11,12] 連續）→ 不合法
-   */
-  function isStraight(sorted){
-    const vals=sorted.map(c=>c.v);
-    const normal=vals.every((v,i)=>i===0||v===vals[i-1]+1);
-    if(normal)return vals[4]<=11; // 排除 JQKA2
-    if(vals[0]===0&&vals[1]===1&&vals[2]===2&&vals[3]===3&&vals[4]===12)return true; // 23456
-    if(vals[0]===0&&vals[1]===1&&vals[2]===2&&vals[3]===11&&vals[4]===12)return true; // A2345
-    return false;
-  }
-  function straightKey(sorted){
-    const vals=sorted.map(c=>c.v);
-    if(vals[4]===12&&vals[3]===3)return 14;  // 23456 最大
-    if(vals[4]===12&&vals[3]===11)return -1; // A2345 最小
-    return vals[4]; // 一般順：頂牌val
-  }
-
-  function findFour(sorted){
-    const cnt={};
-    for(const c of sorted)cnt[c.v]=(cnt[c.v]||0)+1;
-    for(const [v,c] of Object.entries(cnt))if(c===4)return Number(v);
-    return null;
-  }
-  function findFullHouse(sorted){
-    const cnt={};
-    for(const c of sorted)cnt[c.v]=(cnt[c.v]||0)+1;
-    const vals=Object.values(cnt);
-    if(vals.includes(3)&&vals.includes(2))
-      return Number(Object.entries(cnt).find(([,c])=>c===3)[0]);
-    return null;
-  }
-
-  /* 壓牌判定 */
-  function canBeat(played, attempt){
-    if(!played)return true;   // 自由出牌
-    if(!attempt)return false;
-    // 同花順壓一切
-    if(attempt.type==='straightFlush'){
-      if(played.type==='straightFlush')return attempt.key>played.key;
-      return true;
-    }
-    // 鐵支壓除同花順外一切
-    if(attempt.type==='fourOfAKind'){
-      if(played.type==='straightFlush')return false;
-      if(played.type==='fourOfAKind')return attempt.key>played.key;
-      return true;
-    }
-    // 桌面是炸彈，一般牌壓不了
-    if(played.type==='straightFlush'||played.type==='fourOfAKind')return false;
-    // 其餘：同張數、同型互壓
-    if(attempt.cards.length!==played.cards.length)return false;
-    if(attempt.type!==played.type)return false;
-    return attempt.key>played.key;
-  }
-
-  /* ══════════════════════════════════════
-     四、合法組合列舉 + AI 策略
-  ══════════════════════════════════════ */
-  function legalCombos(hand, played, mustHaveClub3){
-    const combos=[];
-    function addIfValid(cards){
-      const cl=classify(cards);
-      if(!cl)return;
-      if(mustHaveClub3&&!cards.some(c=>c.r==='3'&&c.s==='♣'))return;
-      if(canBeat(played,cl))combos.push({cards,cl});
-    }
-    const n=hand.length;
-    for(let i=0;i<n;i++)addIfValid([hand[i]]);
-    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)
-      if(hand[i].v===hand[j].v)addIfValid([hand[i],hand[j]]);
-    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)for(let k=j+1;k<n;k++)
-      if(hand[i].v===hand[j].v&&hand[j].v===hand[k].v)addIfValid([hand[i],hand[j],hand[k]]);
-    for(let i=0;i<n-4;i++)
-      for(let j=i+1;j<n-3;j++)
-        for(let k=j+1;k<n-2;k++)
-          for(let l=k+1;l<n-1;l++)
-            for(let m=l+1;m<n;m++)
-              addIfValid([hand[i],hand[j],hand[k],hand[l],hand[m]]);
-    combos.sort((a,b)=>{
-      // 先比牌型成本（炸彈最後出），再比key
-      const cost=t=>t==='straightFlush'?2:t==='fourOfAKind'?1:0;
-      const ca=cost(a.cl.type),cb=cost(b.cl.type);
-      if(ca!==cb)return ca-cb;
-      return a.cl.key-b.cl.key;
-    });
-    return combos;
-  }
-
-  /**
-   * AI 策略：
-   *   - 一般：出最小合法牌（保留炸彈）
-   *   - 自己手牌 ≤4：出最大牌衝刺
-   *   - 有對手剩牌 ≤2 且需壓牌：出最大牌封鎖
-   */
-  function aiPlay(hand, played, mustHaveClub3, minOppLen){
-    const combos=legalCombos(hand, played, mustHaveClub3);
-    if(combos.length===0)return null; // PASS
-    if(hand.length<=4)return combos[combos.length-1];
-    if(minOppLen<=2&&played)return combos[combos.length-1];
-    return combos[0];
-  }
-
-
-  /* ══════════════════════════════════════
-     四之二、強化 AI：手牌拆解 + 計牌
-  ══════════════════════════════════════ */
-  /* 混花順子候選（保護對子：消耗≥2組複數張的順子放棄） */
-  function findRunMixed(rest){
-    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
-    const vs=Object.keys(byV).map(Number).sort((a,b)=>a-b);
-    for(let i=0;i<vs.length;i++){
-      const run=[vs[i]];
-      for(let j=i+1;j<vs.length&&run.length<5;j++){
-        if(vs[j]===run[run.length-1]+1)run.push(vs[j]);else break;
-      }
-      if(run.length===5&&run[4]<=11){
-        const pairsUsed=run.filter(v=>byV[v].length>=2).length;
-        if(pairsUsed<=1)
-          return run.map(v=>[...byV[v]].sort((a,b)=>a.sv-b.sv)[0]);
-      }
-    }
-    return null;
-  }
-  /* 同花順候選 */
-  function findRunSuited(rest){
-    const bySuit={};rest.forEach(c=>{(bySuit[c.s]=bySuit[c.s]||[]).push(c);});
-    for(const s in bySuit){
-      const cs=[...bySuit[s]].sort((a,b)=>a.v-b.v);
-      for(let i=0;i+4<cs.length;i++){
-        if(cs[i+4].v-cs[i].v===4&&cs[i+4].v<=11&&new Set(cs.slice(i,i+5).map(c=>c.v)).size===5)
-          return cs.slice(i,i+5);
-      }
-    }
-    return null;
-  }
-  /* 手牌最優拆解：同花順→鐵支→順子→三條→對子→單張，回傳完整單位列表 */
-  function partitionHand(hand){
-    let rest=[...hand].sort((a,b)=>a.v-b.v||a.sv-b.sv);
-    const units=[];
-    const remove=cards=>{const ids=new Set(cards.map(cardId));rest=rest.filter(c=>!ids.has(cardId(c)));};
-    let run;
-    while((run=findRunSuited(rest))){units.push(run);remove(run);}
-    // 鐵支先取出，稍後配最小單張湊成五張炸彈
-    const fours=[];
-    const byV4={};rest.forEach(c=>{(byV4[c.v]=byV4[c.v]||[]).push(c);});
-    for(const v in byV4)if(byV4[v].length===4){fours.push([...byV4[v]]);remove(byV4[v]);}
-    while((run=findRunMixed(rest))){units.push(run);remove(run);}
-    const byV={};rest.forEach(c=>{(byV[c.v]=byV[c.v]||[]).push(c);});
-    for(const v in byV){
-      if(byV[v].length===3){units.push([...byV[v]]);remove(byV[v]);}
-      else if(byV[v].length===2){units.push([...byV[v]]);remove(byV[v]);}
-    }
-    // 鐵支配腳：最小剩餘單張；沒有單張就拆成兩對
-    for(const fc of fours){
-      if(rest.length){
-        const kicker=rest[0];
-        units.push([...fc,kicker]);remove([kicker]);
-      } else {
-        units.push(fc.slice(0,2));units.push(fc.slice(2,4));
-      }
-    }
-    rest.forEach(c=>units.push([c]));
-    return units.map(cards=>({cards,cl:classify(cards)})).filter(u=>u.cl);
-  }
-
-  /* ══════════════════════════════════════
-     五、IndexedDB 籌碼存取
-  ══════════════════════════════════════ */
-  /*
-   * 存檔：雙軌
-   *  1) IndexedDB：專用 DB「dengGames」store「saves」（onupgradeneeded 正確建立，
-   *     原版開 stockDashboard/settings 不存在 → 存檔一直是靜默 no-op，已根治）
-   *  2) Firebase（選配）：透過 window.__gameCloudSave / __gameCloudLoad 橋接，
-   *     由 main.js 模組側掛上（遊戲檔是 classic script 無法 import firebase.js）。
-   *     load 時比較 updatedAt 取較新者；save 時 IDB 立即寫 + 雲端 3 秒 debounce。
-   */
-  const SAVE_DB='dengGames', SAVE_STORE='saves', SAVE_KEY='bigtwo_bloody';
-  function _openSaveDB(cb){
-    try{
-      const req=indexedDB.open(SAVE_DB,1);
-      req.onupgradeneeded=e=>{
-        const db=e.target.result;
-        if(!db.objectStoreNames.contains(SAVE_STORE))
-          db.createObjectStore(SAVE_STORE,{keyPath:'key'});
-      };
-      req.onsuccess=e=>cb(e.target.result);
-      req.onerror=()=>cb(null);
-    }catch(e){cb(null);}
-  }
-  function idbLoad(cb){
-    _openSaveDB(db=>{
-      if(!db){cb(null);return;}
-      try{
-        const r=db.transaction(SAVE_STORE,'readonly').objectStore(SAVE_STORE).get(SAVE_KEY);
-        r.onsuccess=()=>cb(r.result?.data??null);
-        r.onerror=()=>cb(null);
-      }catch(e){cb(null);}
-    });
-  }
-  function idbSave(data){
-    _openSaveDB(db=>{
-      if(!db)return;
-      try{db.transaction(SAVE_STORE,'readwrite').objectStore(SAVE_STORE).put({key:SAVE_KEY,data});}catch(e){}
-    });
-  }
-  let _cloudTimer=null;
-  function loadChips(cb){
-    // IDB + 雲端並讀，取 updatedAt 較新者
-    idbLoad(local=>{
-      const cloudFn=window.__gameCloudLoad;
-      if(typeof cloudFn!=='function'){cb(local);return;}
-      Promise.resolve(cloudFn(SAVE_KEY)).then(cloud=>{
-        if(cloud&&(!local||(cloud.updatedAt||0)>(local.updatedAt||0))){
-          idbSave(cloud); // 雲端較新 → 回寫本機
-          cb(cloud);
-        } else cb(local);
-      }).catch(()=>cb(local));
-    });
-  }
-  function saveChips(data){
-    data.updatedAt=Date.now();
-    idbSave(data);
-    if(typeof window.__gameCloudSave==='function'){
-      clearTimeout(_cloudTimer);
-      _cloudTimer=setTimeout(()=>{
-        try{window.__gameCloudSave(SAVE_KEY,data);}catch(e){}
-      },3000);
-    }
-  }
 
   /* ══════════════════════════════════════
      六、遊戲主體
@@ -406,7 +100,7 @@
       const W=680, H=600;
 
       /* ── 高解析渲染（消除 DOS 感糊邊）── */
-      const dpr=Math.min(window.devicePixelRatio||1,2);
+      const dpr=2; // 固定 2x 備援解析度：CSS 放大時維持銳利（原依 devicePixelRatio，dpr=1 螢幕會糊）
       if(dpr>1){
         const rect=canvas.getBoundingClientRect();
         const cssW=rect.width>0?rect.width:W, cssH=rect.height>0?rect.height:H;
@@ -456,6 +150,7 @@
       let slayerNext=false;            // 弒神者：下局玩家直接當國王
       let fr=0;
       let alive=true;         // init 實例存活旗標（防舊 listener / loop 殘留）
+      let rpgDestroy=null;    // 冒險模式 destroy（模式切換/關閉遊戲時呼叫）
 
       /* ── 按鈕區（draw 與 click 共用座標）── */
       /* 道具快捷列（右上，對局中可用） */
@@ -490,7 +185,7 @@
         } else if(typeof v==='number'){chips[0]=v;} // 舊版只存籌碼
         api.setScore(chips[0]);
         api.setHp(hp[0]);
-        startRound();
+        // 不自動 startRound：等模式選單選定「階級殿堂 ▶ 開始」才發牌
       });
 
       /* 傷害（骨甲：玩家 50% 免除） */
@@ -620,6 +315,18 @@
             if(diablo&&(ranks[r]===diablo.host||ranks[t]===diablo.host))continue; // 暗黑免疫交換
             exTasks.push({from:ranks[r],to:ranks[t]});
           }
+        // 🎲 天選（冒險技能樹終極技）：玩家非奴隸時，額外向最低階再換 1 張
+        const advSk=BB.state&&BB.state.adv&&BB.state.adv.sk;
+        if(advSk&&advSk.chosen){
+          const myRank=ranks.indexOf(0);
+          if(myRank<3){
+            let t=ranks[3]===0?ranks[2]:ranks[3];
+            if(!(diablo&&t===diablo.host)){
+              exTasks.push({from:0,to:t});
+              addLog('🎲 天選之牌：你獲得額外一次交換');
+            }
+          }
+        }
         exIdx=0; exStep='demand'; exTimer=40;
         addLog(`🩸 第${roundNum}局 階級交換開始`);
 
@@ -1164,126 +871,14 @@
       // 防重入：上一局實例若未被銷毀，先清掉它的 listener
       if(canvas.__bigTwoDestroy){try{canvas.__bigTwoDestroy();}catch(e){}}
       canvas.addEventListener('click',onClick);
-      const destroy=()=>{alive=false;canvas.removeEventListener('click',onClick);};
+      const destroy=()=>{alive=false;canvas.removeEventListener('click',onClick);if(rpgDestroy){try{rpgDestroy();}catch(e){}rpgDestroy=null;}};
       canvas.__bigTwoDestroy=destroy;
 
       /* ══════════════════════════════════════
          繪製
       ══════════════════════════════════════ */
-      /* 數字牌 pip 排版（相對座標 0~1）*/
-      const PIPS={
-        '2':[[.5,.22],[.5,.78]],
-        '3':[[.5,.2],[.5,.5],[.5,.8]],
-        '4':[[.33,.24],[.67,.24],[.33,.76],[.67,.76]],
-        '5':[[.33,.24],[.67,.24],[.5,.5],[.33,.76],[.67,.76]],
-        '6':[[.33,.22],[.67,.22],[.33,.5],[.67,.5],[.33,.78],[.67,.78]],
-        '7':[[.33,.22],[.67,.22],[.5,.36],[.33,.5],[.67,.5],[.33,.78],[.67,.78]],
-        '8':[[.33,.22],[.67,.22],[.5,.36],[.33,.5],[.67,.5],[.5,.64],[.33,.78],[.67,.78]],
-        '9':[[.33,.2],[.67,.2],[.33,.42],[.67,.42],[.5,.5],[.33,.62],[.67,.62],[.33,.82],[.67,.82]],
-        '10':[[.33,.18],[.67,.18],[.5,.3],[.33,.42],[.67,.42],[.33,.6],[.67,.6],[.5,.72],[.33,.84],[.67,.84]],
-      };
-
-      function drawCard(x,y,card,selected,faceUp=true,scale=1){
-        const w=46*scale,h=68*scale,r=5*scale;
-        ctx.save();
-        // 投影
-        ctx.shadowColor=selected?'rgba(245,196,0,.9)':'rgba(0,0,0,.45)';
-        ctx.shadowBlur=selected?14:5*scale;
-        ctx.shadowOffsetY=selected?0:2*scale;
-        if(faceUp){
-          const bg=ctx.createLinearGradient(x,y,x,y+h);
-          bg.addColorStop(0,'#ffffff');bg.addColorStop(.55,'#fbf9f4');bg.addColorStop(1,'#ece8df');
-          ctx.fillStyle=bg;
-          ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
-          ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
-          ctx.strokeStyle=selected?'#f5c400':'rgba(60,50,30,.35)';
-          ctx.lineWidth=selected?2:1;
-          ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.stroke();
-
-          const isRed=card.s==='♥'||card.s==='♦';
-          const col=isRed?'#c0392b':'#1c1c30';
-          ctx.fillStyle=col;
-          // 角標（襯線字較有撲克質感）
-          ctx.font=`bold ${12.5*scale}px Georgia,'Times New Roman',serif`;
-          ctx.textAlign='center';
-          ctx.fillText(card.r,x+8*scale,y+13*scale);
-          ctx.font=`${9.5*scale}px sans-serif`;
-          ctx.fillText(card.s,x+8*scale,y+23*scale);
-          // 右下倒置角標
-          ctx.save();
-          ctx.translate(x+w,y+h);ctx.rotate(Math.PI);
-          ctx.fillStyle=col;
-          ctx.font=`bold ${12.5*scale}px Georgia,'Times New Roman',serif`;
-          ctx.fillText(card.r,8*scale,13*scale);
-          ctx.font=`${9.5*scale}px sans-serif`;
-          ctx.fillText(card.s,8*scale,23*scale);
-          ctx.restore();
-
-          if(card.r==='A'){
-            // A：中央大花色＋細光暈
-            ctx.font=`${30*scale}px sans-serif`;
-            ctx.fillText(card.s,x+w/2,y+h/2+11*scale);
-          } else if(['J','Q','K'].includes(card.r)){
-            // 人頭牌：內框 + 大字母 + 雙花色
-            ctx.strokeStyle=isRed?'rgba(192,57,43,.45)':'rgba(28,28,48,.4)';
-            ctx.lineWidth=1;
-            ctx.beginPath();ctx.roundRect(x+10*scale,y+13*scale,w-20*scale,h-26*scale,3*scale);ctx.stroke();
-            ctx.font=`bold ${21*scale}px Georgia,serif`;
-            ctx.fillText(card.r,x+w/2,y+h/2+7*scale);
-            ctx.font=`${9*scale}px sans-serif`;
-            ctx.fillText(card.s,x+w/2,y+h/2-12*scale);
-            ctx.save();
-            ctx.translate(x+w/2,y+h/2+17*scale);ctx.rotate(Math.PI);
-            ctx.fillText(card.s,0,3*scale);
-            ctx.restore();
-          } else {
-            // 數字牌：pip 排版（下半倒置）
-            const pips=PIPS[card.r]||[];
-            ctx.font=`${10*scale}px sans-serif`;
-            for(const [px,py] of pips){
-              if(py>0.5){
-                ctx.save();
-                ctx.translate(x+px*w,y+py*h);ctx.rotate(Math.PI);
-                ctx.fillText(card.s,0,3.5*scale);
-                ctx.restore();
-              } else {
-                ctx.fillText(card.s,x+px*w,y+py*h+3.5*scale);
-              }
-            }
-          }
-        } else {
-          // 背面：深藍緞面＋細格紋＋金菱
-          const bg=ctx.createLinearGradient(x,y,x+w,y+h);
-          bg.addColorStop(0,'#22335c');bg.addColorStop(.5,'#16244a');bg.addColorStop(1,'#0d1830');
-          ctx.fillStyle=bg;
-          ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
-          ctx.shadowColor='transparent';ctx.shadowBlur=0;ctx.shadowOffsetY=0;
-          ctx.strokeStyle='rgba(140,170,230,.4)';ctx.lineWidth=1;
-          ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.stroke();
-          // 白邊
-          ctx.strokeStyle='rgba(255,255,255,.55)';
-          ctx.beginPath();ctx.roundRect(x+2,y+2,w-4,h-4,Math.max(r-1,1));ctx.stroke();
-          // 斜格紋
-          ctx.save();
-          ctx.beginPath();ctx.roundRect(x+4,y+4,w-8,h-8,Math.max(r-2,1));ctx.clip();
-          ctx.strokeStyle='rgba(120,150,210,.18)';ctx.lineWidth=1;
-          for(let d=-h;d<w+h;d+=7*scale){
-            ctx.beginPath();ctx.moveTo(x+d,y);ctx.lineTo(x+d+h,y+h);ctx.stroke();
-            ctx.beginPath();ctx.moveTo(x+d+h,y);ctx.lineTo(x+d,y+h);ctx.stroke();
-          }
-          ctx.restore();
-          // 中央金菱
-          ctx.fillStyle='rgba(212,160,23,.55)';
-          ctx.beginPath();
-          ctx.moveTo(x+w/2,y+h/2-11*scale);ctx.lineTo(x+w/2+8*scale,y+h/2);
-          ctx.lineTo(x+w/2,y+h/2+11*scale);ctx.lineTo(x+w/2-8*scale,y+h/2);
-          ctx.closePath();ctx.fill();
-          ctx.fillStyle='rgba(245,196,0,.85)';
-          ctx.font=`${9*scale}px sans-serif`;ctx.textAlign='center';
-          ctx.fillText('燈',x+w/2,y+h/2+3.5*scale);
-        }
-        ctx.restore();
-      }
+      /* 牌面繪製：core 工廠（殿堂/冒險共用）*/
+      const drawCard=BB.makeCardPainter(ctx);
 
       /* 各家可見張數（發牌動畫進度）*/
       function visibleCount(idx){
@@ -1923,16 +1518,43 @@
         ]);
       }
 
-      /* ── 啟動 ── */
-      const showStartMsg=()=>api.showMsg('🩸 血腥大老二',
+      /* ── 啟動：模式選單 ── */
+      const showStartMsg=()=>api.showMsg('🏛 階級殿堂',
         '第1局定階級；國王吸牌、奴隸吃渣\n憤怒滿百，地表暗黑將會降臨…',
         [
-          {label:'▶ 開始',red:true,fn:()=>{api.hideMsg();api.raf(loop);}},
+          {label:'▶ 開始',red:true,fn:()=>{api.hideMsg();startRound();api.raf(loop);}},
           {label:'🛒 雜貨店',fn:()=>openShop(showStartMsg)},
           {label:'🎒 裝備',fn:()=>openBag(showStartMsg)},
+          {label:'↩ 模式選單',fn:showModeMenu},
         ]
       );
-      showStartMsg();
+      function showModeMenu(){
+        api.showMsg('🩸 血腥大老二','選擇你的命運——',[
+          {label:'🏛 階級殿堂（經典魔改）',red:true,fn:()=>{api.hideMsg();showStartMsg();}},
+          {label:'🗺 冒險之路（RPG 戰役）',fn:()=>{
+            api.hideMsg();
+            if(window.__BB_RPG&&window.__BB_RPG.start&&window.__BBD){
+              alive=false; // 凍結殿堂 loop / listener 邏輯
+              canvas.removeEventListener('click',onClick);
+              BB.loadShared(()=>{ // 確保 BB.state 就緒（已載入則立即回呼）
+              rpgDestroy=window.__BB_RPG.start(canvas,ctx,api,{backToMenu:()=>{
+                rpgDestroy=null;
+                alive=true;
+                canvas.addEventListener('click',onClick);
+                showModeMenu();
+              }});
+              });
+            } else {
+              api.showMsg('⚠ 冒險模組未載入',
+                (window.__BB_RPG?'':'缺 game-bigTwoBloody-rpg.js\n')
+                +(window.__BBD?'':'缺 game-bigTwoBloody-data.js\n')
+                +'檢查 index.html script 標籤與 404',
+                [{label:'↩',fn:showModeMenu}]);
+            }
+          }},
+        ]);
+      }
+      showModeMenu(); // 同步開選單（⚠ 不可塞進 loadChips 回呼：雲端橋懸住會黑畫面）
 
       // splash-game.js 若有接 init 回傳值，可直接呼叫銷毀
       return destroy;
