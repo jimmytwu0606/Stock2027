@@ -298,6 +298,7 @@ function _isModuleActive(modId) {
     dmi:      'DMI',
     gmma:     'GMMA',
     sar:      'SAR',
+    avwap:    'AVWAP',
     env:      'ENV',
     bb:       'BB',
     psy:      'PSY',
@@ -306,7 +307,7 @@ function _isModuleActive(modId) {
   };
   // 型態/基本面/葛蘭碧 模組:永遠啟用(不受 indicators 開關控制)
   // 葛蘭碧 v2.6 — 沒有對應的 toolbar 開關,且讀的是 AppState.signals 不需綁定指標
-  if (modId === 'perspective' || modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries') return true;
+  if (modId === 'perspective' || modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries' || modId === 'mtf' || modId === 'stage' || modId === 'vprofile' || modId === 'ttm' || modId === 'supertrend' || modId === 'obv') return true;
   const stateKey = keyMap[modId];
   return stateKey ? !!AppState.indicators[stateKey] : false;
 }

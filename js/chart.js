@@ -14,9 +14,12 @@
  */
 
 import { AppState } from './state.js';
+import { computeConviction } from './conviction.js';
 import { calcMA, calcKD, calcRSI, calcMACD, calcBollinger,
          calcEMA, calcGMMA, calcSAR, calcDMI, calcPSY, calcRCI, calcHV, calcEnvelope,
-         calcIchimoku } from './indicators.js';
+         calcIchimoku, anchoredVWAP, resolveAVWAPAnchor,
+         calcSupertrend, calcTTMSqueeze, calcOBV } from './indicators.js';
+import { getYaoguRecord } from './db.js';
 
 // ─────────────────────────────────────────────
 // 圖表實例與 Series 管理
@@ -165,6 +168,9 @@ export function initCharts() {
   const psyEl  = document.getElementById('psyChart');
   const rciEl  = document.getElementById('rciChart');
   const hvEl   = document.getElementById('hvChart');
+  const convEl = document.getElementById('convChart');
+  const ttmEl  = document.getElementById('ttmChart');
+  const obvEl  = document.getElementById('obvChart');
 
   // ─────────────────────────────────────────────────────────────
   // 固定高度策略 (v3 — 0523 修正副圖擠壓)
@@ -179,7 +185,7 @@ export function initCharts() {
   const SUB_CHART_H = 135;   // ind-panel 內 chart 部份高度 (160 - label ~25)
 
   // 算出啟用了幾個副圖
-  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV']
+  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV','TTM','OBV']
     .filter(k => AppState.indicators[k]).length;
 
   // 寫入 CSS 變數讓 chart-area 撐高
@@ -210,6 +216,9 @@ export function initCharts() {
   if (psyEl) _charts.psy = LightweightCharts.createChart(psyEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (rciEl) _charts.rci = LightweightCharts.createChart(rciEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (hvEl)  _charts.hv  = LightweightCharts.createChart(hvEl,  { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
+  if (convEl) _charts.conviction = LightweightCharts.createChart(convEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.12, bottom: 0.12 } } });
+  if (ttmEl) _charts.ttm = LightweightCharts.createChart(ttmEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.1, bottom: 0.1 } } });
+  if (obvEl) _charts.obv = LightweightCharts.createChart(obvEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.1, bottom: 0.1 } } });
 
   _charts.main.applyOptions({
     watermark: {
@@ -231,7 +240,8 @@ export function initCharts() {
 // ─────────────────────────────────────────────
 function _syncCrosshair() {
   const all = [_charts.main, _charts.kd, _charts.rsi, _charts.macd,
-               _charts.dmi, _charts.psy, _charts.rci, _charts.hv].filter(Boolean);
+               _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction,
+               _charts.ttm, _charts.obv].filter(Boolean);
   all.forEach((chart, idx) => {
     chart.subscribeCrosshairMove(param => {
       if (!param.time) return;
@@ -278,6 +288,10 @@ export function renderChartData(candles) {
   if (AppState.indicators.EMA)  _renderEMA(candles, closes);
   if (AppState.indicators.GMMA) _renderGMMA(candles, closes);
   if (AppState.indicators.SAR)  _renderSAR(candles);
+  if (AppState.indicators.SUPERTREND) _renderSupertrend(candles);
+  // T-2 Anchored VWAP（妖股 active 自動掛啟動日錨，否則可見區間起算 ≈）
+  if (AppState.indicators.AVWAP) _renderAVWAP(candles);
+  else _clearAVWAP();
   if (AppState.indicators.ENV)  _renderEnvelope(candles, closes);
   else _clearBandFill('env');  // ENV 關閉時清掉填色 canvas 殘留
   // C1 一目均衡表（雲帶 + 5 條線）
@@ -305,10 +319,13 @@ export function renderChartData(candles) {
   if (AppState.indicators.PSY)  _renderPSY(candles, closes);
   if (AppState.indicators.RCI)  _renderRCI(candles, closes);
   if (AppState.indicators.HV)   _renderHV(candles, closes);
+  if (AppState.indicators.CONV) _renderConviction(candles);
+  if (AppState.indicators.TTM)  _renderTTM(candles);
+  if (AppState.indicators.OBV)  _renderOBV(candles);
 
   try {
     const range = _charts.main.timeScale().getVisibleRange();
-    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv]
+    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction, _charts.ttm, _charts.obv]
       .filter(Boolean)
       .forEach(c => c.timeScale().setVisibleRange(range));
   } catch (e) { /**/ }
@@ -664,6 +681,144 @@ function _renderSAR(candles) {
   });
   if (bullData.length) _series.sarBull.setData(bullData);
   if (bearData.length) _series.sarBear.setData(bearData);
+}
+
+// ── T-7 Supertrend（ATR 通道翻轉線，多頭紅線貼底 / 空頭綠線貼頂）──
+//   多/空分兩條 series，非當前方向以 whitespace {time} 留缺口 → 翻轉處乾淨斷線（不拉對角假線）
+function _renderSupertrend(candles) {
+  if (candles.length < 15) return;
+  const st = calcSupertrend(candles, 10, 3);
+  if (!st.ready) return;
+  if (_series.stUp)   { try { _charts.main.removeSeries(_series.stUp);   } catch(e){} }
+  if (_series.stDown) { try { _charts.main.removeSeries(_series.stDown); } catch(e){} }
+
+  const upData = [], dnData = [];
+  candles.forEach((c, i) => {
+    const v = st.lineArr[i];
+    if (v == null) { upData.push({ time: c.time }); dnData.push({ time: c.time }); return; }
+    if (st.dirArr[i] === 'up') { upData.push({ time: c.time, value: v }); dnData.push({ time: c.time }); }
+    else                       { dnData.push({ time: c.time, value: v }); upData.push({ time: c.time }); }
+  });
+
+  // 台股：多頭=紅、空頭=綠
+  _series.stUp = _charts.main.addLineSeries({
+    color: '#ef5350', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: false, title: 'ST↑',
+  });
+  _series.stDown = _charts.main.addLineSeries({
+    color: '#26a69a', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: false, title: 'ST↓',
+  });
+  _series.stUp.setData(upData);
+  _series.stDown.setData(dnData);
+}
+
+// ── T-6 TTM Squeeze 副圖（零軸壓縮點 + 動能柱）──
+//   動能柱：紅(動能向上)/綠(動能向下)；壓縮點：零軸上 ON=琥珀、OFF=灰
+function _renderTTM(candles) {
+  if (!_charts.ttm) return;
+  const labelEl = document.querySelector('#ttmPanel .ind-panel-label');
+  const _NORMAL = '<span style="color:#fbbf24">● 壓縮點</span>' +
+    '<span style="color:#ef5350">▮ 動能↑</span>' +
+    '<span style="color:#26a69a">▮ 動能↓</span>' +
+    '<span style="color:var(--hint);margin-left:4px">TTM Squeeze (20,2/1.5)</span>';
+  const t = candles.length >= 25 ? calcTTMSqueeze(candles, 20, 2, 1.5) : { ready: false };
+  if (!t.ready) {
+    if (labelEl) labelEl.innerHTML = '<span style="color:var(--hint)">🔋 TTM Squeeze 此週期 K 棒不足（需 ≥ 25 根），請切換到 3月 / 6月 / 1年 週期</span>';
+    return;
+  }
+  if (labelEl) labelEl.innerHTML = _NORMAL;
+
+  // 動能柱
+  _series.ttmHist = _charts.ttm.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, base: 0 });
+  const histData = [];
+  candles.forEach((c, i) => {
+    const m = t.momArr[i];
+    if (m == null) return;
+    histData.push({ time: c.time, value: m, color: m >= 0 ? 'rgba(239,83,80,0.8)' : 'rgba(38,166,154,0.8)' });
+  });
+  _series.ttmHist.setData(histData);
+
+  // 壓縮點（零軸）：ON=琥珀 / OFF=灰，分兩條 series（pointMarkers 無法逐點上色）
+  const onDots = [], offDots = [];
+  candles.forEach((c, i) => {
+    if (t.onArr[i] == null) return;
+    (t.onArr[i] ? onDots : offDots).push({ time: c.time, value: 0 });
+  });
+  _series.ttmOn = _charts.ttm.addLineSeries({ color: '#fbbf24', lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.ttmOff = _charts.ttm.addLineSeries({ color: 'rgba(148,163,184,0.7)', lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  if (onDots.length)  _series.ttmOn.setData(onDots);
+  if (offDots.length) _series.ttmOff.setData(offDots);
+}
+
+// ── T-8 OBV 能量潮副圖（EMA3 平滑累計量能線）──
+function _renderOBV(candles) {
+  if (!_charts.obv) return;
+  const labelEl = document.querySelector('#obvPanel .ind-panel-label');
+  const _NORMAL = '<span style="color:#a78bfa">● OBV</span>' +
+    '<span style="color:var(--hint);margin-left:4px">能量潮（EMA3 平滑）</span>';
+  const o = candles.length >= 25 ? calcOBV(candles, 20) : { ready: false };
+  if (!o.ready) {
+    if (labelEl) labelEl.innerHTML = '<span style="color:var(--hint)">🌊 OBV 此週期 K 棒不足（需 ≥ 25 根），請切換到 3月 / 6月 / 1年 週期</span>';
+    return;
+  }
+  if (labelEl) labelEl.innerHTML = _NORMAL;
+  // OBV 絕對值無意義、數字龐大 → 軸改台股慣用「億/萬」縮寫
+  _charts.obv.applyOptions({ localization: { priceFormatter: (v) => {
+    const a = Math.abs(v);
+    if (a >= 1e8) return (v / 1e8).toFixed(2) + '億';
+    if (a >= 1e4) return (v / 1e4).toFixed(0) + '萬';
+    return v.toFixed(0);
+  } } });
+  _series.obvLine = _charts.obv.addLineSeries({ color: '#a78bfa', lineWidth: 1.4, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true });
+  const data = [];
+  candles.forEach((c, i) => { const v = o.obvArr[i]; if (v != null) data.push({ time: c.time, value: v }); });
+  _series.obvLine.setData(data);
+}
+
+// ── T-2 Anchored VWAP（錨定量加權均價，妖股 active 自動掛啟動日錨）──
+//   錨點優先序：妖股啟動日（主升段成本）→ 可見區間首根（波段成本近似，標 ≈）
+//   getYaoguRecord 為 async，期間若切股/切週期/關閉 → token 比對放棄繪製
+let _avwapToken = 0;
+async function _renderAVWAP(candles) {
+  if (!candles || candles.length < 2) { _clearAVWAP(); return; }
+  const code  = AppState.activeCode || '';
+  const token = ++_avwapToken;
+
+  // 妖股 active/rebirth → 取啟動日 unix 秒，否則 null（解析器自動退波段低點）
+  let actSec = null;
+  try {
+    const rec = code ? await getYaoguRecord(code) : null;
+    const act = rec && (rec.status === 'active' || rec.status === 'rebirth' || rec.status === 'pullback') ? rec.activatedAt : null;
+    if (act) {
+      const s = Math.floor(new Date(act).getTime() / 1000);
+      if (!Number.isNaN(s)) actSec = s;
+    }
+  } catch (e) { /* 妖股庫缺失 → 用波段低點 */ }
+
+  // async 競態防呆
+  if (token !== _avwapToken) return;
+  if (code !== (AppState.activeCode || '') || !AppState.indicators.AVWAP || !_charts.main) return;
+
+  const { anchorIdx, source } = resolveAVWAPAnchor(candles, actSec);
+  const av = anchoredVWAP(candles, anchorIdx);
+  if (_series.avwap) { try { _charts.main.removeSeries(_series.avwap); } catch (e) {} }
+  _series.avwap = _charts.main.addLineSeries({
+    color: '#fbbf24', lineWidth: 2, lineStyle: 2,   // 琥珀虛線
+    priceLineVisible: false, lastValueVisible: false,  // 右軸與 MA 標籤互蓋，關閉（crosshair 仍可讀）
+    crosshairMarkerVisible: true,
+    title: source === 'yaogu' ? '⚓AVWAP啟動' : '⚓AVWAP波段',
+  });
+  _series.avwap.setData(
+    candles.map((c, i) => av[i] != null ? { time: c.time, value: av[i] } : null).filter(Boolean)
+  );
+}
+
+function _clearAVWAP() {
+  if (_series.avwap) {
+    try { _charts.main.removeSeries(_series.avwap); } catch (e) {}
+    _series.avwap = null;
+  }
 }
 
 // ── ENV 包絡線（MA20 ± 5%）──
@@ -1068,6 +1223,61 @@ function _renderHV(candles, closes) {
   );
 }
 
+// Advanced 8 — Conviction C 曲線副窗
+function _renderConviction(candles) {
+  if (!_charts.conviction) return;
+  // C 需要 z 窗 60 + 暖機，至少 ~80 根才有意義 → 短週期（5日/1月/3月）資料不足
+  const labelEl = document.querySelector('#convPanel .ind-panel-label');
+  if (candles.length < 90) {
+    if (labelEl) labelEl.innerHTML =
+      '<span style="color:var(--hint)">⚡ 確信度 C 需要較長資料（z 窗 60 日），請切換到 6月 / 1年 / 2年 週期</span>';
+    // 清掉舊線
+    ['conviction', 'convP80', 'convP20', 'convZero'].forEach(k => {
+      if (_series[k]) { try { _charts.conviction.removeSeries(_series[k]); } catch (e) {} _series[k] = null; }
+    });
+    return;
+  }
+  // 恢復正常 label
+  if (labelEl) labelEl.innerHTML =
+    '<span style="color:#fbbf24">● C 確信度</span>' +
+    '<span style="color:rgba(96,165,250,.6)">▬ 股性帶 P20-P80</span>' +
+    '<span style="color:var(--hint);margin-left:4px">動能×量能流×勝率 · 觀察工具非進場訊號</span>';
+  const bars = candles.map(c => ({
+    open: c.open, high: c.high, low: c.low, close: c.close,
+    volume: c.volume ?? c.value ?? 0,
+  }));
+  const res = computeConviction(bars);
+  if (!res.C.length) return;
+
+  // P20-P80 股性帶（藍色淡帶，先畫帶再畫線，帶在底層）
+  const upperData = candles.map((c, i) => res.p80[i] != null ? { time: c.time, value: res.p80[i] } : null).filter(Boolean);
+  const lowerData = candles.map((c, i) => res.p20[i] != null ? { time: c.time, value: res.p20[i] } : null).filter(Boolean);
+  // 帶的上下界線（淡，本身不顯眼，靠填色）
+  _series.convP80 = _charts.conviction.addLineSeries({ color: 'rgba(96,165,250,0.25)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convP20 = _charts.conviction.addLineSeries({ color: 'rgba(96,165,250,0.25)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convP80.setData(upperData);
+  _series.convP20.setData(lowerData);
+
+  // 0 軸虛線（C 正負分界）
+  _series.convZero = _charts.conviction.addLineSeries({ color: 'rgba(255,255,255,0.18)', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.convZero.setData(candles.map(c => ({ time: c.time, value: 0 })));
+
+  // C 曲線（琥珀 #fbbf24）
+  _series.conviction = _charts.conviction.addLineSeries({ color: '#fbbf24', lineWidth: 1.6, priceLineVisible: false, lastValueVisible: true, title: 'C' });
+  _series.conviction.setData(
+    candles.map((c, i) => res.C[i] != null ? { time: c.time, value: +res.C[i].toFixed(3) } : null).filter(Boolean)
+  );
+
+  // Guard 事件標記（guard 由 1 掉到 veto 的那一日 = 爆量長黑硬否決）
+  const markers = [];
+  for (let i = 1; i < res.guard.length; i++) {
+    if (res.guard[i] < 1 && res.guard[i - 1] >= 0.95 && res.C[i] != null) {
+      markers.push({ time: candles[i].time, position: 'belowBar', color: '#ef5350', shape: 'arrowDown', text: 'Guard' });
+    }
+  }
+  if (markers.length) _series.conviction.setMarkers(markers);
+}
+
 // ── Export helpers for Advanced 5 sub-charts ──
 export function getDmiChart()  { return _charts.dmi  || null; }
 export function getPsyChart()  { return _charts.psy  || null; }
@@ -1088,7 +1298,7 @@ export function setChartFixed(fixed) {
  */
 export function setSubChartsActive(active) {
   const subCharts = [_charts.kd, _charts.rsi, _charts.macd,
-                     _charts.dmi, _charts.psy, _charts.rci, _charts.hv].filter(Boolean);
+                     _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction].filter(Boolean);
   subCharts.forEach(c => {
     try {
       c.applyOptions({

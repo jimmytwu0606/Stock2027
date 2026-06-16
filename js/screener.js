@@ -351,6 +351,8 @@ export const SNAP_NUMERIC = {
   vol_surge_long:  { key: 'vs30_v',    op: '>=', limitUpExempt: true },
   industry_leading:{ key: 'indLead_v', op: '>=' },// X4 兩段式（GAS _injectIndustryLeading）
   bb_squeeze:      { key: 'bbwPct_v',  op: '<=' },// S13/S15 帶寬百分位（GAS v2.9.4 對齊）
+  rs_strong:       { key: 'rs_v',      op: '>=' },// T-1 RS Rating ≥87（GAS _injectRSRating）
+  rs_elite:        { key: 'rs_v',      op: '>=' },// T-1 RS Rating ≥95
 };
 
 
@@ -2560,8 +2562,42 @@ export const CONDITION_DEFS = [
   },
 
   // ══════════════════════════════════════════════
-  // ── X6~X11 系列新增條件（Pure K 線，無需新資料）
+  // ── T-1 RS Rating（snapshot-only，前端單股算不出百分位）
+  //    rs_v 由 GAS _injectRSRating 寫入 snapshot（hist 還原價算全市場百分位）
   // ══════════════════════════════════════════════
+  {
+    id:      'rs_strong',
+    group:   'momentum',
+    label:   'RS 強勢（相對強度 ≥ 87）',
+    unit:    '',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    snapshotOnly: true,   // 前端無法算百分位，只走 snapshot rs_v
+    match: (row) => row?.rs_v != null && row.rs_v >= 87,
+  },
+  {
+    id:      'rs_elite',
+    group:   'momentum',
+    label:   'RS 精英（相對強度 ≥ 95）',
+    unit:    '',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    snapshotOnly: true,
+    match: (row) => row?.rs_v != null && row.rs_v >= 95,
+  },
+  {
+    id:      'rs_line_high',
+    group:   'momentum',
+    label:   'RS 線創 60 日新高（領先價格）',
+    unit:    '',
+    type:    'boolean',
+    default: true,
+    phase:   2,
+    snapshotOnly: true,
+    match: (row) => row?.rs_line_high === true,
+  },
 
   /**
    * gap_up：今日開盤跳空上漲 ≥ value%（跳空缺口突破）

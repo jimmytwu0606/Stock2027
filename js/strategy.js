@@ -21,7 +21,7 @@
 //
 // 升版號的副作用:所有使用者下次開 app 自動清快取重掃(無痛)
 // ─────────────────────────────────────────────
-export const STRATEGY_VERSION = 15;  // v2.9.4 — S46 口袋支點（Pocket Pivot）實驗導入
+export const STRATEGY_VERSION = 16;  // v2.9.5 — T-1 RS Rating 三 cond（rs_strong/rs_elite/rs_line_high）
 
 export const STRATEGIES = [
   // ══════════════════════════════════════════
@@ -678,6 +678,32 @@ export const STRATEGIES = [
       { condId: 'above_ma20'                    },  // 站上 MA20
     ],
   },
+];
+
+// ══════════════════════════════════════════
+// 進階指標進場策略（回測專用，經 customStrategies 注入組合回測，不參與即時信號燈/篩選）
+// 條件對應 backtest-engine.js COND_LIB：weekly_bull / weinstein_stage / above_poc / supertrend_up
+// ══════════════════════════════════════════
+export const TA_ENTRY_STRATEGIES = [
+  { id: 'TA_WK',  tier: 'pro', icon: '🔭', name: '週線多頭', category: '進階指標',
+    desc: '週MA10之上且週線連走揚（順大勢）',
+    conditions: [{ condId: 'weekly_bull' }] },
+  { id: 'TA_ST2', tier: 'pro', icon: '🌀', name: 'Weinstein 上升期', category: '進階指標',
+    desc: '30週線翻揚的 Stage 2 買進期',
+    conditions: [{ condId: 'weinstein_stage', value: 2 }] },
+  { id: 'TA_POC', tier: 'pro', icon: '📊', name: '站上 POC', category: '進階指標',
+    desc: '站上近120日量價最密集價（主力成本帶）',
+    conditions: [{ condId: 'above_poc' }] },
+  { id: 'TA_SUP', tier: 'pro', icon: '🛡️', name: 'Supertrend 多頭', category: '進階指標',
+    desc: 'Supertrend(10,3) 處於多頭趨勢',
+    conditions: [{ condId: 'supertrend_up' }] },
+  // 組合範例：順大勢 + 籌碼乾淨
+  { id: 'TA_WK_POC', tier: 'pro', icon: '🎯', name: '週多頭＋站POC', category: '進階指標',
+    desc: '週線多頭且站上POC，順勢且站穩主力成本帶',
+    conditions: [{ condId: 'weekly_bull' }, { condId: 'above_poc' }] },
+  { id: 'TA_ST2_SUP', tier: 'pro', icon: '🚀', name: 'Stage2＋Supertrend多', category: '進階指標',
+    desc: 'Weinstein 上升期且 Supertrend 多頭，雙趨勢確認',
+    conditions: [{ condId: 'weinstein_stage', value: 2 }, { condId: 'supertrend_up' }] },
 ];
 
 const CATEGORY_COLOR = {

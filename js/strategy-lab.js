@@ -33,6 +33,7 @@ export async function initStrategyLab() {
   _lazyBind('experiment', () => import('./lab-experiment.js'), m => m.bindExperimentRun());
   _lazyBind('backtest', () => import('./lab-backtest.js'), m => m.bindBacktestRun());
   _lazyBind('discovered', () => import('./lab-discovered.js'), m => m.bindDiscoveredRun());
+  _lazyBind('tribunal', () => import('./lab-tribunal.js'), m => m.bindTribunalRun());
 
   window.addEventListener('authReady', () => _applyTierUI());
 }
@@ -93,6 +94,7 @@ function _switchSub(sub) {
     experiment: 'labPanelExperiment',
     backtest: 'labPanelBacktest',
     discovered: 'labPanelDiscovered',
+    tribunal: 'labPanelTribunal',
   };
   Object.entries(panels).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -105,6 +107,7 @@ function _switchSub(sub) {
     experiment: 'labControlsExperiment',
     backtest: 'labControlsBacktest',
     discovered: 'labControlsDiscovered',
+    tribunal: 'labControlsTribunal',
   };
   Object.entries(controls).forEach(([key, id]) => {
     const el = document.getElementById(id);
@@ -141,4 +144,8 @@ function _applyTierUI() {
   // 系統發現策略：只有 vvvip 才顯示
   const discBtn = document.getElementById('labBtnDiscovered');
   if (discBtn) discBtn.style.display = isVVVIP ? '' : 'none';
+
+  // 鑑定所：VVVIP
+  const tribBtn = document.getElementById('labBtnTribunal');
+  if (tribBtn) tribBtn.style.display = isVVVIP ? '' : 'none';
 }

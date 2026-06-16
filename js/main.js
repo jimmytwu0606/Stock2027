@@ -59,6 +59,7 @@ import { initStockInfo, setStockInfoCode, renderStockInfo } from './stock-info.j
 import {
   startClock, setHeaderLoading, updateHeader,
   showLoading, updateDataInfo, showToast, initUIEvents,
+  renderWeeklyStageBadges, ensureTADaily,
 } from './ui.js';
 import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
@@ -1222,8 +1223,19 @@ function initPhase7() {
 
   // 每次 chartRendered 後若仍在編輯模式,重新 attach overlay
   // (處理 reloadChart 後 chart instance 改變的情況)
-  window.addEventListener('chartRendered', () => {
+  window.addEventListener('chartRendered', (e) => {
     if (isEditing()) reattachAfterReload();
+    // T-3/T-5 header 徽章（先用現有快取畫一次）
+    try { renderWeeklyStageBadges(); } catch(e2) {}
+    // 預取 2 年日K hist（週線/階段資料源，不綁圖表週期）→ 就緒後重繪徽章 + 全視窗 Tab
+    const _code = e?.detail?.code || AppState.activeCode;
+    if (_code) {
+      ensureTADaily(_code).then(() => {
+        try { renderWeeklyStageBadges(); } catch(e2) {}
+        try { refreshFullscreenAnalysis(); } catch(e2) {}
+        try { refreshAnalysis(); } catch(e2) {}   // 智能分析重算，帶入週線/階段
+      });
+    }
     // Phase 7.3 — 全視窗模式下切週期/股票/指標後重新渲染深度解讀
     // 保住捲動位置，避免頁面跳走
     const panel = document.getElementById('chartPanel');

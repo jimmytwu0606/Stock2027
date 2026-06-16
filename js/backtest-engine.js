@@ -97,7 +97,98 @@ function _macd(closes, fast = 12, slow = 26, sig = 9) {
   return { dif, dea, hist };
 }
 
-/** 對單檔 candles 預算全部指標序列 */
+// Supertrend(period,mult) 方向序列（'up'/'down'）— 出場規則用，slim 欄位 .h/.l/.c
+function _supertrend(candles, period = 10, mult = 3) {
+  const n = candles.length;
+  const dir = new Array(n).fill(null);
+  if (n < period + 2) return dir;
+  const tr = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (i === 0) { tr[i] = candles[i].h - candles[i].l; continue; }
+    const pc = candles[i - 1].c;
+    tr[i] = Math.max(candles[i].h - candles[i].l, Math.abs(candles[i].h - pc), Math.abs(candles[i].l - pc));
+  }
+  const atr = new Array(n).fill(null);
+  let s = 0; for (let i = 0; i < period; i++) s += tr[i];
+  atr[period - 1] = s / period;
+  for (let i = period; i < n; i++) atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
+  let fU = null, fL = null, pdir = null;
+  for (let i = 0; i < n; i++) {
+    if (atr[i] == null) continue;
+    const hl2 = (candles[i].h + candles[i].l) / 2;
+    const bU = hl2 + mult * atr[i], bL = hl2 - mult * atr[i];
+    const pc = candles[i - 1]?.c ?? candles[i].c;
+    fU = (fU == null || bU < fU || pc > fU) ? bU : fU;
+    fL = (fL == null || bL > fL || pc < fL) ? bL : fL;
+    if (pdir == null) pdir = candles[i].c >= hl2 ? 'up' : 'down';
+    else if (pdir === 'up') pdir = candles[i].c < fL ? 'down' : 'up';
+    else pdir = candles[i].c > fU ? 'up' : 'down';
+    dir[i] = pdir;
+  }
+  return dir;
+}
+
+// 週線多頭 + Weinstein 階段（日線對齊布林/數字陣列）— 進場條件用
+// 週線 resample 一次（週一起算），週MA10 判多頭、週MA30 判階段；映射回日線用「前一完成週」狀態（因果、不看未來）
+function _weeklyArrays(candles) {
+  const n = candles.length;
+  const weeklyBull = new Array(n).fill(false);
+  const stage = new Array(n).fill(0);
+  if (n < 60) return { weeklyBull, stage };
+  const weeks = [];
+  let cur = null, curKey = null;
+  for (let i = 0; i < n; i++) {
+    const d = new Date((candles[i].t || 0) * 1000);
+    const dow = d.getUTCDay();                          // 0=Sun..6=Sat
+    const mon = new Date(d); mon.setUTCDate(d.getUTCDate() - ((dow + 6) % 7));
+    const key = mon.toISOString().slice(0, 10);
+    if (key !== curKey) { if (cur) weeks.push(cur); cur = { s: i, e: i, c: candles[i].c }; curKey = key; }
+    else { cur.e = i; cur.c = candles[i].c; }
+  }
+  if (cur) weeks.push(cur);
+  const wClose = weeks.map(w => w.c);
+  const wMA10 = _sma(wClose, 10);
+  const wMA30 = _sma(wClose, 30);
+  const wBull = weeks.map((w, k) => k >= 10 && wMA10[k] != null && wMA10[k - 1] != null && w.c > wMA10[k] && wMA10[k] > wMA10[k - 1]);
+  const wStage = weeks.map((w, k) => {
+    if (k < 31 || wMA30[k] == null || wMA30[k - 1] == null || wMA30[k - 1] === 0) return 0;
+    const slope = (wMA30[k] - wMA30[k - 1]) / wMA30[k - 1];
+    const FLAT = 0.003;                                 // 0.3%/週 視為盤整
+    if (slope > FLAT)  return 2;                        // 上升期（可買）
+    if (slope < -FLAT) return 4;                        // 下降期
+    return w.c > wMA30[k] ? 3 : 1;                      // 盤整：價在軸線上=頭部(3)、下=底部(1)
+  });
+  for (let wi = 0; wi < weeks.length; wi++) {
+    const w = weeks[wi];
+    const pb = wi >= 1 ? wBull[wi - 1] : false;         // 用「前一完成週」狀態，避免用到當週未完成資料
+    const ps = wi >= 1 ? wStage[wi - 1] : 0;
+    for (let i = w.s; i <= w.e; i++) { weeklyBull[i] = pb; stage[i] = ps; }
+  }
+  return { weeklyBull, stage };
+}
+
+// 站上 POC（近 lookback 日量價分佈最密集價，依收盤分箱）— 進場條件用
+function _pocAboveArr(candles, lookback = 120, bins = 40) {
+  const n = candles.length;
+  const out = new Array(n).fill(false);
+  const hist = new Array(bins);
+  for (let i = 20; i < n; i++) {
+    const start = Math.max(0, i - lookback + 1);
+    let lo = Infinity, hi = -Infinity;
+    for (let j = start; j <= i; j++) { const c = candles[j].c; if (c < lo) lo = c; if (c > hi) hi = c; }
+    if (hi <= lo) continue;
+    const w = (hi - lo) / bins;
+    hist.fill(0);
+    for (let j = start; j <= i; j++) {
+      let b = Math.floor((candles[j].c - lo) / w); if (b >= bins) b = bins - 1; if (b < 0) b = 0;
+      hist[b] += candles[j].v ?? 0;
+    }
+    let pocBin = 0, pocVol = -1;
+    for (let b = 0; b < bins; b++) if (hist[b] > pocVol) { pocVol = hist[b]; pocBin = b; }
+    out[i] = candles[i].c > lo + (pocBin + 0.5) * w;
+  }
+  return out;
+}
 function _precompute(candles) {
   const closes = candles.map(c => c.c);
   const vols   = candles.map(c => c.v ?? 0);
@@ -109,7 +200,10 @@ function _precompute(candles) {
   const rsi    = _rsi(closes, 14);
   const { K, D } = _kd(candles);
   const macd   = _macd(closes);
-  return { closes, vols, ma5, ma20, volMa10, volMa20, volMa30, rsi, K, D, macd };
+  const stDir  = _supertrend(candles, 10, 3);   // Supertrend 出場/進場用
+  const { weeklyBull, stage } = _weeklyArrays(candles);   // 週線多頭 / Weinstein 階段
+  const pocAbove = _pocAboveArr(candles, 120, 40);        // 站上 POC
+  return { closes, vols, ma5, ma20, volMa10, volMa20, volMa30, rsi, K, D, macd, stDir, weeklyBull, stage, pocAbove };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,6 +253,11 @@ const COND_LIB = {
     const breakout = ind.closes[i] > hh && ind.vols[i] >= ind.volMa10[i - 1] * 1.5;
     return rangePct < v && breakout;
   },
+  // ── 進階指標進場條件（搭配 TA_ENTRY_STRATEGIES）
+  weekly_bull:     (ind, i)    => ind.weeklyBull?.[i] === true,
+  weinstein_stage: (ind, i, v) => ind.stage?.[i] === (v ?? 2),
+  above_poc:       (ind, i)    => ind.pocAbove?.[i] === true,
+  supertrend_up:   (ind, i)    => ind.stDir?.[i] === 'up',
 };
 
 export const SUPPORTED_CONDS = Object.keys(COND_LIB);
@@ -455,6 +554,7 @@ export function runBacktest(opts) {
     feeRate = 0.001425, taxRate = 0.003,
     stopPct = 8, trailPct = 15, maxHoldDays = 120,
     regimeCandles = null,
+    entryFilters = [],
     startTs = null, onProgress = null,
   } = opts;
 
@@ -468,7 +568,7 @@ export function runBacktest(opts) {
   const needGas = entryStrats.some(s => s.conditions.some(c => c.condId.startsWith('gas:')));
   const prep = _prepStocks(histMap, startTs, onProgress, needGas);
   const regime = _prepRegime(regimeCandles);
-  const result = _replay(prep, entryStrats, { exitMode, exitDays, capital, maxPositions, feeRate, taxRate, stopPct, trailPct, maxHoldDays, regime });
+  const result = _replay(prep, entryStrats, { exitMode, exitDays, capital, maxPositions, feeRate, taxRate, stopPct, trailPct, maxHoldDays, regime, entryFilters });
   if (onProgress) onProgress(1, 1);
   return {
     ...result,
@@ -604,6 +704,7 @@ function _prepRegime(candles) {
 function _replay(prep, entryStrats, cfg) {
   const { stocks, days } = prep;
   const { exitMode, exitDays, capital, maxPositions, feeRate, taxRate } = cfg;
+  const entryFilters = cfg.entryFilters ?? [];
 
   let cash = capital;
   const positions = new Map();
@@ -641,6 +742,25 @@ function _replay(prep, entryStrats, cfg) {
         } else if (pos.entryDayCount >= (cfg.maxHoldDays ?? 120)) {
           shouldExit = true; reason = `滿${cfg.maxHoldDays ?? 120}天上限`;
         }
+      } else if (exitMode === 'supertrend' && i >= 1) {
+        // Supertrend 翻空（用昨日方向，今開執行）
+        if (st.ind.stDir[i - 1] === 'down') { shouldExit = true; reason = 'Supertrend翻空'; }
+        else if (pos.entryDayCount >= (cfg.maxHoldDays ?? 120)) { shouldExit = true; reason = `滿${cfg.maxHoldDays ?? 120}天上限`; }
+      } else if (exitMode === 'avwap' && i >= 1) {
+        // 以進場 bar 為錨，增量累計 Σ(還原價×量)/Σ量；昨收跌破即出場（今開執行）
+        const upto = i - 1;
+        let lastJ = pos.vwapLastIdx ?? (pos.entryIdx - 1);
+        for (let j = lastJ + 1; j <= upto; j++) {
+          const cj = st.candles[j]; const vv = cj.v ?? 0;
+          pos.vwapPV = (pos.vwapPV ?? 0) + cj.a * vv;
+          pos.vwapV  = (pos.vwapV ?? 0) + vv;
+        }
+        pos.vwapLastIdx = upto;
+        if (pos.vwapV > 0 && st.candles[i - 1].a < pos.vwapPV / pos.vwapV) {
+          shouldExit = true; reason = '跌破錨定VWAP';
+        } else if (pos.entryDayCount >= (cfg.maxHoldDays ?? 120)) {
+          shouldExit = true; reason = `滿${cfg.maxHoldDays ?? 120}天上限`;
+        }
       }
 
       if (shouldExit) {
@@ -665,6 +785,8 @@ function _replay(prep, entryStrats, cfg) {
         if (positions.has(st.code)) continue;
         const i = st.tsIndex.get(ts);
         if (i == null || i < 1) continue;
+        // 進場濾網（AND-gate）：用前一日（i-1）狀態，與 _signalAt 同步（T+1）
+        if (entryFilters.length && !entryFilters.every(f => COND_LIB[f.condId]?.(st.ind, i - 1, f.value))) continue;
         for (const strat of entryStrats) {
           if (_signalAt(st.ind, i - 1, strat)) { candidates.push({ st, i, signalId: strat.id }); break; }
         }
@@ -681,7 +803,7 @@ function _replay(prep, entryStrats, cfg) {
         cash -= budget;
         positions.set(cand.st.code, {
           shares, cost: budget, entryA: openA, entryC: c.o, entryTs: ts,
-          entryDayCount: 0, signalId: cand.signalId,
+          entryDayCount: 0, signalId: cand.signalId, entryIdx: cand.i,
         });
       }
     }

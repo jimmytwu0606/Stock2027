@@ -86,6 +86,41 @@ async function _load() {
   _render(panel, data);
 }
 
+/** 供鑑定所首頁拉取候選清單（不渲染，只回資料）。失敗回 [] */
+export async function fetchDiscoveredCandidates() {
+  try {
+    const res = await fetch(WORKER_BASE + '/discovered', {
+      cache: 'no-store',
+      headers: { 'X-Proxy-Token': PROXY_TOKEN },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.top) ? data.top : [];
+  } catch (e) {
+    console.warn('[discovered] fetchCandidates failed:', e.message);
+    return [];
+  }
+}
+
+/** 候選 → 鑑定所 payload（供鑑定所首頁點擊直接鑑定，與 _sendToTribunal 同格式）*/
+export function candidateToTribunalPayload(q) {
+  const label = q.conds.map(id => COND_LABELS[id] ?? id).join('+');
+  let foundTs = null;
+  if (q.foundAt) { const d = new Date(q.foundAt + 'T00:00:00'); if (!isNaN(d)) foundTs = Math.floor(d.getTime() / 1000); }
+  return {
+    kind: 'candidate',
+    label: `🔮 ${label}（${q.hold}日）`,
+    customStrategies: [{
+      id: 'CUSTOM', name: label, icon: '🔮', category: '系統發現',
+      conditions: q.conds.map(id => ({ condId: 'gas:' + id })),
+      exitDays: q.hold,
+    }],
+    hold: q.hold, exitMode: 'trailing', stopPct: 20, trailPct: 25,
+    foundTs,
+    _condLabel: label,
+  };
+}
+
 function _render(panel, data) {
   const rows = data.top.map((q, idx) => {
     const tags = q.conds.map(id =>
@@ -141,7 +176,7 @@ function _render(panel, data) {
     btn.addEventListener('click', () => _sendToBacktest(data.top[+btn.dataset.idx]));
   });
   panel.querySelectorAll('.ld-arc-btn').forEach(btn => {
-    btn.addEventListener('click', () => _promoteToHall(data.top[+btn.dataset.idx], btn));
+    btn.addEventListener('click', () => _sendToTribunal(data.top[+btn.dataset.idx]));
   });
 
   _renderHall(panel);
@@ -583,6 +618,27 @@ function _sendToBacktest(q) {
   };
   openLabWithCode('', 'backtest');
   document.dispatchEvent(new CustomEvent('bt:customEntry'));
+}
+
+// ── 🏆 → ⚖️ 鑑定所一條龍（G1~G4 + 八維風險 + 圖文報告）──
+async function _sendToTribunal(q) {
+  const label = q.conds.map(id => COND_LABELS[id] ?? id).join('+');
+  // 發現日 → timestamp（秒）；foundAt 形如 YYYY-MM-DD
+  let foundTs = null;
+  if (q.foundAt) { const d = new Date(q.foundAt + 'T00:00:00'); if (!isNaN(d)) foundTs = Math.floor(d.getTime() / 1000); }
+  const payload = {
+    kind: 'candidate',
+    label: `🔮 ${label}（${q.hold}日）`,
+    customStrategies: [{
+      id: 'CUSTOM', name: label, icon: '🔮', category: '系統發現',
+      conditions: q.conds.map(id => ({ condId: 'gas:' + id })),
+      exitDays: q.hold,
+    }],
+    hold: q.hold, exitMode: 'trailing', stopPct: 20, trailPct: 25,
+    foundTs,
+  };
+  const mod = await import('./lab-tribunal.js');
+  mod.openTribunal(payload);
 }
 
 // ── 今日命中個股（直接查 window.__snapshot，O(1) boolean 比對）──────────

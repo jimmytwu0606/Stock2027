@@ -27,6 +27,7 @@
   <link rel="stylesheet" href="css/seed.css" />
   <link rel="stylesheet" href="css/screener-hub.css" />
   <link rel="stylesheet" href="css/strategy-lab.css" />
+  <link rel="stylesheet" href="css/lab-tribunal.css" />
   <link rel="stylesheet" href="css/search-card.css" />
   <link rel="stylesheet" href="css/additions.css" />
   <link rel="stylesheet" href="css/market-pulse.css" />
@@ -299,6 +300,9 @@
         <div class="sh-title">
           <span class="sh-name" id="shName">—</span>
           <span class="sh-code" id="shCode"></span>
+          <span class="sh-rs-badge" id="shRSBadge" style="display:none"></span>
+          <span class="sh-rs-badge" id="shWeeklyBadge" style="display:none" title="週線共振"></span>
+          <span class="sh-rs-badge" id="shStageBadge" style="display:none" title="Weinstein 階段"></span>
           <button class="sh-add-btn" id="shAddToWatchlist" title="加入自選清單">＋ 加入自選</button>
           <button class="sh-similar-btn" id="shFindSimilar" title="找相似股">🔍 找相似</button>
         </div>
@@ -362,6 +366,8 @@
           <button class="ind-toggle" data-ind="BB"   data-indicator="BB">BB</button>
           <button class="ind-toggle" data-ind="ENV"  data-indicator="ENV">ENV</button>
           <button class="ind-toggle" data-ind="SAR"  data-indicator="SAR">SAR</button>
+          <button class="ind-toggle" data-ind="SUPERTREND" data-indicator="SUPERTREND" title="Supertrend：ATR 通道翻轉線（多頭紅線貼底/空頭綠線貼頂，可當移動停損）">🛡️ Supertrend</button>
+          <button class="ind-toggle" data-ind="AVWAP" data-indicator="AVWAP" title="錨定VWAP：妖股自動掛啟動日成本線（跌破=主升段進場者全面套牢），其餘股以可見區間起算">⚓ AVWAP</button>
           <button class="ind-toggle" data-ind="GMMA" data-indicator="GMMA" title="顧比均線（12條，效能較重）">GMMA⚡</button>
           <button class="ind-toggle" data-ind="PVD"  data-indicator="PVD" title="分價量表（右側 canvas）">📊 分價量</button>
           <div class="tb-sep"></div>
@@ -370,6 +376,9 @@
           <button class="ind-toggle" data-ind="PSY"  data-indicator="PSY">PSY</button>
           <button class="ind-toggle" data-ind="RCI"  data-indicator="RCI">RCI</button>
           <button class="ind-toggle" data-ind="HV"   data-indicator="HV">HV</button>
+          <button class="ind-toggle" data-ind="TTM"  data-indicator="TTM" title="TTM Squeeze：布林帶縮進 Keltner=壓縮蓄勢（紅點），釋放+動能柱定方向">🔋 TTM</button>
+          <button class="ind-toggle" data-ind="OBV"  data-indicator="OBV" title="OBV 能量潮：累計量能線，與價格背離常領先反轉">🌊 OBV</button>
+          <button class="ind-toggle" data-ind="CONV" data-indicator="CONV" title="確信度 C 曲線（動能×量能流×勝率合成，疊自身股性 P20-P80 帶）">⚡ 確信度</button>
           <div class="tb-sep"></div>
           <!-- 說明書 -->
           <button class="ce-enter-btn" id="indHelpBtn" title="開啟指標完整說明書">📖 說明書</button>
@@ -476,6 +485,30 @@
               <span style="color:var(--hint);margin-left:4px">歷史波動率（年化%）</span>
             </div>
             <div id="hvChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="convPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#fbbf24">● C 確信度</span>
+              <span style="color:rgba(96,165,250,.6)">▬ 股性帶 P20-P80</span>
+              <span style="color:var(--hint);margin-left:4px">動能×量能流×勝率 · 觀察工具非進場訊號</span>
+            </div>
+            <div id="convChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="ttmPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#fbbf24">● 壓縮點</span>
+              <span style="color:#ef5350">▮ 動能↑</span>
+              <span style="color:#26a69a">▮ 動能↓</span>
+              <span style="color:var(--hint);margin-left:4px">TTM Squeeze (20,2/1.5)</span>
+            </div>
+            <div id="ttmChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="obvPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#a78bfa">● OBV</span>
+              <span style="color:var(--hint);margin-left:4px">能量潮（EMA3 平滑）</span>
+            </div>
+            <div id="obvChart" style="height:135px"></div>
           </div>
           <!-- Phase 7.3 v3 — 全視窗模式專用：mini badges + 可拖拽圖例卡 -->
           <div id="fsMiniBadges" class="fs-mini-badges"></div>
@@ -1027,6 +1060,10 @@
             <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 4v3l2 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
             系統發現
           </button>
+          <button class="lab-sub-btn" data-lab="tribunal" id="labBtnTribunal" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M7 1.5v11M3 4h8M3 4l-1.5 4h3L3 4zm8 0l-1.5 4h3L11 4z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+            鑑定所
+          </button>
         </div>
         <div class="lab-toolbar-spacer"></div>
         <!-- 單股回測控制 -->
@@ -1149,6 +1186,10 @@
         <div class="lab-panel" id="labPanelDiscovered" style="display:none">
           <div id="labDiscoveredResult"></div>
         </div>
+
+        <!-- ── ⚖️ 鑑定所（VVVIP，內容由 lab-tribunal.js 動態生成）── -->
+        <div class="lab-controls" id="labControlsTribunal" style="display:none"></div>
+        <div class="lab-panel" id="labPanelTribunal" style="display:none"></div>
 
 
       </div><!-- /lab-body -->
@@ -2081,6 +2122,13 @@
 <script type="module" src="js/modules/analysis-mod-hv.js"></script>
 <script type="module" src="js/modules/analysis-mod-env.js"></script>
 <script type="module" src="js/modules/analysis-mod-sar.js"></script>
+<script type="module" src="js/modules/analysis-mod-avwap.js"></script>
+<script type="module" src="js/modules/analysis-mod-mtf.js"></script>
+<script type="module" src="js/modules/analysis-mod-stage.js"></script>
+<script type="module" src="js/modules/analysis-mod-vprofile.js"></script>
+<script type="module" src="js/modules/analysis-mod-ttm.js"></script>
+<script type="module" src="js/modules/analysis-mod-supertrend.js"></script>
+<script type="module" src="js/modules/analysis-mod-obv.js"></script>
 <script type="module" src="js/modules/analysis-mod-gmma.js"></script>
 <script type="module" src="js/modules/analysis-mod-pattern.js"></script>
   <script type="module" src="js/pattern-image.js"></script>

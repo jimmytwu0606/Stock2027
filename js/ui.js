@@ -22,6 +22,7 @@
 import { AppState } from './state.js';
 import { toYahooSymbol } from './api.js';
 import { getChineseName } from './api.js';
+import { calcWeeklyTrend, calcWeinsteinStage } from './indicators.js';
 
 // ─────────────────────────────────────────────
 // 格式化工具
@@ -91,7 +92,109 @@ export function updateHeader(code, quote) {
   document.getElementById('sLow').textContent     = fmt(quote.low);
   document.getElementById('sPrev').textContent    = fmt(quote.prev);
   document.getElementById('sVol').textContent     = fmtVol(quote.volume);
+  renderRSBadge(code);
   return { chg, chgPct };
+}
+
+// ─────────────────────────────────────────────
+// T-1 RS Rating 角標（從 snapshot 讀 rs_v；≥87 金框）
+// ─────────────────────────────────────────────
+export function renderRSBadge(code) {
+  const el = document.getElementById('shRSBadge');
+  if (!el) return;
+  const snap = window.__snapshot;
+  const rsv = snap?.stocks?.[code]?.rs_v;
+  if (rsv == null) { el.style.display = 'none'; return; }
+  // ≥95 精英(金) / ≥87 強勢(金框) / 其餘 中性
+  let cls = 'sh-rs-badge';
+  if (rsv >= 95) cls += ' rs-elite';
+  else if (rsv >= 87) cls += ' rs-strong';
+  const lineHigh = snap?.stocks?.[code]?.rs_line_high === true;
+  el.className = cls;
+  el.textContent = `RS ${rsv}` + (lineHigh ? ' ↗' : '');
+  el.title = `相對強度 ${rsv}（強於 ${rsv}% 個股）` +
+             (rsv >= 95 ? '｜精英級' : rsv >= 87 ? '｜強勢級' : '') +
+             (lineHigh ? '｜RS 線創 60 日新高（領先價格的最強前兆）' : '');
+  el.style.display = '';
+}
+
+// ─────────────────────────────────────────────
+// T-3 / T-5 資料源：固定 2 年日K（hist 倉儲，還原價），不綁圖表週期
+//   2年週期是週K、短週期根數不足 → 都不可靠；統一從 hist 取日K
+//   快取到 window.__taDaily = { code, candles[] }；模組與徽章共用
+// ─────────────────────────────────────────────
+export async function ensureTADaily(code) {
+  if (!code) return;
+  if (window.__taDaily?.code === code && window.__taDaily.candles?.length) return;
+  try {
+    const { fetchHistOne } = await import('./api-hist.js');
+    const hist = await fetchHistOne(code);
+    if (hist?.candles?.length) {
+      // slim {t,o,h,l,c,a,v} → 標準格式；close 用還原價 a（長回看防除權息失真）
+      const candles = hist.candles.map(k => ({
+        time: k.t, open: k.o, high: k.h, low: k.l,
+        close: (k.a != null ? k.a : k.c), volume: k.v ?? 0,
+      }));
+      window.__taDaily = { code, candles };
+    }
+  } catch (e) { /* hist 不可用 → 模組 fallback 用 lastCandles */ }
+}
+
+// 取 TA 用日K：優先 hist 快取（當前股），否則退回 lastCandles
+function _taDailyCandles() {
+  const code = AppState.activeCode || '';
+  if (window.__taDaily?.code === code && window.__taDaily.candles?.length) {
+    return window.__taDaily.candles;
+  }
+  return AppState.lastCandles || [];
+}
+
+// ─────────────────────────────────────────────
+// T-3 / T-5 header 徽章：週線共振 + Weinstein 階段（用 2 年日K hist）
+//   週線需 ≥70 根、階段需 ≥160 根日K，資料不足自動隱藏
+// ─────────────────────────────────────────────
+const _STAGE_BADGE = {
+  1: { txt: 'S1 底部', color: '#9ca3af' },
+  2: { txt: 'S2 上升', color: '#ef5350' },
+  3: { txt: 'S3 頭部', color: '#f59e0b' },
+  4: { txt: 'S4 下降', color: '#26a69a' },
+};
+export function renderWeeklyStageBadges() {
+  const candles = _taDailyCandles();
+  const wEl = document.getElementById('shWeeklyBadge');
+  const sEl = document.getElementById('shStageBadge');
+
+  // 週線共振徽章
+  if (wEl) {
+    const w = candles.length >= 70 ? calcWeeklyTrend(candles) : { ready: false };
+    if (!w.ready || (!w.bull && !w.bear)) {
+      wEl.style.display = 'none';
+    } else {
+      const bull = w.bull;
+      wEl.textContent = bull ? '週多頭 ↗' : '週空頭 ↘';
+      wEl.style.color = bull ? '#ef5350' : '#26a69a';
+      wEl.style.borderColor = bull ? 'rgba(239,83,80,0.5)' : 'rgba(38,166,154,0.5)';
+      wEl.style.background = bull ? 'rgba(239,83,80,0.08)' : 'rgba(38,166,154,0.08)';
+      wEl.title = `週線${bull ? '多頭' : '空頭'}：週收${bull ? '>' : '<'}週MA10 且月線連2週${bull ? '上揚' : '下彎'}（順大勢逆小勢）`;
+      wEl.style.display = '';
+    }
+  }
+
+  // Weinstein 階段徽章
+  if (sEl) {
+    const st = candles.length >= 160 ? calcWeinsteinStage(candles) : { ready: false, stage: 0 };
+    const meta = st.ready ? _STAGE_BADGE[st.stage] : null;
+    if (!meta) {
+      sEl.style.display = 'none';
+    } else {
+      sEl.textContent = meta.txt;
+      sEl.style.color = meta.color;
+      sEl.style.borderColor = meta.color + '80';
+      sEl.style.background = meta.color + '14';
+      sEl.title = `Weinstein 第 ${st.stage} 階段（軸線週MA30）：只買2賣3避4等1`;
+      sEl.style.display = '';
+    }
+  }
 }
 
 // ─────────────────────────────────────────────
