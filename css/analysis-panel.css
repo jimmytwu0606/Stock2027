@@ -745,3 +745,122 @@
 }
 /* 支撐壓力 canvas */
 .cao-sr-canvas { display: block; }
+
+/* ════════════════════════════════════════════════════════════
+   🎨 工作室（studio-mode）— 乾淨 K 線全視窗，不渲染教學內容
+   與「教學閱讀室」(.fullscreen-mode 無 .studio-mode) 共用全螢幕版面，
+   差別只在：隱藏教學 DOM + 顯示圖層 chips + 編輯工具列常駐。
+   ════════════════════════════════════════════════════════════ */
+#chartPanel.fullscreen-mode.studio-mode #fsMiniBadges,
+#chartPanel.fullscreen-mode.studio-mode #fsLegendCard,
+#chartPanel.fullscreen-mode.studio-mode #fsLegendReopen,
+#chartPanel.fullscreen-mode.studio-mode #fsTabBar,
+#chartPanel.fullscreen-mode.studio-mode #fsDeepZone {
+  display: none !important;
+}
+/* 工作室不需要「退出編輯」寬鈕（退出走 ESC / ✕ 全視窗鈕）*/
+#chartPanel.studio-mode #chartEditToolbar .ce-exit-btn { display: none !important; }
+
+/* 圖層 chips（工作室右上角浮層，避開左上的編輯工具列）*/
+.studio-layer-chips {
+  position: absolute;
+  top: 10px; right: 12px;
+  z-index: 1250;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px;
+  background: rgba(22, 27, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.studio-layer-chips .slc-label {
+  font-size: 11px; color: var(--hint, #8b949e);
+  margin-right: 2px; letter-spacing: .5px;
+}
+.studio-layer-chips .slc-chip {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted, #c9d1d9);
+  cursor: pointer;
+  transition: all .12s ease;
+}
+.studio-layer-chips .slc-chip:hover { background: rgba(255, 255, 255, 0.09); }
+.studio-layer-chips .slc-chip.on {
+  background: rgba(239, 83, 80, 0.16);
+  border-color: rgba(239, 83, 80, 0.5);
+  color: #ef5350;
+}
+
+/* 圖層 chips 拖移把手 */
+.studio-layer-chips .slc-grip {
+  cursor: grab;
+  color: var(--hint, #8b949e);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.studio-layer-chips .slc-grip:hover { color: var(--text, #e6edf3); }
+.studio-layer-chips.slc-dragging { cursor: grabbing; opacity: .95; box-shadow: 0 8px 26px rgba(0,0,0,.4); }
+.studio-layer-chips.slc-dragging .slc-grip { cursor: grabbing; }
+
+/* 🎨 工作室：K 線可手動拉高拉滿（預設滿版，拖把手覆蓋） */
+#chartPanel.fullscreen-mode.studio-mode #mainChart {
+  flex: 0 0 auto !important;
+  /* 預設 62vh（同閱讀室），副圖直接露在下方可見；拖把手可放大，--studio-chart-h 記住自訂值 */
+  height: var(--studio-chart-h, 62vh) !important;
+  min-height: 200px !important;
+}
+#chartPanel.fullscreen-mode.studio-mode .chart-resize-handle {
+  display: flex !important;
+}
+
+/* ════════════════════════════════════════════════════════════
+   全視窗版面修正：副圖完整顯示 + 可向下延伸 + 捲軸可用
+   原本 chart-area 固定一螢幕高 + overflow:hidden + 主圖 flex:1，
+   導致副圖被擠出螢幕裁切（全黑/看不到）。改為高度 auto 隨內容延伸。
+   （:not()/.studio-mode 提高 specificity 蓋過 chart-edit.css 與本檔基礎規則）
+   ════════════════════════════════════════════════════════════ */
+/* 閱讀室全視窗 */
+#chartPanel.fullscreen-mode:not(.studio-mode) .chart-area,
+#chartPanel.fullscreen-mode:not(.studio-mode) #chartArea {
+  height: auto !important;
+  min-height: auto !important;
+  overflow: visible !important;
+}
+#chartPanel.fullscreen-mode:not(.studio-mode) #mainChart {
+  flex: 0 0 auto !important;
+  height: 62vh !important;
+  min-height: 360px !important;
+}
+/* 工作室全視窗：chart-area 也可延伸（若有副圖能往下排+捲），主圖維持 --studio-chart-h 可手拉 */
+#chartPanel.fullscreen-mode.studio-mode .chart-area,
+#chartPanel.fullscreen-mode.studio-mode #chartArea {
+  height: auto !important;
+  min-height: auto !important;
+  overflow: visible !important;
+}
+/* 全視窗時副圖面板維持自身高度，絕不被 flex 壓縮成 0（修「全黑」）*/
+#chartPanel.fullscreen-mode .ind-panel {
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+}
+
+/* 🎨 工作室：顯示副圖（KD/RSI/MACD）。工作室是繪圖模式，使用者要邊畫線邊看技術分析，
+   不該藏副圖。主圖維持 --studio-chart-h 可手拉，副圖排在下方可捲；教學 tab 仍隱藏（見上）。*/
+/* （已移除舊的 .studio-mode .ind-panel { display:none } —— 那是誤把副圖藏掉的根源）*/
+
+/* 全視窗教學區（tab 列 + 深度解讀區）只在全視窗顯示；主頁一律隱藏，
+   避免閱讀室填充後殘留、漏到主畫面下方（!important 蓋過 JS 設的 inline display）*/
+#chartPanel:not(.fullscreen-mode) #fsTabBar,
+#chartPanel:not(.fullscreen-mode) #fsDeepZone,
+#chartPanel:not(.fullscreen-mode) .fs-tab-bar,
+#chartPanel:not(.fullscreen-mode) .fs-deep-zone {
+  display: none !important;
+}

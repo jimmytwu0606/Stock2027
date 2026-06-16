@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { matchSignals } from './signal-scan.js';
-import { calcMA, calcRSI, calcMACD } from './indicators.js';
+import { calcMA, calcRSI, calcMACD, calcSupertrend, anchoredVWAP } from './indicators.js';
 import { getPeersOf } from './industry-groups.js';
 
 const HORIZONS_TARGETS = [0.01, 0.02, 0.03];   // 1% / 2% / 3% 標的
@@ -206,6 +206,12 @@ const DEFAULT_EXIT_RULES = [
   // 設計：X2「天黑請閉眼」訊號消失即出場，飆股加速結束 = 主升段可能告終
   // 搭配 X8「見龍在田」進場，驗證「見龍進場，天黑出場」的完整循環
   { id: 'x2-exit', label: 'X2 消失出場', desc: '飆股加速訊號消失即離場，搭配X6見龍在田使用' },
+  // E12 v2.10 — Supertrend 翻空出場（ATR 通道趨勢跟蹤型移動停損）
+  // 設計：Supertrend(10,3) 由多翻空即全出，波動自適應、不被正常震盪洗掉
+  { id: 'supertrend-exit', label: 'Supertrend 翻空出場', desc: 'ATR(10,3)通道翻空即離場，波動自適應的趨勢移動停損' },
+  // E13 v2.10 — 跌破錨定VWAP出場（以進場點為錨）
+  // 設計：收盤跌破「持倉成本 VWAP」即離場，代表進場後買方均價失守
+  { id: 'avwap-break', label: '跌破錨定VWAP出場', desc: '以進場點為錨，收盤跌破持倉VWAP即離場（成本均價失守）' },
 ];
 
 export function getDefaultEntries()    { return ALL_ENTRIES.map(e => ({ ...e })); }
@@ -467,6 +473,42 @@ function simulateTrade(candles, entryIdx, ruleId, opts = {}) {
   // E11: X2 消失出場
   if (ruleId === 'x2-exit') {
     return _simulateX2Exit(candles, entryIdx, opts);
+  }
+
+  // E12: Supertrend 翻空出場（ATR 通道翻轉；Supertrend 因果序列，整段算一次讀 index）
+  if (ruleId === 'supertrend-exit') {
+    const st = calcSupertrend(candles, 10, 3);
+    if (st.ready) {
+      for (let i = entryIdx + 1; i <= maxIdx; i++) {
+        if (st.dirArr[i] === 'down') {
+          return {
+            exitIdx:    i,
+            exitReason: 'Supertrend 翻空',
+            returnPct:  (candles[i].close - entryClose) / entryClose,
+            holdDays:   i - entryIdx,
+          };
+        }
+      }
+    }
+    const exitClose = candles[maxIdx].close;
+    return { exitIdx: maxIdx, exitReason: '達最大持有 60 天', returnPct: (exitClose - entryClose) / entryClose, holdDays: maxIdx - entryIdx };
+  }
+
+  // E13: 跌破錨定VWAP出場（錨點 = 進場日，VWAP 因果累加）
+  if (ruleId === 'avwap-break') {
+    const vwap = anchoredVWAP(candles, entryIdx);
+    for (let i = entryIdx + 1; i <= maxIdx; i++) {
+      if (vwap[i] != null && candles[i].close < vwap[i]) {
+        return {
+          exitIdx:    i,
+          exitReason: '跌破錨定VWAP',
+          returnPct:  (candles[i].close - entryClose) / entryClose,
+          holdDays:   i - entryIdx,
+        };
+      }
+    }
+    const exitClose = candles[maxIdx].close;
+    return { exitIdx: maxIdx, exitReason: '達最大持有 60 天', returnPct: (exitClose - entryClose) / entryClose, holdDays: maxIdx - entryIdx };
   }
 
   return null;

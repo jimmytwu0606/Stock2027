@@ -5,6 +5,7 @@
  */
 
 import { buildSettingsPanel } from './mobile-settings.js';
+import { getMainChart } from '../chart.js';
 
 const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 let _deps = {};
@@ -12,7 +13,6 @@ export function setNavDeps(deps) { _deps = deps; }
 
 const STOCK_TABS = [
   { id: 'chart',    label: 'K線圖',   icon: '📈' },
-  { id: 'analysis', label: '智能分析', icon: '🧠' },
 ];
 const NAV_ITEMS = [
   { page: 'chart',     label: '看盤',     icon: '📈' },
@@ -31,10 +31,33 @@ export function initMobileNav() {
   _buildTopbar();
   _showPage('chart');
 
+  // 手機主圖撐滿：副圖隱藏後留下的黑塊 → 每次圖重繪把主圖高度填到可用空間
+  // 用 getMainChart().applyOptions（不寫 localStorage，桌機不受影響；isMobile 再擋一層）
+  window.addEventListener('chartRendered', () => requestAnimationFrame(() => { _forceMobileIndicators(); _fitMobileChart(); }));
+  window.addEventListener('orientationchange', () => setTimeout(_fitMobileChart, 200));
+  window.addEventListener('resize', () => { clearTimeout(_fitTimer); _fitTimer = setTimeout(_fitMobileChart, 200); });
+
   window.__mobileOpenStock = () => {
     openMobileStockPage();
     _showStockContent('chart');
   };
+}
+
+let _fitTimer = null;
+function _fitMobileChart() {
+  if (!isMobile()) return;
+  try {
+    const chart  = getMainChart?.();
+    const mainEl = document.getElementById('mainChart');
+    if (!chart || !mainEl) return;
+    const top = document.getElementById('mTopbar')?.offsetHeight || 52;
+    const hdr = document.getElementById('stockHeader')?.offsetHeight || 0;
+    const bar = document.getElementById('mKlineBar')?.offsetHeight || 0;
+    const avail = window.innerHeight - top - hdr - bar - 6;
+    const h = Math.max(260, Math.round(avail));
+    chart.applyOptions({ height: h });
+    window._chartResize?.();
+  } catch (_) {}
 }
 
 // ── Topbar + 抽屜 ──────────────────────────────────────────────────────────
@@ -136,7 +159,7 @@ function _showPage(page) {
     return;
   }
 
-  const map = { chart:'tabChart', watchlist:'tabWatchlist', screener:'tabScreener' };
+  const map = { chart:'tabChart', watchlist:'tabWatchlist', screener:'tabHub' };
   const panelId = map[page];
   if (panelId) document.getElementById(panelId)?.classList.add('active');
 
@@ -157,6 +180,7 @@ export function openMobileStockPage(title) {
   if (title) _setTopbarTitle(title);
   _setDrawerStockActive('chart');
   _buildKlineBar();
+  requestAnimationFrame(() => setTimeout(_fitMobileChart, 60));
 }
 
 export function closeMobileStockPage() {
@@ -270,23 +294,22 @@ function _setDrawerStockActive(tab) {
 }
 
 // ── K 線控制列 ─────────────────────────────────────────────────────────────
-const _MAIN_OPTS = [
-  { ind:'none', label:'主圖：無'  }, { ind:'MA20', label:'MA20' },
-  { ind:'MA5',  label:'MA5'      }, { ind:'MA10', label:'MA10' },
-  { ind:'MA60', label:'MA60'     }, { ind:'EMA',  label:'EMA'  },
-  { ind:'BB',   label:'BB'       }, { ind:'ENV',  label:'ENV'  },
-  { ind:'ICHI', label:'Ichimoku' }, { ind:'SAR',  label:'SAR'  },
-  { ind:'GMMA', label:'GMMA'     }, { ind:'PVD',  label:'分價量'},
-];
-const _SUB_OPTS = [
-  { ind:'KD',   label:'KD'   }, { ind:'RSI',  label:'RSI'  },
-  { ind:'MACD', label:'MACD' }, { ind:'DMI',  label:'DMI'  },
-  { ind:'PSY',  label:'PSY'  }, { ind:'RCI',  label:'RCI'  },
-  { ind:'HV',   label:'HV'   },
-];
 const _PERIOD_LABELS = {'5d':'5日','1mo':'1月','3mo':'3月','6mo':'6月','1y':'1年','2y':'2年'};
-let _curMainInd = 'MA20';
-let _curSubInd  = 'KD';
+
+// 手機主圖固定均線 MA5/10/20/60（免切換）；副圖全關（手機不顯示副圖）
+const _M_MA_ON   = ['MA5','MA10','MA20','MA60'];
+const _M_SUB_OFF = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV','TTM','OBV','RS'];
+function _forceMobileIndicators() {
+  if (!isMobile()) return;
+  _M_MA_ON.forEach(ind => {
+    const b = document.querySelector(`.ind-toggle[data-ind="${ind}"]`);
+    if (b && !b.classList.contains('on')) b.click();
+  });
+  _M_SUB_OFF.forEach(ind => {
+    const b = document.querySelector(`.ind-toggle[data-ind="${ind}"]`);
+    if (b && b.classList.contains('on')) b.click();
+  });
+}
 
 function _buildKlineBar() {
   if (document.getElementById('mKlineBar')) return;
@@ -296,14 +319,6 @@ function _buildKlineBar() {
     <select id="mPeriodSel" class="mkl-sel">
       ${Object.entries(_PERIOD_LABELS).map(([v,l]) =>
         `<option value="${v}"${v==='1mo'?' selected':''}>${l}</option>`).join('')}
-    </select>
-    <select id="mMainIndSel" class="mkl-sel">
-      ${_MAIN_OPTS.map(o =>
-        `<option value="${o.ind}"${o.ind===_curMainInd?' selected':''}>${o.label}</option>`).join('')}
-    </select>
-    <select id="mSubIndSel" class="mkl-sel">
-      ${_SUB_OPTS.map(o =>
-        `<option value="${o.ind}"${o.ind===_curSubInd?' selected':''}>${o.label}</option>`).join('')}
     </select>
     <button id="mKlineRefresh" class="mkl-refresh-btn" style="
       padding:0 10px;height:32px;border-radius:8px;border:0.5px solid #30363d;
@@ -315,26 +330,11 @@ function _buildKlineBar() {
   document.getElementById('mPeriodSel')?.addEventListener('change', e => {
     document.querySelector(`.tb-btn[data-period="${e.target.value}"]`)?.click();
   });
-  document.getElementById('mMainIndSel')?.addEventListener('change', e => {
-    const prev = _curMainInd; _curMainInd = e.target.value;
-    if (prev !== 'none') {
-      const old = document.querySelector(`.ind-toggle[data-ind="${prev}"]`);
-      if (old?.classList.contains('on')) old.click();
-    }
-    if (_curMainInd !== 'none') {
-      const btn = document.querySelector(`.ind-toggle[data-ind="${_curMainInd}"]`);
-      if (btn && !btn.classList.contains('on')) btn.click();
-    }
-  });
-  document.getElementById('mSubIndSel')?.addEventListener('change', e => {
-    const prev = _curSubInd; _curSubInd = e.target.value;
-    const old = document.querySelector(`.ind-toggle[data-ind="${prev}"]`);
-    if (old?.classList.contains('on')) old.click();
-    const btn = document.querySelector(`.ind-toggle[data-ind="${_curSubInd}"]`);
-    if (btn && !btn.classList.contains('on')) btn.click();
-  });
   document.getElementById('mKlineRefresh')?.addEventListener('click', () => {
     const code = window.__stockDashCode;
     if (code) window.__loadStock?.(code, { force: true });
   });
+
+  // 固定均線 + 關副圖（免切換）
+  _forceMobileIndicators();
 }

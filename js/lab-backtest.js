@@ -15,7 +15,7 @@
 import { fetchHistAll, fetchBenchmark, fetchAllHistCodes } from './api-hist.js';
 import { runBacktest, runBacktestAll, runParamScan, isStrategyBacktestable } from './backtest-engine.js';
 import { calcMetrics } from './backtest-metrics.js';
-import { STRATEGIES } from './strategy.js';
+import { STRATEGIES, TA_ENTRY_STRATEGIES } from './strategy.js';
 import { dbGet, dbPut } from './db.js';
 import { AppState } from './state.js';
 
@@ -82,6 +82,9 @@ function _renderPanel() {
     '<optgroup label="其他訊號">',
     ...others.map(s => `<option value="${s.id}">${s.icon} ${s.id} ${s.name}</option>`),
     '</optgroup>',
+    '<optgroup label="進階指標">',
+    ...TA_ENTRY_STRATEGIES.filter(isStrategyBacktestable).map(s => `<option value="${s.id}">${s.icon} ${s.name}</option>`),
+    '</optgroup>',
   ].join('');
 
   panel.innerHTML = `
@@ -101,6 +104,8 @@ function _renderPanel() {
             <option value="days">固定天數</option>
             <option value="signal_gone">訊號消失</option>
             <option value="trailing">停損+移動停利</option>
+            <option value="supertrend">Supertrend 翻空</option>
+            <option value="avwap">跌破錨定VWAP</option>
           </select>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px">
@@ -153,6 +158,15 @@ function _renderPanel() {
           🔬 參數掃描
         </button>
         <span id="btStatus" style="font-size:12px;color:var(--hint)"></span>
+      </div>
+
+      <!-- 進場濾網（AND-gate，疊在進場訊號上：勾選者全部成立才進場）-->
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+        <span style="font-size:11px;color:var(--hint)">🧲 進場濾網<span style="color:var(--muted)">（疊在訊號上，全部成立才進）</span></span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" id="btFltWk"  style="accent-color:var(--accent)" />🔭 週線多頭</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" id="btFltSt2" style="accent-color:var(--accent)" />🌀 Stage 2</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" id="btFltPoc" style="accent-color:var(--accent)" />📊 站上POC</label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" id="btFltSup" style="accent-color:var(--accent)" />🛡️ Supertrend多</label>
       </div>
 
       <!-- 全策略排行榜 -->
@@ -251,7 +265,17 @@ async function _run() {
     let entryIds = [...document.getElementById('btEntrySelect').selectedOptions].map(o => o.value);
     const useCustom = entryIds.includes('CUSTOM') && window.__btCustomEntry;
     entryIds = entryIds.filter(id => id !== 'CUSTOM');
-    if (entryIds.length === 0 && !useCustom) { setStatus('⚠ 請至少選一個進場訊號'); btn.disabled = false; return; }
+    // 進階指標策略走 customStrategies 注入（不在 live STRATEGIES，引擎靠 customStrategies 評估）
+    const taSelected = TA_ENTRY_STRATEGIES.filter(s => entryIds.includes(s.id) && isStrategyBacktestable(s));
+    const taIds = new Set(taSelected.map(s => s.id));
+    entryIds = entryIds.filter(id => !taIds.has(id));
+    if (entryIds.length === 0 && taSelected.length === 0 && !useCustom) { setStatus('⚠ 請至少選一個進場訊號'); btn.disabled = false; return; }
+    // 進場濾網（AND-gate）
+    const entryFilters = [];
+    if (document.getElementById('btFltWk')?.checked)  entryFilters.push({ condId: 'weekly_bull' });
+    if (document.getElementById('btFltSt2')?.checked) entryFilters.push({ condId: 'weinstein_stage', value: 2 });
+    if (document.getElementById('btFltPoc')?.checked) entryFilters.push({ condId: 'above_poc' });
+    if (document.getElementById('btFltSup')?.checked) entryFilters.push({ condId: 'supertrend_up' });
     const exitMode = document.getElementById('btExitMode').value;
     const exitDays = parseInt(document.getElementById('btExitDays').value, 10) || 20;
     let maxPositions = parseInt(document.getElementById('btMaxPos').value, 10) || 10;
@@ -281,7 +305,8 @@ async function _run() {
     const useRegime = document.getElementById('btRegime')?.checked;
     const result = runBacktest({
       histMap, entryIds, exitMode, exitDays, stopPct, trailPct,
-      customStrategies: useCustom ? [window.__btCustomEntry] : [],
+      customStrategies: [...(useCustom ? [window.__btCustomEntry] : []), ...taSelected],
+      entryFilters,
       regimeCandles: useRegime ? benchCandles : null,
       capital: 1_000_000, maxPositions,
     });

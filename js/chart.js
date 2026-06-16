@@ -17,7 +17,10 @@ import { AppState } from './state.js';
 import { computeConviction } from './conviction.js';
 import { calcMA, calcKD, calcRSI, calcMACD, calcBollinger,
          calcEMA, calcGMMA, calcSAR, calcDMI, calcPSY, calcRCI, calcHV, calcEnvelope,
-         calcIchimoku } from './indicators.js';
+         calcIchimoku, anchoredVWAP, resolveAVWAPAnchor,
+         calcSupertrend, calcTTMSqueeze, calcOBV } from './indicators.js';
+import { getYaoguRecord } from './db.js';
+import { fetchBenchmark } from './api-hist.js';
 
 // ─────────────────────────────────────────────
 // 圖表實例與 Series 管理
@@ -25,12 +28,72 @@ import { calcMA, calcKD, calcRSI, calcMACD, calcBollinger,
 let _charts = {};   // { main, kd, rsi, macd }
 let _series = {};   // 所有 series 實例
 
+// 🔧 臨時除錯 hook（定位副圖全黑；查完會移除）。Console 跑 __dbg()
+if (typeof window !== 'undefined') {
+  window.__dbg = () => {
+    const rg = c => { try { const r = c?.timeScale().getVisibleRange(); return r ? `${r.from}→${r.to}` : 'NULL'; } catch (e) { return 'ERR'; } };
+    const dl = s => { try { return s ? s.data().length : 'noSeries'; } catch (e) { return 'ERR'; } };
+    const P = document.getElementById('chartPanel');
+    const bOn = ind => { const b = document.querySelector(`.ind-toggle[data-indicator="${ind}"]`); return b ? b.classList.contains('on') : '?'; };
+    const o = {
+      mode: `fs=${P?.classList.contains('fullscreen-mode')} studio=${P?.classList.contains('studio-mode')} edit=${!!document.querySelector('.chart-edit-active')}`,
+      btnOn: `KD=${bOn('KD')} RSI=${bOn('RSI')} MACD=${bOn('MACD')} DMI=${bOn('DMI')}`,
+      ind: `KD=${AppState.indicators.KD} RSI=${AppState.indicators.RSI} MACD=${AppState.indicators.MACD} DMI=${AppState.indicators.DMI} RS=${AppState.indicators.RS}`,
+      mainRange: rg(_charts.main),
+      kd:   `range=${rg(_charts.kd)}   data=${dl(_series.kdK)}`,
+      rsi:  `range=${rg(_charts.rsi)}  data=${dl(_series.rsi)}`,
+      macd: `range=${rg(_charts.macd)} data=${dl(_series.macdDif)}`,
+      dmi:  `range=${rg(_charts.dmi)}  data=${dl(_series.dmiPlus)} (panel=${document.getElementById('dmiPanel')?.style.display||'?'})`,
+    };
+    const r = JSON.stringify(o, null, 2);
+    console.log('%c'+r, 'color:#0ff'); try { copy(r); } catch (e) {}
+    return o;
+  };
+}
+
 // ─────────────────────────────────────────────
 // Phase 7 對外存取(讓 canvas-overlay / chart-edit 拿到實例)
 // ─────────────────────────────────────────────
 export function getMainChart()    { return _charts.main  || null; }
 export function getCandleSeries() { return _series.candle || null; }
 export function getMainChartEl()  { return document.getElementById('mainChart'); }
+
+// ── 可調 K 線高度（拖曳把手用）：存 localStorage，跨 session 記憶 ──
+function _storedMainH() {
+  const v = +(localStorage.getItem('mainChartH'));
+  return (v >= 240 && v <= 1000) ? v : 360;
+}
+export function getMainChartHeight() { return _storedMainH(); }
+export function applyMainChartHeight(h) {
+  const SUB_PANEL_H = 160;
+  const clamped = Math.max(240, Math.min(Math.round(h), 1000));
+  try { localStorage.setItem('mainChartH', String(clamped)); } catch (e) {}
+  document.documentElement.style.setProperty('--main-chart-h', clamped + 'px');
+  // 重算 chart-area 總高（主圖 + 已開副圖數）
+  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV','TTM','OBV','RS']
+    .filter(k => AppState.indicators[k]).length;
+  document.documentElement.style.setProperty('--chart-area-h', (clamped + subOn * SUB_PANEL_H) + 'px');
+  try { _charts.main?.applyOptions({ height: clamped }); } catch (e) {}
+  try { window._chartResize?.(); } catch (e) {}
+}
+
+// ── 工作室 K 線高度（獨立於主頁；預設滿版，可手動拉好拉滿，存 localStorage）──
+function _storedStudioH() {
+  const v = +(localStorage.getItem('studioChartH'));
+  return (v >= 240 && v <= 4000) ? v : null;   // null = 未設定 → 用 CSS 預設（滿版）
+}
+export function initStudioChartHeight() {
+  const v = _storedStudioH();
+  if (v) document.documentElement.style.setProperty('--studio-chart-h', v + 'px');
+  else   document.documentElement.style.removeProperty('--studio-chart-h');  // 還原 CSS 預設滿版
+}
+export function applyStudioChartHeight(h) {
+  const clamped = Math.max(240, Math.min(Math.round(h), 4000));
+  try { localStorage.setItem('studioChartH', String(clamped)); } catch (e) {}
+  document.documentElement.style.setProperty('--studio-chart-h', clamped + 'px');
+  try { _charts.main?.applyOptions({ height: clamped }); } catch (e) {}
+  try { window._chartResize?.(); } catch (e) {}
+}
 
 // Phase 7.2 — 副圖 chart 存取(背離線需要在副圖上畫)
 export function getMacdChart()    { return _charts.macd  || null; }
@@ -167,6 +230,9 @@ export function initCharts() {
   const rciEl  = document.getElementById('rciChart');
   const hvEl   = document.getElementById('hvChart');
   const convEl = document.getElementById('convChart');
+  const ttmEl  = document.getElementById('ttmChart');
+  const obvEl  = document.getElementById('obvChart');
+  const rsEl   = document.getElementById('rsChart');
 
   // ─────────────────────────────────────────────────────────────
   // 固定高度策略 (v3 — 0523 修正副圖擠壓)
@@ -176,12 +242,13 @@ export function initCharts() {
   //  - 全視窗模式有自己的 --fs-tb-h 高度邏輯,不會跟 --chart-area-h 衝突
   //    (.fullscreen-mode .chart-area 在 analysis-panel.css 用 !important 蓋掉)
   // ─────────────────────────────────────────────────────────────
-  const MAIN_H     = 360;
+  const MAIN_H     = _storedMainH();
   const SUB_PANEL_H = 160;   // ind-panel 整個高度 (含 label)
+  document.documentElement.style.setProperty('--main-chart-h', MAIN_H + 'px');
   const SUB_CHART_H = 135;   // ind-panel 內 chart 部份高度 (160 - label ~25)
 
   // 算出啟用了幾個副圖
-  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV']
+  const subOn = ['KD','RSI','MACD','DMI','PSY','RCI','HV','CONV','TTM','OBV','RS']
     .filter(k => AppState.indicators[k]).length;
 
   // 寫入 CSS 變數讓 chart-area 撐高
@@ -213,6 +280,9 @@ export function initCharts() {
   if (rciEl) _charts.rci = LightweightCharts.createChart(rciEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (hvEl)  _charts.hv  = LightweightCharts.createChart(hvEl,  { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.05, bottom: 0.05 } } });
   if (convEl) _charts.conviction = LightweightCharts.createChart(convEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.12, bottom: 0.12 } } });
+  if (ttmEl) _charts.ttm = LightweightCharts.createChart(ttmEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.1, bottom: 0.1 } } });
+  if (obvEl) _charts.obv = LightweightCharts.createChart(obvEl, { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.1, bottom: 0.1 } } });
+  if (rsEl)  _charts.rs  = LightweightCharts.createChart(rsEl,  { ..._chartOptions(SUB_CHART_H), rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)', scaleMargins: { top: 0.1, bottom: 0.1 } } });
 
   _charts.main.applyOptions({
     watermark: {
@@ -234,7 +304,8 @@ export function initCharts() {
 // ─────────────────────────────────────────────
 function _syncCrosshair() {
   const all = [_charts.main, _charts.kd, _charts.rsi, _charts.macd,
-               _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction].filter(Boolean);
+               _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction,
+               _charts.ttm, _charts.obv, _charts.rs].filter(Boolean);
   all.forEach((chart, idx) => {
     chart.subscribeCrosshairMove(param => {
       if (!param.time) return;
@@ -258,9 +329,34 @@ function _setupResize(refEl) {
     const w = refEl.parentElement.clientWidth;
     if (!w) return;  // 0610: 整個 chart-area 隱藏時不要把 width 寫成 0
     Object.values(_charts).forEach(c => c.applyOptions({ width: w }));
+    if (!_charts.main) return;
+    const panel = document.getElementById('chartPanel');
+    if (panel?.classList.contains('fullscreen-mode')) {
+      // 全視窗（閱讀室 62vh / 工作室 --studio-chart-h）：主圖 canvas 填滿 #mainChart 容器高。
+      // 新版面副圖為 flex:0 0 排在下方可捲，主圖填滿不會擠到副圖。
+      const h = refEl.clientHeight;
+      if (h > 100) _charts.main.applyOptions({ height: h });
+    } else {
+      // 主頁：用設定高度（可手動拉），副圖各自固定高度不受影響
+      _charts.main.applyOptions({ height: _storedMainH() });
+    }
   };
   window.addEventListener('resize', window._chartResize);
   setTimeout(window._chartResize, 50);
+}
+
+// ─────────────────────────────────────────────
+// 副圖時間軸對齊主圖（讀主圖目前可視範圍，套到所有副圖）
+// 主圖範圍為 null（容器 0 寬時）就跳過，留給之後的 rAF 再對齊
+// ─────────────────────────────────────────────
+function _syncSubRangesToMain() {
+  try {
+    const range = _charts.main?.timeScale().getVisibleRange();
+    if (!range) return;
+    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction, _charts.ttm, _charts.obv, _charts.rs]
+      .filter(Boolean)
+      .forEach(c => { try { c.timeScale().setVisibleRange(range); } catch (e) { /**/ } });
+  } catch (e) { /**/ }
 }
 
 // ─────────────────────────────────────────────
@@ -281,6 +377,10 @@ export function renderChartData(candles) {
   if (AppState.indicators.EMA)  _renderEMA(candles, closes);
   if (AppState.indicators.GMMA) _renderGMMA(candles, closes);
   if (AppState.indicators.SAR)  _renderSAR(candles);
+  if (AppState.indicators.SUPERTREND) _renderSupertrend(candles);
+  // T-2 Anchored VWAP（妖股 active 自動掛啟動日錨，否則可見區間起算 ≈）
+  if (AppState.indicators.AVWAP) _renderAVWAP(candles);
+  else _clearAVWAP();
   if (AppState.indicators.ENV)  _renderEnvelope(candles, closes);
   else _clearBandFill('env');  // ENV 關閉時清掉填色 canvas 殘留
   // C1 一目均衡表（雲帶 + 5 條線）
@@ -309,22 +409,22 @@ export function renderChartData(candles) {
   if (AppState.indicators.RCI)  _renderRCI(candles, closes);
   if (AppState.indicators.HV)   _renderHV(candles, closes);
   if (AppState.indicators.CONV) _renderConviction(candles);
-
-  try {
-    const range = _charts.main.timeScale().getVisibleRange();
-    [_charts.kd, _charts.rsi, _charts.macd, _charts.dmi, _charts.psy, _charts.rci, _charts.hv, _charts.conviction]
-      .filter(Boolean)
-      .forEach(c => c.timeScale().setVisibleRange(range));
-  } catch (e) { /**/ }
+  if (AppState.indicators.TTM)  _renderTTM(candles);
+  if (AppState.indicators.OBV)  _renderOBV(candles);
+  if (AppState.indicators.RS)   _renderRS(candles);
 
   // Ichimoku 真正渲染成功時,_renderIchimoku 內已設可視範圍涵蓋未來 26 日,
   // 此處跳過 fitContent 避免覆蓋(否則 SenkouA/B 未來段會被切掉)
   // ⚠️ 用 _ichiData 而不是 AppState.indicators.ICHI:
   //   ICHI 開啟但 candles 不足 52 根時,calcIchimoku ready=false,
   //   _ichiData 會是 null,此時應該照常 fitContent,否則 K 線停在預設右側位置
+  // ⚠️ fitContent 必須在「副圖對齊主圖之前」做：否則副圖拿到的是還沒 fit 的
+  //   預設範圍（全視窗變寬時兩者差很多 → 副圖畫在錯誤/空白範圍，看起來全黑）
   if (!_ichiData) {
     _charts.main.timeScale().fitContent();
   }
+  // 副圖時間軸對齊主圖（fit 後的有效範圍）
+  _syncSubRangesToMain();
 
   // Phase 7: 廣播一次「K 線已渲染」事件,讓 overlay 重新 attach
   try {
@@ -332,6 +432,15 @@ export function renderChartData(candles) {
       detail: { code: AppState.activeCode, candleCount: candles.length },
     }));
   } catch (e) { /**/ }
+
+  // 全視窗/重建後修正：版面 flush 後再強制重量一次尺寸 + 重新對齊副圖。
+  // 副圖在 initCharts 重建的當下若容器尺寸尚未 flush（0 寬），canvas 建在 0 寬、
+  // 且主圖 getVisibleRange() 會回 null → 同步對齊抓不到範圍 → 副圖空白（全黑）。
+  // rAF 保證版面 flush 後執行，此時容器有尺寸、主圖範圍有效，再對齊一次就有圖。
+  requestAnimationFrame(() => {
+    try { window._chartResize?.(); } catch (e) {}
+    _syncSubRangesToMain();
+  });
 }
 
 // ─── 主圖：K 線 ───
@@ -668,6 +777,201 @@ function _renderSAR(candles) {
   });
   if (bullData.length) _series.sarBull.setData(bullData);
   if (bearData.length) _series.sarBear.setData(bearData);
+}
+
+// ── T-7 Supertrend（ATR 通道翻轉線，多頭紅線貼底 / 空頭綠線貼頂）──
+//   多/空分兩條 series，非當前方向以 whitespace {time} 留缺口 → 翻轉處乾淨斷線（不拉對角假線）
+function _renderSupertrend(candles) {
+  if (candles.length < 15) return;
+  const st = calcSupertrend(candles, 10, 3);
+  if (!st.ready) return;
+  if (_series.stUp)   { try { _charts.main.removeSeries(_series.stUp);   } catch(e){} }
+  if (_series.stDown) { try { _charts.main.removeSeries(_series.stDown); } catch(e){} }
+
+  const upData = [], dnData = [];
+  candles.forEach((c, i) => {
+    const v = st.lineArr[i];
+    if (v == null) { upData.push({ time: c.time }); dnData.push({ time: c.time }); return; }
+    if (st.dirArr[i] === 'up') { upData.push({ time: c.time, value: v }); dnData.push({ time: c.time }); }
+    else                       { dnData.push({ time: c.time, value: v }); upData.push({ time: c.time }); }
+  });
+
+  // 台股：多頭=紅、空頭=綠
+  _series.stUp = _charts.main.addLineSeries({
+    color: '#ef5350', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: false, title: 'ST↑',
+  });
+  _series.stDown = _charts.main.addLineSeries({
+    color: '#26a69a', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: false, title: 'ST↓',
+  });
+  _series.stUp.setData(upData);
+  _series.stDown.setData(dnData);
+}
+
+// ── T-6 TTM Squeeze 副圖（零軸壓縮點 + 動能柱）──
+//   動能柱：紅(動能向上)/綠(動能向下)；壓縮點：零軸上 ON=琥珀、OFF=灰
+function _renderTTM(candles) {
+  if (!_charts.ttm) return;
+  const labelEl = document.querySelector('#ttmPanel .ind-panel-label');
+  const _NORMAL = '<span style="color:#fbbf24">● 壓縮點</span>' +
+    '<span style="color:#ef5350">▮ 動能↑</span>' +
+    '<span style="color:#26a69a">▮ 動能↓</span>' +
+    '<span style="color:var(--hint);margin-left:4px">TTM Squeeze (20,2/1.5)</span>';
+  const t = candles.length >= 25 ? calcTTMSqueeze(candles, 20, 2, 1.5) : { ready: false };
+  if (!t.ready) {
+    if (labelEl) labelEl.innerHTML = '<span style="color:var(--hint)">🔋 TTM Squeeze 此週期 K 棒不足（需 ≥ 25 根），請切換到 3月 / 6月 / 1年 週期</span>';
+    return;
+  }
+  if (labelEl) labelEl.innerHTML = _NORMAL;
+
+  // 動能柱
+  _series.ttmHist = _charts.ttm.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false, base: 0 });
+  const histData = [];
+  candles.forEach((c, i) => {
+    const m = t.momArr[i];
+    if (m == null) return;
+    histData.push({ time: c.time, value: m, color: m >= 0 ? 'rgba(239,83,80,0.8)' : 'rgba(38,166,154,0.8)' });
+  });
+  _series.ttmHist.setData(histData);
+
+  // 壓縮點（零軸）：ON=琥珀 / OFF=灰，分兩條 series（pointMarkers 無法逐點上色）
+  const onDots = [], offDots = [];
+  candles.forEach((c, i) => {
+    if (t.onArr[i] == null) return;
+    (t.onArr[i] ? onDots : offDots).push({ time: c.time, value: 0 });
+  });
+  _series.ttmOn = _charts.ttm.addLineSeries({ color: '#fbbf24', lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  _series.ttmOff = _charts.ttm.addLineSeries({ color: 'rgba(148,163,184,0.7)', lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  if (onDots.length)  _series.ttmOn.setData(onDots);
+  if (offDots.length) _series.ttmOff.setData(offDots);
+}
+
+// ── T-8 OBV 能量潮副圖（EMA3 平滑累計量能線）──
+function _renderOBV(candles) {
+  if (!_charts.obv) return;
+  const labelEl = document.querySelector('#obvPanel .ind-panel-label');
+  const _NORMAL = '<span style="color:#a78bfa">● OBV</span>' +
+    '<span style="color:var(--hint);margin-left:4px">能量潮（EMA3 平滑）</span>';
+  const o = candles.length >= 25 ? calcOBV(candles, 20) : { ready: false };
+  if (!o.ready) {
+    if (labelEl) labelEl.innerHTML = '<span style="color:var(--hint)">🌊 OBV 此週期 K 棒不足（需 ≥ 25 根），請切換到 3月 / 6月 / 1年 週期</span>';
+    return;
+  }
+  if (labelEl) labelEl.innerHTML = _NORMAL;
+  // OBV 絕對值無意義、數字龐大 → 軸改台股慣用「億/萬」縮寫
+  _charts.obv.applyOptions({ localization: { priceFormatter: (v) => {
+    const a = Math.abs(v);
+    if (a >= 1e8) return (v / 1e8).toFixed(2) + '億';
+    if (a >= 1e4) return (v / 1e4).toFixed(0) + '萬';
+    return v.toFixed(0);
+  } } });
+  _series.obvLine = _charts.obv.addLineSeries({ color: '#a78bfa', lineWidth: 1.4, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true });
+  const data = [];
+  candles.forEach((c, i) => { const v = o.obvArr[i]; if (v != null) data.push({ time: c.time, value: v }); });
+  _series.obvLine.setData(data);
+}
+
+// ── T-1 RS 相對強度線副窗（個股還原收盤 / 大盤基準，正規化首點=100）──
+//   基準：0050（含息 ETF，hist 還原價），fallback ^TWII；以 UTC 日對齊（容忍盤中時戳偏移）
+//   價未創高但 RS 線先創高 = 歐尼爾體系最強領先訊號 → 末點若為近 60 日新高加紅箭頭
+let _rsToken = 0;
+let _rsBenchCache = null, _rsBenchAt = 0;
+async function _getBench() {
+  const now = Date.now();
+  if (_rsBenchCache && (now - _rsBenchAt) < 30 * 60 * 1000) return _rsBenchCache;
+  const b = await fetchBenchmark('0050');
+  if (b && b.length) { _rsBenchCache = b; _rsBenchAt = now; }
+  return b;
+}
+async function _renderRS(candles) {
+  if (!_charts.rs) return;
+  const labelEl = document.querySelector('#rsPanel .ind-panel-label');
+  const _NORMAL = '<span style="color:#e3b341">● RS 相對強度線</span>' +
+    '<span style="color:var(--hint);margin-left:4px">個股/大盤(0050)，正規化100 · 創高=領先大盤</span>';
+  const _hint = (t) => { if (labelEl) labelEl.innerHTML = `<span style="color:var(--hint)">📈 RS 線：${t}</span>`; };
+  if (!candles || candles.length < 20) { _hint('資料不足（需 ≥ 20 根），請切換到 3月 / 6月 / 1年 週期'); return; }
+
+  const code  = AppState.activeCode || '';
+  const token = ++_rsToken;
+  let bench = null;
+  try { bench = await _getBench(); } catch (e) {}
+  // 競態防呆：抓基準期間若切股/切週期/關指標/重建圖，丟棄
+  if (token !== _rsToken) return;
+  if (code !== (AppState.activeCode || '') || !AppState.indicators.RS || !_charts.rs) return;
+  if (!bench || bench.length < 20) { _hint('大盤基準暫時取得失敗'); return; }
+
+  const dayKey = (sec) => Math.floor(sec / 86400);
+  const bMap = new Map();
+  bench.forEach(b => { const c = b.a ?? b.c; if (c != null) bMap.set(dayKey(b.t), c); });
+
+  const pts = [];
+  let base = null;
+  candles.forEach(c => {
+    const bc = bMap.get(dayKey(c.time));
+    if (bc == null || !bc) return;
+    const ratio = c.close / bc;
+    if (base == null) base = ratio;
+    pts.push({ time: c.time, value: +((ratio / base) * 100).toFixed(2) });
+  });
+  if (pts.length < 5) { _hint('與大盤日期對齊不足'); return; }
+
+  if (labelEl) labelEl.innerHTML = _NORMAL;
+  _series.rsLine = _charts.rs.addLineSeries({ color: '#e3b341', lineWidth: 1.6, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true });
+  _series.rsLine.setData(pts);
+
+  // 末點是否為近 60 日 RS 線新高（價未必創高，RS 先創高 = 領先訊號）
+  const N = Math.min(60, pts.length);
+  const recent = pts.slice(-N);
+  const lastV  = recent[recent.length - 1].value;
+  if (recent.every(p => p.value <= lastV + 1e-9)) {
+    try { _series.rsLine.setMarkers([{ time: pts[pts.length - 1].time, position: 'aboveBar', color: '#ef5350', shape: 'arrowUp', text: 'RS創高' }]); } catch (e) {}
+  }
+}
+
+// ── T-2 Anchored VWAP（錨定量加權均價，妖股 active 自動掛啟動日錨）──
+//   錨點優先序：妖股啟動日（主升段成本）→ 可見區間首根（波段成本近似，標 ≈）
+//   getYaoguRecord 為 async，期間若切股/切週期/關閉 → token 比對放棄繪製
+let _avwapToken = 0;
+async function _renderAVWAP(candles) {
+  if (!candles || candles.length < 2) { _clearAVWAP(); return; }
+  const code  = AppState.activeCode || '';
+  const token = ++_avwapToken;
+
+  // 妖股 active/rebirth → 取啟動日 unix 秒，否則 null（解析器自動退波段低點）
+  let actSec = null;
+  try {
+    const rec = code ? await getYaoguRecord(code) : null;
+    const act = rec && (rec.status === 'active' || rec.status === 'rebirth' || rec.status === 'pullback') ? rec.activatedAt : null;
+    if (act) {
+      const s = Math.floor(new Date(act).getTime() / 1000);
+      if (!Number.isNaN(s)) actSec = s;
+    }
+  } catch (e) { /* 妖股庫缺失 → 用波段低點 */ }
+
+  // async 競態防呆
+  if (token !== _avwapToken) return;
+  if (code !== (AppState.activeCode || '') || !AppState.indicators.AVWAP || !_charts.main) return;
+
+  const { anchorIdx, source } = resolveAVWAPAnchor(candles, actSec);
+  const av = anchoredVWAP(candles, anchorIdx);
+  if (_series.avwap) { try { _charts.main.removeSeries(_series.avwap); } catch (e) {} }
+  _series.avwap = _charts.main.addLineSeries({
+    color: '#fbbf24', lineWidth: 2, lineStyle: 2,   // 琥珀虛線
+    priceLineVisible: false, lastValueVisible: false,  // 右軸與 MA 標籤互蓋，關閉（crosshair 仍可讀）
+    crosshairMarkerVisible: true,
+    title: source === 'yaogu' ? '⚓AVWAP啟動' : '⚓AVWAP波段',
+  });
+  _series.avwap.setData(
+    candles.map((c, i) => av[i] != null ? { time: c.time, value: av[i] } : null).filter(Boolean)
+  );
+}
+
+function _clearAVWAP() {
+  if (_series.avwap) {
+    try { _charts.main.removeSeries(_series.avwap); } catch (e) {}
+    _series.avwap = null;
+  }
 }
 
 // ── ENV 包絡線（MA20 ± 5%）──
@@ -1016,7 +1320,18 @@ function _renderIchimoku(candles) {
 
 // ── DMI（+DI/-DI/ADX）──
 function _renderDMI(candles) {
-  if (!_charts.dmi || candles.length < 30) return;
+  // 門檻 16：calcDMI 第 15 根起即有 +DI/-DI（畫得出線）；ADX 需第 28 根，不足時自動空著，
+  // 切到 3月/6月/1年 才會補上 ADX。原本卡 30 會把 1個月(≈23根)整個擋掉且靜默無提示。
+  const _dmiLabel = document.querySelector('#dmiPanel .ind-panel-label');
+  if (!_charts.dmi || candles.length < 16) {
+    if (_dmiLabel) _dmiLabel.innerHTML = `<span style="color:var(--hint)">📊 DMI：資料不足（需 ≥ 16 根），請切換到 3月 / 6月 / 1年 週期</span>`;
+    return;
+  }
+  // 成功渲染：還原 +DI/-DI/ADX 圖例（避免從短週期切過來時標籤卡在提示）；ADX 不足時加註
+  if (_dmiLabel) {
+    const adxNote = candles.length < 28 ? ' <span style="color:var(--hint)">· ADX 需 ≥ 28 根</span>' : '';
+    _dmiLabel.innerHTML = '<span style="color:#ef5350">● +DI</span> <span style="color:#26a69a">● -DI</span> <span style="color:#f59e0b">● ADX</span> <span style="color:var(--hint);margin-left:4px">DMI (14)</span>' + adxNote;
+  }
   const { plusDI, minusDI, adx } = calcDMI(candles, 14);
   const t = (c, i) => ({ time: c.time, value: v => v });
 

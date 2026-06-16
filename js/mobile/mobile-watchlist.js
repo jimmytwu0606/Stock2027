@@ -356,7 +356,7 @@ function _bindCards(body) {
   body.querySelectorAll('.mwl-card').forEach(card => {
     card.addEventListener('click', () => {
       const code = card.dataset.code;
-      if (code) window.__loadStock?.(code);
+      if (code) (window.__mobileOpenPreview||window.__loadStock)?.(code);
     });
   });
 }

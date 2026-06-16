@@ -41,12 +41,16 @@ export const AppState = {
     EMA:  false,
     GMMA: false,
     SAR:  false,
+    SUPERTREND: false,   // T-7 Supertrend 主圖貼地線（ATR 通道翻轉）
+    AVWAP: false,        // T-2 錨定VWAP（妖股 active 自動掛啟動日成本線）
     ENV:  false,
     // Advanced 5 — 副圖（預設關閉）
     DMI:  false,
     PSY:  false,
     RCI:  false,
     HV:   false,
+    TTM:  false,         // T-6 TTM Squeeze 副圖（壓縮點+動能柱）
+    OBV:  false,         // T-8 OBV 能量潮副圖
     // C1 — 一目均衡表（預設關閉，使用者主動勾選時才觸發獨佔模式）
     // ⚠️ 不可設為 true:1mo/3mo/5d 等預設週期 K 數不足,
     //   會導致 _renderIchimoku ready=false 但 fitContent 又被跳過,
@@ -54,6 +58,9 @@ export const AppState = {
     ICHI: false,
     // C3 — 分價量表（預設關閉）
     PVD:  false,
+    // T-1 RS 相對強度線 / 確信度（預設關閉；補上避免 undefined）
+    RS:   false,
+    CONV: false,
   },
   // C1 — Ichimoku 獨佔模式暫存：勾選 ICHI 時把其他指標狀態存進來，
   // 取消勾選時還原。null = 不在獨佔模式

@@ -204,8 +204,10 @@ export async function refreshFullscreenAnalysis() {
   const deep = _deepContainer();
   if (!mini || !deep) return;
 
-  // 非全視窗狀態不渲染
-  if (!_chartPanel()?.classList.contains('fullscreen-mode')) return;
+  // 非全視窗狀態不渲染；工作室（studio-mode）是純繪圖模式，不跑教學分析
+  // （否則 fsTabBar/fsDeepZone 會被灌入內容，退出工作室後漏到主畫面下方）
+  const _cp = _chartPanel();
+  if (!_cp?.classList.contains('fullscreen-mode') || _cp.classList.contains('studio-mode')) return;
 
   const candles = AppState.lastCandles || [];
   if (!candles.length) {
@@ -298,6 +300,7 @@ function _isModuleActive(modId) {
     dmi:      'DMI',
     gmma:     'GMMA',
     sar:      'SAR',
+    avwap:    'AVWAP',
     env:      'ENV',
     bb:       'BB',
     psy:      'PSY',
@@ -306,7 +309,7 @@ function _isModuleActive(modId) {
   };
   // 型態/基本面/葛蘭碧 模組:永遠啟用(不受 indicators 開關控制)
   // 葛蘭碧 v2.6 — 沒有對應的 toolbar 開關,且讀的是 AppState.signals 不需綁定指標
-  if (modId === 'perspective' || modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries') return true;
+  if (modId === 'perspective' || modId === 'pattern' || modId === 'fundamental' || modId === 'granville' || modId === 'xseries' || modId === 'mtf' || modId === 'stage' || modId === 'vprofile' || modId === 'ttm' || modId === 'supertrend' || modId === 'obv' || modId === 'rs') return true;
   const stateKey = keyMap[modId];
   return stateKey ? !!AppState.indicators[stateKey] : false;
 }

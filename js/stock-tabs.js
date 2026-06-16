@@ -1306,7 +1306,7 @@ export async function renderStockSignals(candles, code) {
     // 只有 ys 有實質內容（status 不是 null/watching+無 streak）才認為是最終結果
     // 避免 stock-tabs 自己的 updateYaoguTracker（signals 無 X，回 null/watching）
     // 先到並移除監聽，導致後來 signal-scan.js 的完整結果收不到
-    const isSubstantial = evtYs && (evtYs.status === 'active' || evtYs.status === 'warning1' || evtYs.status === 'warning2' || evtYs.status === 'exit' || evtYs.status === 'exited' || evtYs.status === 'rebirth');
+    const isSubstantial = evtYs && (evtYs.status === 'active' || evtYs.status === 'pullback' || evtYs.status === 'warning1' || evtYs.status === 'warning2' || evtYs.status === 'exit' || evtYs.status === 'exited' || evtYs.status === 'rebirth');
     if (!isSubstantial) return;  // 繼續等更完整的 event
     document.removeEventListener('yaoguUpdated', _onYaoguUpdated);
 
@@ -1485,7 +1485,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
     const exitBtn = '';  // 重置按鈕已移除
 
     // 三線出場監控（停損線/回落停利線，X2 實證參數 20/25）
-    const exitLines = (ys.status === 'active' || ys.status === 'watching' || ys.status === 'warning1' || ys.status === 'warning2')
+    const exitLines = (ys.status === 'active' || ys.status === 'pullback' || ys.status === 'watching' || ys.status === 'warning1' || ys.status === 'warning2')
       ? _calcExitLines(record, candles, code)
       : null;
 

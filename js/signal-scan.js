@@ -414,6 +414,22 @@ const REBIRTH_OBSERVE_MAX = 5;   // rebirth 最長觀察根數，超過未升級
 const REBIRTH_VOL_RATIO   = 1.0; // 換手型量能門檻：今日量 ≥ 5日均量 × 此倍率
 const REBIRTH_HOLD_DAYS   = 2;   // 控盤型（無量站回月線）需連續守住天數
 
+// ── 回檔 vs 出場分界（v2.9.3 回檔層）──────────────────────────
+// 跌破 MA20 不一定是出場。正常回檔（淺、短、趨勢未轉）只進「回檔觀察」，
+// 天數沿用主升段 activatedAt，不重置；惡化才升級真出場。
+const PULLBACK_BREAK_DAYS = 3;   // 連續收盤破 MA20 ≥ 此天數 → 真出場
+const PULLBACK_DEEP_PCT   = 6;   // 單日破 MA20 深度 ≥ 此 % → 真出場（非正常回檔）
+
+// 跌破 MA20 的性質判別（getYaoguStatus 與 updateYaoguTracker 共用，口徑一致）
+//   回傳 'exit'（真出場）| 'pullback'（回檔觀察）
+function _ma20BreakKind(klineCtx) {
+  const streak = klineCtx?.belowMA20Streak ?? 0;
+  const dist   = klineCtx?.distBelowMA20Pct ?? 0;   // 在 MA20 下時為負值
+  if (streak >= PULLBACK_BREAK_DAYS) return 'exit';  // 連破過久
+  if (dist <= -PULLBACK_DEEP_PCT)    return 'exit';  // 單日深破
+  return 'pullback';
+}
+
 /**
  * 計算妖股當前狀態（純計算，不打 DB）
  *
@@ -457,7 +473,7 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
 
   // K 線輔助判斷（由 scanOneCode 預算傳入）
   const { belowMA10, kdHighDeadCross, testMA20, warningPeak, warningPeakDrop, z6Triggered, isLimitDown,
-          todayChgPct, reclaimedMA20 } = klineCtx;
+          todayChgPct, reclaimedMA20, belowMA20Streak, distBelowMA20Pct } = klineCtx;
 
   // 弱妖（warning1）K 線條件：
   // 1. KD 從高位（K>70）死叉
@@ -718,13 +734,30 @@ export function getYaoguStatus(code, signals, record, streak = null, klineCtx = 
     }
   }
 
-  // ── 底線：跌破 MA20 → 有記錄才出場確認 ──
+  // ── 底線：跌破 MA20 → 區分「回檔觀察」與「真出場」──
+  //   回檔（淺/短/趨勢未轉）：天數沿用主升段 activatedAt，不重置
+  //   真出場（連破≥K天 / 單日深破 / Z6+跌停）：封存，進 exited
   if ((hasW1 || hasW18) && record) {
+    const kind = (z6Triggered && isLimitDown) ? 'exit' : _ma20BreakKind(klineCtx);
+    if (kind === 'pullback') {
+      const bd = belowMA20Streak ?? 1;
+      return {
+        status:   'pullback',
+        label:    `🟡 回檔觀察${streakLabel}`,
+        color:    '#fbbf24',
+        desc:     `跌破月線第 ${bd} 日（連破 ${PULLBACK_BREAK_DAYS} 日 / 深破 ${PULLBACK_DEEP_PCT}% / 月線下彎才出場）｜距月線 ${distBelowMA20Pct != null ? distBelowMA20Pct.toFixed(1) + '%' : '—'}｜主升段未中斷`,
+        strength: record.strength ?? strength,
+        streak,
+        streakLabel,
+        activatedAt: record.activatedAt,
+        belowMA20Streak: bd,
+      };
+    }
     return {
       status:   'exit',
       label:    '🔴 出場確認',
       color:    '#ef4444',
-      desc:     '跌破月線，妖股出場底線，請立刻出場',
+      desc:     '連破月線 / 深破 / Z6+跌停，妖股出場底線，請立刻出場',
       strength,
       streak,
       streakLabel,
@@ -857,7 +890,7 @@ function _normalizeYaoguRecord(record) {
   }
 
   // ② exitedAt 與存活狀態並存 = 殭屍
-  const ALIVE = new Set(['active', 'watching', 'warning1', 'warning2']);
+  const ALIVE = new Set(['active', 'pullback', 'watching', 'warning1', 'warning2']);
   if (r.exitedAt != null && ALIVE.has(r.status)) {
     reasons.push(`殭屍 '${r.status}'+exitedAt→'exited'`);
     r.status = 'exited';
@@ -870,6 +903,15 @@ function _normalizeYaoguRecord(record) {
     r.rebirthAt = null; r.rebirthLow = null; r.rebirthHold = 0;
     changed = true;
     reasons.push('清 rebirth 殘渣');
+  }
+
+  // ⑤ v2.9.3 假重生還原：rebirth 但 exitedAt==null → 舊 backfill 從 active 硬塞的假重生
+  //    （真重生必經 exited，exitedAt 必有值）。還原回 active，原 activatedAt 已保留，天數自然接回。
+  if (r.status === 'rebirth' && r.exitedAt == null) {
+    r.status = 'active';
+    r.rebirthAt = null; r.rebirthLow = null; r.rebirthHold = 0;
+    changed = true;
+    reasons.push('假重生(exitedAt缺)→active');
   }
 
   // ④ gen 補預設
@@ -1094,6 +1136,18 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         cyclePeak = Math.max(...highs.slice(Math.max(0, n - 60)));
       }
 
+      // ── 回檔層：連續收盤破 MA20 天數 + 當日距月線深度 + MA20 斜率 ──
+      let belowMA20Streak = 0;
+      for (let i = n - 1; i >= 0; i--) {
+        if (ma20arr[i] != null && closes[i] < ma20arr[i]) belowMA20Streak++;
+        else break;
+      }
+      const distBelowMA20Pct = (lastMA20 != null && lastMA20 > 0)
+        ? (lastClose - lastMA20) / lastMA20 * 100 : null;
+      // MA20 斜率（近 5 根）：下彎代表趨勢轉壞（破線時併同判真出場）
+      const ma20Prev5 = ma20arr[n - 6] ?? null;
+      const ma20Rising = (lastMA20 != null && ma20Prev5 != null) ? lastMA20 > ma20Prev5 : null;
+
       return {
         belowMA10, testMA20, kdHighDeadCross, warningPeak, warningPeakDrop,
         z6Triggered, isLimitDown,
@@ -1102,6 +1156,8 @@ export async function updateYaoguTracker(code, signals, candles = null) {
         reclaimedMA20: lastMA20 != null && lastClose >= lastMA20,
         // exit 歷史記憶（修 6116 漏判）
         everBrokeMA20, brokeLowSince,
+        // v2.9.3 回檔層
+        belowMA20Streak, distBelowMA20Pct, ma20Rising,
         // v2.9.2 重生機制
         lastClose, lastLow, lastMA20, volRatio, limitUpLockedStreak, cyclePeak,
       };
@@ -1113,46 +1169,43 @@ export async function updateYaoguTracker(code, signals, candles = null) {
 
     // v2.9.2：rebirth 期間 close<MA20 是常態，不可被強制 exit；
     //         剛升級的軋空型二波可能仍在 MA20 下（連續漲停回升中），同樣豁免
-    if (status.status !== 'exit' && status.status !== 'rebirth' && !status._rebirthPromo
-        && record && candles?.length >= 20) {
-      const closes    = candles.map(c => c.close);
-      const ma20arr   = calcMA(closes, 20);
-      const lastMA20  = ma20arr[closes.length - 1];
-      const lastClose = closes[closes.length - 1];
-      if (lastMA20 && lastClose < lastMA20) {
-        // 今日仍在月線下 → 強制 exit（原邏輯）
-        status = {
-          status:      'exit',
-          label:       '🔴 出場確認',
-          color:       '#ef4444',
-          desc:        '跌破月線，妖股出場底線，請立刻出場',
-          strength:    status.strength,
-          streak,
-          streakLabel: status.streakLabel ?? '',
-          activatedAt: record.activatedAt,
-        };
-      } else if (klineCtx.everBrokeMA20 && record.status !== 'exited') {
-        // ★ exit 歷史記憶（修 6116 漏判）：今日已站回月線，但這波啟動以來曾收盤破月線，
-        //   且 record 還沒走過 exited → 代表破線當天漏掃，exit 窗口被跳過。
-        //   不卡 warning，改補進 rebirth 觀察（已反彈，直接進重生路徑由量能/突破判升降級）。
-        const _pp = record.prevPeak ?? klineCtx.cyclePeak ?? null;
-        const _dist = lastMA20 ? ((lastClose - lastMA20) / lastMA20 * 100) : null;
-        const _vr = klineCtx.volRatio ?? 0;
-        status = {
-          status:      'rebirth',
-          label:       '🟣 重生觀察 · 第 1 天',
-          color:       '#a78bfa',
-          desc:        `跌破月線後站回｜前波高 ${_pp ? _pp.toFixed(2) : '—'}｜距月線 ${_dist != null ? (_dist >= 0 ? '+' : '') + _dist.toFixed(1) + '%' : '—'}｜量比 ${_vr.toFixed(1)}｜升級條件：突破前高 / 連2漲停 / 量比≥1站回`,
-          strength:    record.strength ?? status.strength,
-          streak,
-          streakLabel: status.streakLabel ?? '',
-          activatedAt: record.activatedAt,
-          prevPeak:    _pp,
-          rebirthLow:  klineCtx.brokeLowSince ?? lastClose,
-          _rebirthBackfill: true,           // 標記：由歷史記憶補進，updateYaoguTracker 寫入 rebirthAt
-          _rebirthLow: klineCtx.brokeLowSince ?? lastClose,
-        };
+    //         v2.9.3：pullback（已由 getYaoguStatus 分流）也不在此覆蓋
+    if (status.status !== 'exit' && status.status !== 'rebirth' && status.status !== 'pullback'
+        && !status._rebirthPromo && record && candles?.length >= 20) {
+      const lastMA20  = klineCtx.lastMA20;
+      const lastClose = klineCtx.lastClose;
+      if (lastMA20 && lastClose != null && lastClose < lastMA20) {
+        // 今日在月線下但 W1/W18 未亮（漏訊）→ 補判，同樣走回檔/出場分流
+        const kind = (klineCtx.z6Triggered && klineCtx.isLimitDown) ? 'exit'
+                   : (klineCtx.ma20Rising === false ? 'exit' : _ma20BreakKind(klineCtx));
+        if (kind === 'exit') {
+          status = {
+            status:      'exit',
+            label:       '🔴 出場確認',
+            color:       '#ef4444',
+            desc:        '連破月線 / 深破 / 月線下彎，妖股出場底線，請立刻出場',
+            strength:    status.strength,
+            streak,
+            streakLabel: status.streakLabel ?? '',
+            activatedAt: record.activatedAt,
+          };
+        } else {
+          const bd = klineCtx.belowMA20Streak ?? 1;
+          status = {
+            status:      'pullback',
+            label:       `🟡 回檔觀察${status.streakLabel ?? ''}`,
+            color:       '#fbbf24',
+            desc:        `跌破月線第 ${bd} 日（連破 ${PULLBACK_BREAK_DAYS} 日 / 深破 ${PULLBACK_DEEP_PCT}% / 月線下彎才出場）｜距月線 ${klineCtx.distBelowMA20Pct != null ? klineCtx.distBelowMA20Pct.toFixed(1) + '%' : '—'}｜主升段未中斷`,
+            strength:    record.strength ?? status.strength,
+            streak,
+            streakLabel: status.streakLabel ?? '',
+            activatedAt: record.activatedAt,
+            belowMA20Streak: bd,
+          };
+        }
       }
+      // ★ v2.9.3 移除：everBrokeMA20 backfill（把正常回檔誤判成漏掉的出場 → 假重生）。
+      //   正常回檔現由 pullback 狀態承接，天數不重置；真出場才走 exited→rebirth 正規流程。
     }
 
     // warning2 解除：收盤突破 warningPeak → 退回 active

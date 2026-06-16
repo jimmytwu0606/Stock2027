@@ -14,7 +14,7 @@
 // candle 格式: { time, open, high, low, close, volume }
 // ============================================================================
 
-import { calcMA, calcEMA, calcRSI, calcKD, calcDMI, calcHV, calcBias, calcPSY, calcRCI, calcSAR } from './indicators.js';
+import { calcMA, calcEMA, calcRSI, calcKD, calcDMI, calcHV, calcBias, calcPSY, calcRCI, calcSAR, calcWeeklyTrend, calcWeinsteinStage, calcVolumeProfile, calcTTMSqueeze, calcSupertrend, calcOBV } from './indicators.js';
 
 // ============================================================================
 // 多週期參數表(B6 核心)
@@ -746,6 +746,114 @@ export function analyzeTrend(candles, opts = {}) {
       }
     }
   } catch { sub.sar = null; }
+
+  // ── T-3 週線共振 + T-5 Weinstein 階段（用 2 年日K，window.__taDaily，不靠當前週期）──
+  try {
+    const taC = (typeof window !== 'undefined' && window.__taDaily?.candles?.length)
+      ? window.__taDaily.candles : null;
+    if (taC) {
+      // T-3 週線共振
+      if (taC.length >= 70) {
+        const w = calcWeeklyTrend(taC);
+        if (w.ready && (w.bull || w.bear)) {
+          sub.weeklyMTF = {
+            label: '週線共振',
+            value: w.bull ? '週多頭 ↗' : '週空頭 ↘',
+            score: w.bull ? 1 : -1,
+            reason: w.bull
+              ? `週收 > 週MA10(${w.ma10.toFixed(2)}) 且月線連2週上揚——大趨勢多頭，順大勢操作`
+              : `週收 < 週MA10(${w.ma10.toFixed(2)}) 且月線連2週下彎——大趨勢空頭，反彈宜減碼`,
+          };
+          score += sub.weeklyMTF.score * 1.5; maxScore += 1.5;
+        }
+      }
+      // T-5 Weinstein 階段
+      if (taC.length >= 160) {
+        const st = calcWeinsteinStage(taC);
+        const STM = {
+          1: { t: '第1階段 底部整理', s: 0,    r: '價繞週MA30橫盤、月線走平，築底中——觀察等待，待放量突破進 Stage 2' },
+          2: { t: '第2階段 上升期',   s: 1,    r: '價站上週MA30、月線上揚，主升段——唯一該買的階段，回檔月線是加碼點' },
+          3: { t: '第3階段 頭部整理', s: -0.5, r: '價繞週MA30橫盤於高檔、月線走平，派發中——逢高減碼，跌破月線離場' },
+          4: { t: '第4階段 下降期',   s: -1,   r: '價跌破週MA30、月線下彎，主跌段——避開做多，接刀必傷' },
+        };
+        const meta = st.ready ? STM[st.stage] : null;
+        if (meta) {
+          sub.weinstein = { label: 'Weinstein 階段', value: meta.t, score: meta.s, reason: meta.r };
+          score += sub.weinstein.score * 1.5; maxScore += 1.5;
+        }
+      }
+      // T-4 Volume Profile — POC 位置
+      if (taC.length >= 30) {
+        const vp = calcVolumeProfile(taC, 120);
+        if (vp.ready) {
+          const above = lastClose > vp.poc;
+          const distPct = (lastClose - vp.poc) / vp.poc * 100;
+          sub.volumeProfile = {
+            label: '量價分佈 POC',
+            value: `${vp.poc.toFixed(2)}（現價${above ? '上方' : '下方'} ${distPct >= 0 ? '+' : ''}${distPct.toFixed(1)}%）`,
+            score: above ? 0.5 : -0.5,
+            reason: above
+              ? `站在量最密集價位 POC ${vp.poc.toFixed(2)} 之上，上方套牢盤少、籌碼乾淨；VA [${vp.val.toFixed(2)}~${vp.vah.toFixed(2)}]`
+              : `位於 POC ${vp.poc.toFixed(2)} 下方，上方有密集套牢盤，反彈遇阻；VA [${vp.val.toFixed(2)}~${vp.vah.toFixed(2)}]`,
+          };
+          score += sub.volumeProfile.score; maxScore += 0.5;
+        }
+      }
+      // T-6 TTM Squeeze — 能量壓縮/釋放 + 動能方向
+      if (taC.length >= 25) {
+        const ttm = calcTTMSqueeze(taC);
+        if (ttm.ready) {
+          sub.ttm = {
+            label: 'TTM Squeeze',
+            value: ttm.squeezeOn ? `壓縮中（連 ${ttm.squeezeStreak} 根）`
+                 : ttm.fired ? `剛釋放 ${ttm.momentumUp ? '↑偏多' : '↓偏空'}`
+                 : `已釋放（動能${ttm.momentumUp ? '↑' : '↓'}）`,
+            score: ttm.fired ? (ttm.momentumUp ? 1 : -1) : ttm.squeezeOn ? 0 : (ttm.momentumUp ? 0.3 : -0.3),
+            reason: ttm.squeezeOn
+              ? `布林帶縮進 Keltner，能量壓縮蓄勢（連 ${ttm.squeezeStreak} 根），釋放方向待確認`
+              : ttm.fired
+              ? `壓縮剛釋放，動能${ttm.momentumUp ? '向上 → 偏多突破' : '向下 → 偏空破位'}`
+              : `動能${ttm.momentumUp ? '向上延續' : '向下延續'}`,
+          };
+          score += sub.ttm.score; maxScore += 1;
+        }
+      }
+      // T-7 Supertrend — ATR 通道趨勢/移動停損
+      if (taC.length >= 15) {
+        const stp = calcSupertrend(taC);
+        if (stp.ready) {
+          const up = stp.dir === 'up';
+          sub.supertrend = {
+            label: 'Supertrend(10,3)',
+            value: `${up ? '多頭' : '空頭'} 線 ${stp.line.toFixed(2)}${stp.flipped ? (up ? ' 剛翻多🔄' : ' 剛翻空🔄') : ''}`,
+            score: up ? 0.5 : -0.5,
+            reason: up
+              ? `Supertrend 在股價下方(${stp.line.toFixed(2)})，趨勢偏多，可當移動停損`
+              : `Supertrend 在股價上方(${stp.line.toFixed(2)})，趨勢偏空，反彈遇壓`,
+          };
+          score += sub.supertrend.score; maxScore += 0.5;
+        }
+      }
+      // T-8 OBV 能量潮 — 量價背離
+      if (taC.length >= 25) {
+        const obv = calcOBV(taC);
+        if (obv.ready) {
+          sub.obv = {
+            label: 'OBV 能量潮',
+            value: obv.bullDiv ? '🔴 牛背離（價低量不低）' : obv.bearDiv ? '🟢 熊背離（價高量不高）'
+                 : (obv.slopeUp ? '量能流入 ↑' : '量能流出 ↓'),
+            score: obv.bullDiv ? 1 : obv.bearDiv ? -1 : obv.slopeUp ? 0.3 : -0.3,
+            reason: obv.bullDiv
+              ? '價創近低但 OBV 未破低，賣壓萎縮、量價背離，反彈醞釀'
+              : obv.bearDiv
+              ? '價創近高但 OBV 未創高，買盤縮手、量價背離，留意回落'
+              : obv.slopeUp ? 'OBV 上行，量能持續流入支撐價格' : 'OBV 下行，量能流出，價格支撐轉弱',
+          };
+          score += sub.obv.score; maxScore += 1;
+        }
+      }
+    }
+  } catch { sub.weeklyMTF = sub.weeklyMTF || null; sub.weinstein = sub.weinstein || null; }
 
   const normalized = maxScore > 0 ? (score / maxScore) : 0;
   const health = Math.round((normalized + 1) / 2 * 100);

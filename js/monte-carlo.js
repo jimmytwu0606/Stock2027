@@ -414,7 +414,7 @@ function _openSimWindow(candles) {
           <button class="mc-bt-btn mc-bt-btn-cross" id="mcBtCross" title="跨 10 檔不同型股(大型/牛皮/妖股/ETF/空頭...)跑v1.8 公式分派回測,看公式泛化能力">🎯 跨股測試</button>
           <button class="mc-bt-btn mc-bt-btn-signal" id="mcBtSignal" title="集合回測 30+ 個技術訊號策略 (S1 量增底部 / S20 葛蘭碧 / S33 GMMA 等),9 種出場組合對照,看哪個策略真有效">⚔️ 策略勝率</button>
           <button class="mc-bt-btn mc-bt-btn-combo" id="mcBtCombo" title="三件套組合驗證 — 你指定的 5 組組合,看「三亮」vs「過濾」哪個邏輯勝率高(業界稱 Triple Confirmation)">🎰 組合驗證</button>
-          <button class="mc-bt-btn mc-bt-btn-exit" id="mcBtExit" title="出場策略驗證 — 3 進場 (W6/S11/S40) × 4 出場 (固定 20 天/追蹤停損 5%/跌破 MA20/RSI<60),看哪個出場最配哪個進場">🎯 出場驗證</button>
+          <button class="mc-bt-btn mc-bt-btn-exit" id="mcBtExit" title="出場策略驗證 — 多組進場 × 全部出場規則對照（含 Supertrend 翻空 / 跌破錨定VWAP），看哪個出場最配哪個進場">🎯 出場驗證</button>
           ${window.__userTier === 'vvvip' ? `<button class="mc-bt-btn mc-bt-btn-xgxi" id="mcBtXGXI" title="🔬 XG/XI 組合拳實驗 — 葛蘭碧強化版(XG1~XG4) + 一目強化版(XI1/XI4/XI7) vs 原始版本，驗證加條件後勝率是否提升（VVVIP 限定）">🔬 組合拳驗證</button><button class="mc-bt-btn mc-bt-btn-x611" id="mcBtX611" title="🧪 X6~X11 純K線特化驗證 — 跳空缺口/缺口強勢/盤整噴出/量縮突破/均線多排/強化黃叉 vs X1~X5 對照，決定是否正式導入（VVVIP 限定）">🧪 X6~X11驗證</button><button class="mc-bt-btn mc-bt-btn-kang" id="mcBtKang" title="🐉 亢龍有悔出場驗證 — E8 W14即出 / E9 W14出50%+MA20出50% / E10 量退潮 vs 現有出場規則，找出最佳飆股出場時機（VVVIP 限定）">🐉 亢龍有悔</button>` : ''}
           <button class="mc-bt-btn mc-bt-btn-basket" id="mcBtBasketEdit" title="自選回測 basket（最多 20 檔）">🧺 自選標的</button>
           <button class="mc-bt-btn mc-bt-btn-strategy" id="mcBtStrategy" title="針對 basket 每檔股票跑所有策略，找出最適合的進出場方式">🎯 操作建議</button>
@@ -2032,7 +2032,7 @@ async function _runExitBacktest() {
   panel.innerHTML = `
     <div class="mc-bt-header">
       <div>
-        <span class="mc-bt-title">🎯 出場驗證 (W6 單獨 vs 3 組雙策略 × 4 出場)</span>
+        <span class="mc-bt-title">🎯 出場驗證 (W6 單獨 vs 3 組雙策略 × 全出場規則)</span>
         <span class="mc-bt-meta" id="mcExitMeta">準備中...</span>
       </div>
     </div>
@@ -2325,7 +2325,7 @@ function _renderExitResult(multi, ranked, elapsedSec, healthReport = '') {
       <div class="mc-cross-summary-item">
         <span class="mc-cross-summary-label">📌 設計</span>
         <span class="mc-cross-summary-val" style="font-size:11px">
-          4 組進場 (W6 單獨 / W6+S40 / W6+S11 / W6+S14) × 4 出場 (固定 20 天 / 追蹤停損 5% / 跌破 MA20 / RSI&lt;60)
+          4 組進場 (W6 單獨 / W6+S40 / W6+S11 / W6+S14) × 全部出場規則對照（固定天數 / 追蹤停損 / 跌破MA20 / RSI / 妖股狀態機 / W14 / Supertrend 翻空 / 跌破錨定VWAP …）
           ·  最大持有 60 天  ·  收盤判定  ·  D+1 起判出場
           <br>雙策略組合 = 3 天內兩個訊號都觸發過才進場 · <b>📐 基準</b> = W6 單獨固定 20 天 · <b>⭐ 最佳</b> = 勝率 × 平均報酬最高
           <br>看雙策略組合是否比 W6 單獨更好 → 驗證「組合進場讓甜蜜點更陡」的假說
