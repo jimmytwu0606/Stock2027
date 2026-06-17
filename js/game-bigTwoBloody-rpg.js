@@ -393,7 +393,7 @@
           bLog('🦊 幻象！你的 '+take.r+take.s+' 被換成 '+give.r+give.s);
         }
       }
-      if(sks.freshmeat&&B.round===1){pDmg(1,'Fresh meat!!');taunt('win');}
+      if(sks.freshmeat&&B.round===1){pDmg(1,'Fresh meat!!');taunt('win');if(B.php<=0){bSettleDeath();if(!B)return;}}
       // 下毒
       if((sks.poison||sks.venom)&&!B.poisoned&&Math.random()<0.5){
         const amuletBlocks=S.equip.amulet&&(!sks.venom||eqQ('amulet')===4); // 暗金護符連劇毒都擋
@@ -471,6 +471,7 @@
       // 弒神：同花順直擊
       if(pidx===0&&cl.type==='straightFlush'&&sk('godslay')&&B.bhp>0)
         bossDmg(1,'⚔ 弒神一閃！');
+      if(!B)return true;
       if(pidx===0&&(cl.type==='fourOfAKind'||cl.type==='straightFlush'))taunt('bomb');
       // 搶劫：玩家出五張牌型
       if(pidx===0&&cl.cards.length===5&&(B.mon.skills||{}).steal){
@@ -490,6 +491,7 @@
           sortP();
           bLog('🔥 地獄火！你的 '+burn.r+burn.s+' 被燒毀');
           pDmg(1,'被地獄火灼傷');
+          if(B.php<=0){bSettleDeath();if(!B)return true;}
         }
       }
       const FROM=[[W/2,H-150],[W/2,120],[70,H/2],[W-70,H/2]][pidx];
@@ -554,6 +556,7 @@
           if(B.clearStreak>=2&&sk('combo2')&&!B.comboUsed&&B.bhp>0){
             B.comboUsed=true;
             bossDmg(1,'🗡 連斬！');
+            if(!B)return;
           }
         } else B.clearStreak=0;
         if(B.cur!==0)bAiTimer();
@@ -567,7 +570,8 @@
       B.cur=next;
       if(B.cur!==0)bAiTimer();
     }
-    function bossDmg(n,why){
+    function bossDmg(n,why,instant){
+      if(instant===undefined)instant=true;
       const dodge=(B.mon.dodge||0)*(1-0.5*sk('pierce'));
       if(dodge>0&&Math.random()<dodge){
         bLog('💨 '+B.mon.name+' 閃避了攻擊！');
@@ -583,6 +587,16 @@
         S.chips+=g;addFloat(W/2,118,'+'+g+'元','#ffd54f');
       }
       taunt('hit');
+      // 場中即死：炸裂卡/連斬/弒神打到 0 血直接結算（結算路徑 instant=false 交給 bSettle 處理復活與勝負）
+      if(instant&&B.bhp<=0){
+        const sks=B.mon.skills||{};
+        if(sks.resurrect&&!B.resUsed){
+          B.resUsed=true;B.bhp=B.mon.hp;
+          bLog('⚰ '+B.mon.name+' 滿血復活了！！');taunt('start');
+        } else {
+          victory([(why||'致命一擊')+'　'+B.mon.name+' 被打到沒血了！']);
+        }
+      }
     }
     function pDmg(n,why){
       if(B.subShield){
@@ -625,7 +639,7 @@
         const dmg=1+(crit?1:0);
         if(crit)lines.push('💥 暴擊！'+B.mon.name+' 剩 '+B.hands[1].length+' 張（門檻 '+critTh()+'）');
         const before=B.bhp;
-        bossDmg(dmg,'⚔ 頭家裁決！');
+        bossDmg(dmg,'⚔ 頭家裁決！',false);
         if(B.bhp<before)
           lines.push('⚔ '+B.mon.name+' -'+(before-B.bhp)+'HP（'+B.bhp+'/'+B.mon.hp+'）');
         else lines.push('💨 '+B.mon.name+' 閃避了頭家裁決！');
