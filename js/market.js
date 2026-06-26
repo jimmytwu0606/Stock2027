@@ -15,7 +15,7 @@ import { getFinMindToken } from './config.js';
 import { fsGetShared } from './firebase.js';
 import { fetchIntraday, fetchHistoryCached, toYahooSymbol, fetchFundamentalsFromFirestore } from './api.js';
 import { dbGetAll, dbPut, dbDelete, dbGet, getKlineCache } from './db.js';
-import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual } from './health.js';
+import { calcHealth, calcHealthLong, healthBadge, healthBadgeDual, shortHealthScore } from './health.js';
 import { calcHealthWithSignals } from './stock-tabs.js';
 
 // ─────────────────────────────────────────────
@@ -829,6 +829,10 @@ const _FS_HEALTH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 async function _fetchHealthAsync(code) {
   if (_hgFetching.has(code)) return;
+  // ── Layer 0: rsClean（GAS 夜間算的全市場百分位，已驗證取代短線健康度）──────
+  // snapshot 有 rsclean_v 就直接用，連 K 線都不用抓（最快）；長線仍走下面三層
+  const _rsclean = window.__snapshot?.stocks?.[code]?.rsclean_v;
+  if (_rsclean != null) _hgHealthCache[code] = _rsclean;
   _hgFetching.add(code);
   try {
     // ── Layer 1: Firebase ────────────────────────────────────────────────
@@ -836,7 +840,7 @@ async function _fetchHealthAsync(code) {
       const fsHealth = await fsGetShared(`stocks/${code}/health`);
       if (fsHealth?.ts && Date.now() - fsHealth.ts * 1000 < _FS_HEALTH_TTL_MS) {
         // Firebase 有有效快取，直接用
-        _hgHealthCache[code]     = fsHealth.h  ?? null;
+        _hgHealthCache[code]     = (window.__snapshot?.stocks?.[code]?.rsclean_v) ?? fsHealth.h ?? null;
         _hgHealthLongCache[code] = fsHealth.hl ?? null;
         _patchHealthCell(code);
         return;
@@ -855,7 +859,7 @@ async function _fetchHealthAsync(code) {
       const cached = await getKlineCache(symbol, '1y');
       if (cached?.candles?.length >= 20) {
         const candles = cached.candles;
-        _hgHealthCache[code]     = calcHealthWithSignals(candles, code);  // v2.8 含 X 系列加成
+        _hgHealthCache[code]     = shortHealthScore({ code, candles });  // rsClean 優先，缺才退回舊算法
         _hgHealthLongCache[code] = candles.length >= 60
           ? calcHealthLong(candles, fund) : null;
         _patchHealthCell(code);
@@ -867,7 +871,7 @@ async function _fetchHealthAsync(code) {
     const symbol  = toYahooSymbol(code);
     const candles = await fetchHistoryCached(symbol, '1y');
     if (candles?.length >= 20) {
-      _hgHealthCache[code]     = calcHealthWithSignals(candles, code);  // v2.8 含 X 系列加成
+      _hgHealthCache[code]     = shortHealthScore({ code, candles });  // rsClean 優先，缺才退回舊算法
       _hgHealthLongCache[code] = candles.length >= 60
         ? calcHealthLong(candles, fund) : null;
       _patchHealthCell(code);

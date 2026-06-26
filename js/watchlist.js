@@ -124,8 +124,11 @@ export async function initWatchlist() {
           const signals = AppState.signals?.[code] ?? [];
           const streak  = record?.streak ?? null;
           const ys = getYaoguStatus(code, signals, record, streak);
-          if (ys) AppState.yaoguStatus[code] = ys;
-          else    delete AppState.yaoguStatus[code];
+          // 修(v2.9.4)：_ctxUnknown = 空 ctx 判不出破線 → 保留 canonical（全 ctx 已寫對），
+          //   不可用空 ctx 假 pullback 覆蓋（dot ③ 根治）。其餘 null（非妖股/出場窗口已過）維持原行為移除。
+          if (ys?._ctxUnknown) { /* 保留 canonical，不動 */ }
+          else if (ys)          AppState.yaoguStatus[code] = ys;
+          else                  delete AppState.yaoguStatus[code];
         } catch (_) {}
       }
       renderWatchlist();
@@ -969,16 +972,20 @@ const _YAOGU_CFG = {
   exit:     { color: '#38bdf8', cls: 'wl-yaogu-exit'     }, // 藍閃  最後出場警示
   exited:   { color: '#38bdf8', cls: 'wl-yaogu-exit'     }, // 相容舊版 status 字串
   watching: { color: '#6b7280', cls: 'wl-yaogu-watching' }, // 灰亮  曾是妖股（5日內）
+  pullback: { color: '#fbbf24', cls: 'wl-yaogu-pullback' }, // 黃    回檔觀察（v2.9.4，源頭防污染才上色）
+  rebirth:  { color: '#a78bfa', cls: 'wl-yaogu-rebirth'  }, // 紫閃  重生觀察
 };
 
 function _renderYaoguDot(ys) {
   if (!ys) return '';
 
-  // 觀察中超過 5 個交易日 → 不顯示，歷史訊號已失效
+  // 觀察中超過 N 個交易日 → 不顯示（daysSince 現由引擎提供＝轉watching至今天數）
   if (ys.status === 'watching' && (ys.daysSince ?? 99) > _YAOGU_HISTORY_DAYS) return '';
 
   const cfg  = _YAOGU_CFG[ys.status] ?? _YAOGU_CFG.watching;
-  const days = ys.daysSince != null ? ` · 第${ys.daysSince}天` : '';
+  // watching 顯示「轉觀望至今」(daysSince)，其餘顯示「啟動至今」(streak)
+  const dayN = ys.daysSince ?? ys.streak ?? null;
+  const days = dayN != null ? ` · 第${dayN}天` : '';
   const tip  = `${ys.label}${days}\n${ys.desc ?? ''}`;
 
   return `<span class="wl-yaogu-dot ${cfg.cls}"

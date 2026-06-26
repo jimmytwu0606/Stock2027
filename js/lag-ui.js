@@ -10,7 +10,7 @@
 import { runLagScan, abortSeedScan } from './seed-scan.js';
 import { getChineseName }            from './api.js';
 import { AppState }                  from './state.js';
-import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 import { getAllSignalsCache } from './db.js';
 import { openStockPreview } from './stock-preview.js';
 
@@ -181,7 +181,7 @@ function _ensureHealth(item) {
   // 健康度每筆只算一次，cache 在 item 上（排序重渲染不重算）
   if (item._hs === undefined) {
     const short = item.miniCandles?.length > 65 ? item.miniCandles.slice(-65) : item.miniCandles;
-    item._hs = short?.length >= 20 ? calcHealth(short) : null;
+    item._hs = shortHealthScore({ code: item.code, candles: short });
     item._hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, null, item.code) : null;
   }
 }

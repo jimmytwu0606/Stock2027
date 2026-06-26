@@ -20,7 +20,7 @@ export function initMobileScreener(deps) {
 
 // ─── DOM 骨架 ─────────────────────────────────────────────
 function _buildDOM() {
-  const panel = document.getElementById('tabScreener');
+  const panel = document.getElementById('tabHub');   // 修：HTML 無 tabScreener，篩選 panel 實際 id 是 tabHub
   if (!panel) return;
   panel.innerHTML = `
     <div id="mScrMain">
@@ -252,7 +252,7 @@ function _openSheet({ icon, title, sub, stocks, sort }) {
       </div>`;
     }).join('');
     document.querySelectorAll('.m-ss-card').forEach(el =>
-      el.addEventListener('click', () => window.__loadStock?.(el.dataset.code)));
+      el.addEventListener('click', () => (window.__mobileOpenPreview||window.__loadStock)?.(el.dataset.code)));
   };
   render();
 

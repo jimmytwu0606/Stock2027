@@ -22,7 +22,7 @@ import { getGroups, addStockToGroup, getDefaultGroupId } from './watchlist.js';
 import { getAllSeedSets, saveSeedSet, deleteSeedSet, getAllSignalsCache } from './db.js';
 import { getChineseName } from './api.js';
 import { openStockPreview } from './stock-preview.js';
-import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 import { scanOneCode } from './signal-scan.js';
 
 // 排序狀態
@@ -805,8 +805,8 @@ function _renderResults(items) {
     let av, bv;
     if (_srSortKey === 'hs') {
       const _s = c => c?.length > 65 ? c.slice(-65) : c;
-      av = calcHealth(_s(a.miniCandles)) ?? -1;
-      bv = calcHealth(_s(b.miniCandles)) ?? -1;
+      av = shortHealthScore({ code: a.code, candles: _s(a.miniCandles) }) ?? -1;
+      bv = shortHealthScore({ code: b.code, candles: _s(b.miniCandles) }) ?? -1;
     } else if (_srSortKey === 'hl') {
       av = (a.miniCandles?.length >= 120 ? calcHealthLong(a.miniCandles, _srFundCache[a.code] ?? null, a.code) : null) ?? -1;
       bv = (b.miniCandles?.length >= 120 ? calcHealthLong(b.miniCandles, _srFundCache[b.code] ?? null, b.code) : null) ?? -1;
@@ -851,7 +851,7 @@ function _renderResults(items) {
   let tbody = '';
   for (const item of sorted) {
     const _candlesShort = item.miniCandles?.length > 65 ? item.miniCandles.slice(-65) : item.miniCandles;
-    const hs = _candlesShort?.length >= 20 ? calcHealth(_candlesShort) : null;
+    const hs = shortHealthScore({ code: item.code, candles: _candlesShort });
     const hl = item.miniCandles?.length >= 120 ? calcHealthLong(item.miniCandles, _srFundCache[item.code] ?? null, item.code) : null;
     const yg = _srYaoguMap.get(item.code);
     const chgCls = item.chgPct >= 0 ? 'up' : 'down';

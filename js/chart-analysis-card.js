@@ -12,7 +12,7 @@ import { analyze, analyzeEntryPlan } from './chart-analysis.js';
 import { loadStockInfo, saveStockInfo, deleteStockInfo } from './db.js';
 import { fsGetShared } from './firebase.js';
 import { calcHealthWithSignals } from './stock-tabs.js';
-import { calcHealthLong } from './health.js';
+import { calcHealthLong, shortHealthScore } from './health.js';
 import { fetchHistory, fetchFundamentalsFromFirestore, toYahooSymbol, fetchVerifyData } from './api.js';
 
 import {
@@ -1686,7 +1686,7 @@ async function _tabPerspective(body, r, candles) {
 
 function _tabOverview(body, r, candles) {
   const code  = _ctxRefs.getCode?.() ?? '';
-  const short = calcHealthWithSignals(candles, code);
+  const short = shortHealthScore({ code, candles });
   const long  = _longHealthCache?.long ?? calcHealthLong(candles);
 
   // ── 評分計算 ──

@@ -58,6 +58,9 @@ export const AppState = {
     ICHI: false,
     // C3 — 分價量表（預設關閉）
     PVD:  false,
+    // T-1 RS 相對強度線 / 確信度（預設關閉；補上避免 undefined）
+    RS:   false,
+    CONV: false,
   },
   // C1 — Ichimoku 獨佔模式暫存：勾選 ICHI 時把其他指標狀態存進來，
   // 取消勾選時還原。null = 不在獨佔模式

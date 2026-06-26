@@ -21,6 +21,7 @@
 import { initOverlay } from './canvas-overlay.js';
 import { AppState }    from './state.js';
 import { saveAnnotation, loadAnnotation, deleteAnnotation } from './db.js';
+import { anchoredVWAP } from './indicators.js';
 
 // ---------- 工具定義 ----------
 const TOOLS = {
@@ -33,6 +34,10 @@ const TOOLS = {
   fib:    { icon: '𝔉', label: '費波那契回撤',       needPoints: 2 },
   measure:{ icon: '⤢', label: '量尺（漲跌幅/K棒數）', needPoints: 2 },
   text:   { icon: 'T', label: '文字',   needPoints: 1 },
+  avwap:  { icon: '⚓', label: '錨定均價 AVWAP（點 K 棒設錨，畫該點以來平均成本線）', needPoints: 1 },
+  position:{ icon: '🎯', label: '多空部位（拖 進場→停利，自動帶 1:1 停損，可調）', needPoints: 2 },
+  channel: { icon: '∥', label: '平行通道（拉基準線，再拖第三點調通道寬）', needPoints: 2 },
+  fibext: { icon: '📐', label: 'Fib 延伸（突破後目標 1.272 / 1.618 / 2.618）', needPoints: 2 },
 };
 
 const DEFAULT_COLOR = {
@@ -44,6 +49,10 @@ const DEFAULT_COLOR = {
   fib:   '#e3b341',
   measure: '#8b9dc3',
   text:  '#e8eaed',
+  avwap: '#fbbf24',
+  position: '#e3b341',
+  channel: '#3b82f6',
+  fibext: '#a78bfa',
 };
 
 // 樣式面板：色票 / 線寬 / 虛實（套用到選中圖形；無選取時設為新圖形預設）
@@ -104,7 +113,8 @@ export function enterEditMode() {
   if (editing) return;
   editing = true;
 
-  _hideIndicators(true);
+  // ⚠️ 不再用 _hideIndicators 動 AppState（會 desync 且還原脆弱）。
+  //    工作室的「乾淨」改由 CSS（.studio-mode 隱藏 .ind-panel）處理，AppState 不碰。
   window.dispatchEvent(new CustomEvent('chartReload'));
 
   const attach = () => {
@@ -135,7 +145,7 @@ export function exitEditMode() {
   _hideCtxMenu();
   hoverId = null;
 
-  _hideIndicators(false);
+  // ⚠️ 已不再用 _hideIndicators，無需還原 AppState
   window.dispatchEvent(new CustomEvent('chartReload'));
 
   _showToolbar(false);
@@ -155,6 +165,14 @@ export function exitEditMode() {
 }
 
 export function isEditing() { return editing; }
+
+// 圖層「✏️ 手繪」開關：隱藏/顯示已提交的手繪標註（進行中的繪製不受影響）
+let _annotationsVisible = true;
+export function setAnnotationsVisible(v) {
+  _annotationsVisible = !!v;
+  overlay?.requestRender();
+}
+export function areAnnotationsVisible() { return _annotationsVisible; }
 
 function _createOverlay() {
   if (overlay) { try { overlay.destroy(); } catch {} overlay = null; }
@@ -291,7 +309,7 @@ function _drawAll(ctx, h) {
   }
 
   if (!annotations.length && !drawingTemp) return;
-  for (const a of annotations) _drawAnnotation(ctx, h, a, a.id === selectedId);
+  if (_annotationsVisible) for (const a of annotations) _drawAnnotation(ctx, h, a, a.id === selectedId);
   if (drawingTemp) _drawAnnotation(ctx, h, drawingTemp, false);
 }
 
@@ -438,6 +456,98 @@ function _drawAnnotation(ctx, h, a, isSelected) {
     ctx.fillStyle = a.color || DEFAULT_COLOR.text;
     ctx.fillText(txt, bx + padX, by);
     if (isSelected) _drawHandles(ctx, [pts[0]]);
+  } else if (a.type === 'avwap' && pts[0]) {
+    // T-2 手動錨定 AVWAP：從點選的 K 棒起算量加權均價線（錨點以來平均成本）
+    const res = _avwapScreenPts(h, a);
+    if (res && res.line.length >= 2) {
+      ctx.beginPath();
+      ctx.moveTo(res.line[0].x, res.line[0].y);
+      for (let i = 1; i < res.line.length; i++) ctx.lineTo(res.line[i].x, res.line[i].y);
+      ctx.stroke();
+      const last = res.line[res.line.length - 1];
+      if (res.lastVal != null) _drawPriceLabel(ctx, h.width - 2, last.y, res.lastVal, a.color || DEFAULT_COLOR.avwap);
+    }
+    // 錨點 ⚓ 記號（線太短也畫，標示設錨位置）
+    ctx.setLineDash([]);
+    ctx.font = '13px system-ui';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = a.color || DEFAULT_COLOR.avwap;
+    ctx.fillText('⚓', pts[0].x, pts[0].y);
+    if (isSelected) _drawHandles(ctx, [pts[0]]);
+  } else if (a.type === 'position' && pts[0] && pts[1]) {
+    // 🎯 多空部位：進場(p0)/停利(p1)/停損(p2，缺則即時推導 1:1) 三水平線 + 獲利/虧損區（台股：賺紅賠綠）
+    const entry = a.points[0], target = a.points[1];
+    const ePr = entry.price, tPr = target.price;
+    const sPr = (a.points[2] && a.points[2].price != null) ? a.points[2].price : (ePr - (tPr - ePr));
+    const yE = pts[0].y, yT = pts[1].y;
+    const yS = h.priceToY(sPr);
+    const boxL = Math.min(pts[0].x, pts[1].x), boxR = Math.max(pts[0].x, pts[1].x);
+    const RED = '#ef5350', GREEN = '#26a69a', NEU = '#e3b341';
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(239,83,80,0.12)';
+    ctx.fillRect(boxL, Math.min(yE, yT), boxR - boxL, Math.abs(yT - yE));
+    if (yS != null) { ctx.fillStyle = 'rgba(38,166,154,0.12)'; ctx.fillRect(boxL, Math.min(yE, yS), boxR - boxL, Math.abs(yS - yE)); }
+    const _hl = (y, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(boxL, y); ctx.lineTo(boxR, y); ctx.stroke(); };
+    _hl(yT, RED, 1.4); _hl(yE, NEU, 1.6); if (yS != null) _hl(yS, GREEN, 1.4);
+    const tPct = (tPr - ePr) / ePr * 100, sPct = (sPr - ePr) / ePr * 100;
+    const reward = Math.abs(tPr - ePr), risk = Math.abs(ePr - sPr);
+    const rr = risk > 0 ? reward / risk : 0;
+    ctx.font = '11px system-ui'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    const _lbl = (x, y, txt, col) => { const m = ctx.measureText(txt); ctx.fillStyle = 'rgba(28,31,36,0.92)'; ctx.fillRect(x, y - 8, m.width + 8, 16); ctx.fillStyle = col; ctx.fillText(txt, x + 4, y); };
+    _lbl(boxR + 4, yT, `停利 ${tPr.toFixed(2)}　${tPct >= 0 ? '+' : ''}${tPct.toFixed(1)}%`, RED);
+    _lbl(boxR + 4, yE, `進場 ${ePr.toFixed(2)}`, NEU);
+    if (yS != null) _lbl(boxR + 4, yS, `停損 ${sPr.toFixed(2)}　${sPct >= 0 ? '+' : ''}${sPct.toFixed(1)}%`, GREEN);
+    _lbl(boxL + 4, Math.min(yE, yT, yS != null ? yS : yT) - 12, `盈虧比 ${rr.toFixed(1)}`, rr >= 2 ? RED : NEU);
+    if (isSelected) _drawHandles(ctx, [{ x: pts[0].x, y: yE }, { x: pts[1].x, y: yT }, { x: pts[1].x, y: yS != null ? yS : yT }]);
+  } else if (a.type === 'channel' && pts[0] && pts[1]) {
+    // ∥ 平行通道：base 線(p0,p1) + 平行線（過 p2，缺則即時推導偏移），螢幕等距、向右緣延伸 + 填色
+    const base0 = pts[0], base1 = pts[1];
+    let yOff;
+    if (a.points[2] && a.points[2].price != null) {
+      const dxb = base1.x - base0.x;
+      const yBaseAtP2 = dxb !== 0 ? base0.y + (base1.y - base0.y) * (pts[2].x - base0.x) / dxb : base0.y;
+      yOff = (pts[2] ? pts[2].y : base0.y) - yBaseAtP2;
+    } else {
+      const off = Math.max(Math.abs((a.points[1].price ?? 0) - (a.points[0].price ?? 0)), (a.points[0].price || 1) * 0.02);
+      const y1 = h.priceToY((a.points[0].price ?? 0) + off), y0 = h.priceToY(a.points[0].price ?? 0);
+      yOff = (y1 != null && y0 != null) ? (y1 - y0) : -40;
+    }
+    const par0 = { x: base0.x, y: base0.y + yOff }, par1 = { x: base1.x, y: base1.y + yOff };
+    const bE = _extendToEdge(base0, base1, W, H), pE = _extendToEdge(par0, par1, W, H);
+    const col = a.color || DEFAULT_COLOR.channel;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.08; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(base0.x, base0.y); ctx.lineTo(bE.x, bE.y); ctx.lineTo(pE.x, pE.y); ctx.lineTo(par0.x, par0.y); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = col; ctx.lineWidth = a.width || 1.5;
+    ctx.beginPath(); ctx.moveTo(base0.x, base0.y); ctx.lineTo(bE.x, bE.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(par0.x, par0.y); ctx.lineTo(pE.x, pE.y); ctx.stroke();
+    if (isSelected && pts[2]) _drawHandles(ctx, [base0, base1, pts[2]]);
+  } else if (a.type === 'fibext' && pts.length >= 2 && pts[0] && pts[1]) {
+    // 📐 Fib 延伸：目標價 = p0 + (p1−p0)×ratio（突破延伸，與回撤互補）
+    const EXT = [0.618, 1, 1.272, 1.618, 2, 2.618];
+    const p0 = a.points[0], p1 = a.points[1];
+    const x0 = Math.min(pts[0].x, pts[1].x), x1 = W;
+    const base = a.color || DEFAULT_COLOR.fibext;
+    ctx.setLineDash(a.dash ? [6, 4] : []);
+    ctx.strokeStyle = base; ctx.globalAlpha = 0.5;
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); ctx.lineTo(pts[1].x, pts[1].y); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.font = '11px system-ui'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'right';
+    for (const lv of EXT) {
+      const price = p0.price + (p1.price - p0.price) * lv;
+      const y = h.priceToY(price);
+      if (y == null) continue;
+      ctx.setLineDash([]);
+      ctx.globalAlpha = lv === 1 ? 0.85 : lv === 1.618 ? 0.7 : 0.4;
+      ctx.strokeStyle = base;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      ctx.globalAlpha = (lv === 1 || lv === 1.618) ? 0.95 : 0.75;
+      ctx.fillStyle = base;
+      ctx.fillText(`${(lv * 100).toFixed(1)}% ${price.toFixed(2)}`, x1 - 4, y - 2);
+    }
+    ctx.globalAlpha = 1;
+    if (isSelected) _drawHandles(ctx, pts);
   }
   // ✨ 自動描繪標記（與手繪區分，清除自動時只掃這些）
   if (a.auto && pts[0]) {
@@ -543,6 +653,35 @@ function _xyToPoint(h, x, y) {
     logical: h.xToLogical(x),
     price:   h.yToPrice(y),
   };
+}
+
+// ── T-2 AVWAP 手動錨：把錨點 point 解析成 K 棒索引並算 AVWAP 序列 ──
+function _avwapResolve(a) {
+  const candles = ctxRefs?.getCandles?.() || [];
+  if (!candles.length) return null;
+  const p0 = a.points?.[0];
+  if (!p0) return null;
+  let idx = -1;
+  if (p0.time != null) idx = candles.findIndex(c => c.time >= p0.time);
+  if (idx < 0 && p0.logical != null) idx = Math.round(p0.logical);
+  if (idx < 0) idx = 0;
+  idx = Math.max(0, Math.min(idx, candles.length - 1));
+  return { idx, av: anchoredVWAP(candles, idx), candles };
+}
+// AVWAP 螢幕座標 polyline（錨點起到最後一根），供繪製與命中測試共用
+function _avwapScreenPts(h, a) {
+  const r = _avwapResolve(a);
+  if (!r) return null;
+  const line = [];
+  for (let i = r.idx; i < r.candles.length; i++) {
+    const v = r.av[i];
+    if (v == null) continue;
+    const x = h.timeToX(r.candles[i].time);
+    const y = h.priceToY(v);
+    if (x == null || y == null) continue;
+    line.push({ x, y });
+  }
+  return { line, lastVal: r.av[r.candles.length - 1] };
 }
 
 // ============================================================================
@@ -706,6 +845,18 @@ function _commitDrawing() {
       drawingTemp = null; overlay.requestRender(); return;
     }
     drawingTemp.label = txt.trim();
+  } else if (drawingTemp.type === 'position') {
+    // 進場(p0) → 停利(p1)；自動補停損(p2)：對稱 1:1 風險報酬，使用者可拖調
+    const p0 = drawingTemp.points[0], p1 = drawingTemp.points[1];
+    if (!p0 || !p1 || p0.price == null || p1.price == null) { drawingTemp = null; overlay.requestRender(); return; }
+    const stopPrice = p0.price - (p1.price - p0.price);
+    drawingTemp.points[2] = { time: p1.time, logical: p1.logical, price: stopPrice };
+  } else if (drawingTemp.type === 'channel') {
+    // 基準線(p0,p1) → 自動補通道寬錨點(p2)：預設偏移 = 線本身漲跌幅或 2% 取大者
+    const p0 = drawingTemp.points[0], p1 = drawingTemp.points[1];
+    if (!p0 || !p1 || p0.price == null || p1.price == null) { drawingTemp = null; overlay.requestRender(); return; }
+    const off = Math.max(Math.abs(p1.price - p0.price), (p0.price || 1) * 0.02);
+    drawingTemp.points[2] = { time: p0.time, logical: p0.logical, price: p0.price + off };
   }
   _pushUndo();
   annotations.push(drawingTemp);
@@ -739,7 +890,7 @@ function _hitEndpoint(e) {
 function _getEndpoints(h, a) {
   const out = [];
   const pts = (a.points || []).map(p => _pointToXY(h, p));
-  if ((a.type === 'line' || a.type === 'ray' || a.type === 'fib' || a.type === 'measure') && pts[0] && pts[1]) {
+  if ((a.type === 'line' || a.type === 'ray' || a.type === 'fib' || a.type === 'fibext' || a.type === 'measure') && pts[0] && pts[1]) {
     out.push({ ...pts[0], index: 0 });
     out.push({ ...pts[1], index: 1 });
   } else if (a.type === 'rect' && pts[0] && pts[1]) {
@@ -747,6 +898,16 @@ function _getEndpoints(h, a) {
     out.push({ x: pts[0].x, y: pts[0].y, index: 0 });
     out.push({ x: pts[1].x, y: pts[1].y, index: 1 });
     // (中間兩個角是組合出來的,目前只支援拖兩個 point;簡化版)
+  } else if (a.type === 'avwap' && pts[0]) {
+    out.push({ ...pts[0], index: 0 });   // 錨點可拖曳重設
+  } else if (a.type === 'position' && pts[0] && pts[1] && pts[2]) {
+    out.push({ x: pts[0].x, y: pts[0].y, index: 0 });   // 進場（左緣）
+    out.push({ x: pts[1].x, y: pts[1].y, index: 1 });   // 停利（右緣）
+    out.push({ x: pts[1].x, y: pts[2].y, index: 2 });   // 停損（右緣）
+  } else if (a.type === 'channel' && pts[0] && pts[1] && pts[2]) {
+    out.push({ ...pts[0], index: 0 });
+    out.push({ ...pts[1], index: 1 });
+    out.push({ ...pts[2], index: 2 });   // 通道寬
   }
   return out;
 }
@@ -804,6 +965,40 @@ function _hitOne(h, a, x, y) {
   }
   if (a.type === 'text' && pts[0]) {
     return Math.abs(x - pts[0].x) < 80 && Math.abs(y - pts[0].y) < 12;
+  }
+  if (a.type === 'fibext' && pts[0] && pts[1]) {
+    if (_distToSegment(x, y, pts[0].x, pts[0].y, pts[1].x, pts[1].y) < HIT_THRESHOLD) return true;
+    const x0 = Math.min(pts[0].x, pts[1].x);
+    if (x < x0 - 4) return false;
+    const p0 = a.points[0], p1 = a.points[1];
+    for (const lv of [0.618, 1, 1.272, 1.618, 2, 2.618]) {
+      const yLv = h.priceToY(p0.price + (p1.price - p0.price) * lv);
+      if (yLv != null && Math.abs(y - yLv) < HIT_THRESHOLD) return true;
+    }
+    return false;
+  }
+  if (a.type === 'avwap' && pts[0]) {
+    if (Math.abs(x - pts[0].x) < 12 && Math.abs(y - pts[0].y) < 12) return true;  // 點⚓錨
+    const res = _avwapScreenPts(h, a);
+    if (res) for (let i = 1; i < res.line.length; i++) {
+      if (_distToSegment(x, y, res.line[i - 1].x, res.line[i - 1].y, res.line[i].x, res.line[i].y) < HIT_THRESHOLD) return true;
+    }
+    return false;
+  }
+  if (a.type === 'position' && pts[0] && pts[1] && pts[2]) {
+    const boxL = Math.min(pts[0].x, pts[1].x) - 4, boxR = Math.max(pts[0].x, pts[1].x) + 4;
+    const yv = [pts[0].y, pts[1].y, pts[2].y];
+    return x >= boxL && x <= boxR && y >= Math.min(...yv) - 4 && y <= Math.max(...yv) + 4;
+  }
+  if (a.type === 'channel' && pts[0] && pts[1] && pts[2]) {
+    const dxb = pts[1].x - pts[0].x;
+    const yBaseAtP2 = dxb !== 0 ? pts[0].y + (pts[1].y - pts[0].y) * (pts[2].x - pts[0].x) / dxb : pts[0].y;
+    const yOff = pts[2].y - yBaseAtP2;
+    const par0 = { x: pts[0].x, y: pts[0].y + yOff }, par1 = { x: pts[1].x, y: pts[1].y + yOff };
+    const bE = _extendToEdge(pts[0], pts[1], h.width, h.height), pE = _extendToEdge(par0, par1, h.width, h.height);
+    if (_distToSegment(x, y, pts[0].x, pts[0].y, bE.x, bE.y) < HIT_THRESHOLD) return true;
+    if (_distToSegment(x, y, par0.x, par0.y, pE.x, pE.y) < HIT_THRESHOLD) return true;
+    return false;
   }
   return false;
 }
@@ -1154,6 +1349,7 @@ function _injectToolbar() {
   toolbarEl.id = 'chartEditToolbar';
   toolbarEl.className = 'ce-toolbar ce-toolbar-floating hidden';
   toolbarEl.innerHTML = `
+    <div class="ce-drag-handle" title="拖曳移動工具列">⠿</div>
     <div class="ce-tools">
       ${Object.entries(TOOLS).map(([k, t]) =>
         `<button class="ce-tool-btn" data-tool="${k}" title="${t.label}">${t.icon}</button>`
@@ -1217,12 +1413,84 @@ function _injectToolbar() {
     if (action === 'export') exportImage();
     if (action === 'exit')   exitEditMode();
   });
+
+  _makeToolbarDraggable();
+}
+
+// ── 工具列可拖移（拖左側 ⠿ 把手到任一處，位置存 localStorage）──
+let _savedToolbarPos = null;
+function _applyToolbarPos(left, top) {
+  if (!toolbarEl) return;
+  toolbarEl.style.left = left + 'px';
+  toolbarEl.style.top  = top + 'px';
+  toolbarEl.style.right = 'auto';
+  toolbarEl.style.bottom = 'auto';
+}
+function _clampToolbarPos(left, top) {
+  const par = toolbarEl.offsetParent || document.documentElement;
+  const maxL = Math.max(0, (par.clientWidth  || window.innerWidth)  - toolbarEl.offsetWidth);
+  const maxT = Math.max(0, (par.clientHeight || window.innerHeight) - toolbarEl.offsetHeight);
+  return { left: Math.max(0, Math.min(left, maxL)), top: Math.max(0, Math.min(top, maxT)) };
+}
+function _restoreToolbarPos() {
+  if (!_savedToolbarPos || !toolbarEl) return;
+  // 工具列剛顯示，下一幀才有正確尺寸 → rAF 後夾邊套用
+  requestAnimationFrame(() => {
+    if (!toolbarEl || toolbarEl.classList.contains('hidden')) return;
+    const c = _clampToolbarPos(_savedToolbarPos.left, _savedToolbarPos.top);
+    _applyToolbarPos(c.left, c.top);
+  });
+}
+function _makeToolbarDraggable() {
+  const handle = toolbarEl?.querySelector('.ce-drag-handle');
+  if (!handle) return;
+  try {
+    const pos = JSON.parse(localStorage.getItem('ceToolbarPos') || 'null');
+    if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) _savedToolbarPos = pos;
+  } catch {}
+
+  let dragging = false, sx = 0, sy = 0, startLeft = 0, startTop = 0;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const pt = e.touches ? e.touches[0] : e;
+    const c = _clampToolbarPos(startLeft + (pt.clientX - sx), startTop + (pt.clientY - sy));
+    _applyToolbarPos(c.left, c.top);
+    if (e.cancelable) e.preventDefault();
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    toolbarEl.classList.remove('ce-dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+    _savedToolbarPos = { left: parseFloat(toolbarEl.style.left) || 0, top: parseFloat(toolbarEl.style.top) || 0 };
+    try { localStorage.setItem('ceToolbarPos', JSON.stringify(_savedToolbarPos)); } catch {}
+  };
+  const onDown = (e) => {
+    const pt = e.touches ? e.touches[0] : e;
+    const r  = toolbarEl.getBoundingClientRect();
+    const pr = (toolbarEl.offsetParent || document.documentElement).getBoundingClientRect();
+    startLeft = r.left - pr.left;
+    startTop  = r.top  - pr.top;
+    sx = pt.clientX; sy = pt.clientY;
+    dragging = true;
+    toolbarEl.classList.add('ce-dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    e.preventDefault();
+  };
+  handle.addEventListener('mousedown', onDown);
+  handle.addEventListener('touchstart', onDown, { passive: false });
 }
 
 function _showToolbar(show) {
   if (!toolbarEl) return;
   toolbarEl.classList.toggle('hidden', !show);
-  if (show) _updateToolbarUI();
+  if (show) { _updateToolbarUI(); _restoreToolbarPos(); }
 }
 
 function _updateToolbarUI() {
@@ -1240,12 +1508,14 @@ function _updateToolbarUI() {
 // ============================================================================
 function _hideIndicators(hide) {
   if (hide) {
+    if (savedIndicatorState) return;   // 已隱藏中：不要用「已清空」狀態覆蓋備份
     savedIndicatorState = {
       indicators: { ...AppState.indicators },
       ma:         { ...AppState.ma },
     };
-    AppState.indicators = { KD: false, RSI: false, MACD: false };
-    AppState.ma = { 5: false, 10: false, 20: false, 60: false, BB: false };
+    // 只關副圖/均線，保留其餘鍵（RS/DMI/… 不要整組被刪，否則還原失敗時全消失）
+    AppState.indicators = { ...AppState.indicators, KD: false, RSI: false, MACD: false };
+    AppState.ma = { ...AppState.ma, 5: false, 10: false, 20: false, 60: false, BB: false };
   } else if (savedIndicatorState) {
     AppState.indicators = savedIndicatorState.indicators;
     AppState.ma         = savedIndicatorState.ma;

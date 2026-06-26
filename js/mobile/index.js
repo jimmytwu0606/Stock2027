@@ -8,9 +8,13 @@
 import { initMobileNav, setNavDeps, openMobileStockPage, closeMobileStockPage, updateMobileStockTitle } from './mobile-nav.js';
 import { initMobileWatchlist, renderMobileWatchlist } from './mobile-watchlist.js';
 import { initMobileScreener } from './mobile-screener.js';
+import { initMobilePreview } from './mobile-preview.js';
 
 export async function initMobile(deps = {}) {
   const { AppState, showToast, getChineseName, fetchTWSEPrices, openSettings } = deps;
+
+  // 0. 個股速覽 modal（建好 DOM + window.__mobileOpenPreview 橋接）
+  initMobilePreview();
 
   // 1. 導航
   initMobileNav();

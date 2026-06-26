@@ -24,7 +24,7 @@ import { scanOneCode } from './signal-scan.js';
 let _prFundCache = {};
 // 妖股快取（掃描結果存這裡，重繪時用）
 let _prYaoguMap = new Map();
-import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 
 // 排序狀態
 let _prSortKey = 'score';
@@ -333,7 +333,7 @@ function _renderResult(item, rank) {
   const allCandles   = item.fullCandles ?? item.candles;
   const candlesShort = allCandles?.length > 65 ? allCandles.slice(-65) : allCandles;
   _prHealthCache.set(item.code, {
-    hs: calcHealth(candlesShort),
+    hs: shortHealthScore({ code: item.code, candles: candlesShort }),
     hl: allCandles?.length >= 120 ? calcHealthLong(allCandles, _prFundCache[item.code] ?? null) : null,
   });
 

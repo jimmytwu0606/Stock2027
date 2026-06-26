@@ -24,7 +24,7 @@ export function renderResult(body, deps) {
       })).join('')}
     </div>`;
   body.querySelectorAll('.m-rc').forEach((el,i)=>{
-    el.addEventListener('click',()=>window.__loadStock?.(results[i]?.code||el.dataset.code));
+    el.addEventListener('click',()=>(window.__mobileOpenPreview||window.__loadStock)?.(results[i]?.code||el.dataset.code));
   });
 }
 

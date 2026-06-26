@@ -25,11 +25,14 @@ import {
   getKdChart,   getKdChartEl,
   getRsiChart,  getRsiChartEl,
   setChartFixed,
+  applyMainChartHeight, getMainChartHeight,
+  applyStudioChartHeight, initStudioChartHeight,
 } from './chart.js';
 
 // ── Phase 7：K 線編輯模式 + 智能分析 ──
 import { initChartEdit, enterEditMode, exitEditMode, isEditing,
-         loadAnnotationsForCode, reattachAfterReload } from './chart-edit.js';
+         loadAnnotationsForCode, reattachAfterReload,
+         autoDraw, clearAutoDrawings, setAnnotationsVisible } from './chart-edit.js';
 import { initAnalysisCard, renderAnalysisPanel, refreshAnalysis, getLastAnalysisResult } from './chart-analysis-card.js';
 import { renderPersonas } from './personas-ui.js';
 import { initPersonasPanel, resetPersonasPanel } from './personas-panel.js';
@@ -59,7 +62,7 @@ import { initStockInfo, setStockInfoCode, renderStockInfo } from './stock-info.j
 import {
   startClock, setHeaderLoading, updateHeader,
   showLoading, updateDataInfo, showToast, initUIEvents,
-  renderWeeklyStageBadges, ensureTADaily,
+  renderWeeklyStageBadges, ensureTADaily, syncStateFromButtons,
 } from './ui.js';
 import { initSettingsDrawer, openSettings } from './settings.js';
 import { initStockTabs, reloadStockTabs, renderStockSignals, ensureFundamentals } from './stock-tabs.js';
@@ -1151,6 +1154,47 @@ function _listenPatternHighlight() {
 // ─────────────────────────────────────────────
 // Phase 7：K 線編輯模式 + 智能分析卡片
 // ─────────────────────────────────────────────
+// ── 拖曳把手調整 K 線高度（主頁；全視窗已撐滿，CSS 隱藏把手）──
+function _initChartResizeHandle() {
+  const handle = document.getElementById('chartResizeHandle');
+  if (!handle || handle.dataset.bound) return;
+  handle.dataset.bound = '1';
+  const _inStudio = () => document.getElementById('chartPanel')?.classList.contains('studio-mode');
+  let dragging = false, startY = 0, startH = 360;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const pt = e.touches ? e.touches[0] : e;
+    const newH = startH + (pt.clientY - startY);
+    try { _inStudio() ? applyStudioChartHeight(newH) : applyMainChartHeight(newH); } catch (err) {}
+    if (e.cancelable) e.preventDefault();
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('crh-dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+  };
+  const onDown = (e) => {
+    const pt = e.touches ? e.touches[0] : e;
+    dragging = true;
+    startY = pt.clientY;
+    // 起始高度取 #mainChart 目前實際高（工作室/主頁通用）
+    const mh = document.getElementById('mainChart')?.clientHeight;
+    startH = mh && mh > 100 ? mh : (_inStudio() ? 600 : getMainChartHeight());
+    handle.classList.add('crh-dragging');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+    e.preventDefault();
+  };
+  handle.addEventListener('mousedown', onDown);
+  handle.addEventListener('touchstart', onDown, { passive: false });
+}
+
 function initPhase7() {
   const chartContainer = getMainChartEl();
   if (!chartContainer) {
@@ -1220,6 +1264,9 @@ function initPhase7() {
     getCandles: () => AppState.lastCandles,
     getCode:    () => AppState.activeCode,
   });
+
+  // ── 拖曳把手調整 K 線高度（圖三）──
+  _initChartResizeHandle();
 
   // 每次 chartRendered 後若仍在編輯模式,重新 attach overlay
   // (處理 reloadChart 後 chart instance 改變的情況)
@@ -1449,60 +1496,193 @@ function _initFullscreen() {
     }
   }
 
-  let _isFS = false;
+  let _fsMode = null;   // null | 'read'（教學閱讀室）| 'studio'（乾淨工作室）
+  const studioBtn = document.getElementById('btnStudio');
 
-  function enterFS() {
-    _isFS = true;
-    document.getElementById('chartPanel')?.classList.add('fullscreen-mode');
+  function _resetFSButtons() {
+    btn.classList.remove('active'); btn.title = '全視窗模式 (ESC 退出)'; btn.textContent = '⛶ 全視窗';
+    if (studioBtn) { studioBtn.classList.remove('active'); studioBtn.title = '工作室（乾淨 K 線，畫線/細緻技術分析，ESC 退出）'; studioBtn.textContent = '🎨 工作室'; }
+  }
+
+  function enterFS(mode) {
+    _fsMode = mode;
+    const panel = document.getElementById('chartPanel');
+    panel?.classList.add('fullscreen-mode');
+    if (mode === 'studio') panel?.classList.add('studio-mode');
     document.body.classList.add('fullscreen-chart');
-    btn.classList.add('active');
-    btn.title = '退出全視窗 (ESC)';
-    btn.textContent = '✕';
+    if (mode === 'studio' && studioBtn) { studioBtn.classList.add('active'); studioBtn.title = '退出工作室 (ESC)'; studioBtn.textContent = '✕'; }
+    else { btn.classList.add('active'); btn.title = '退出全視窗 (ESC)'; btn.textContent = '✕'; }
     setTimeout(() => {
       // 量測 sticky toolbar 實際高度，寫入 CSS 變數供 chart-area height calc 使用
       const tb1 = document.querySelector('#chartPanel .chart-toolbar');
       const tbH = tb1 ? (tb1.offsetHeight || 0) : 0;
       if (tbH > 0) document.documentElement.style.setProperty('--fs-tb-h', tbH + 'px');
-      // 進入全視窗時強制滾回頂部，確保 K 線在首屏
+      // 工作室：套用記憶高度（無記憶則 CSS 預設滿版），供把手手動拉
+      if (mode === 'studio') { try { initStudioChartHeight(); } catch(e) {} }
       document.getElementById('chartPanel')?.scrollTo({ top: 0 });
-      // 顯示 Fixed 按鈕
       const fixedBtn = document.getElementById('btnFixedChart');
       if (fixedBtn) fixedBtn.style.display = '';
       window._chartResize?.();
       window.dispatchEvent(new CustomEvent('chartRendered', {
         detail: { code: AppState.activeCode, candleCount: AppState.lastCandles?.length || 0 }
       }));
-      try { initFullscreenAnalysis(); } catch(e) { console.warn('[fs-analysis] init failed:', e); }
-      // 全視窗下副圖不可見，停止 crosshair/scroll 計算，降低 CPU
-      try { setSubChartsActive(false); } catch(e) {}
+      if (mode === 'studio') {
+        // 工作室：乾淨 K 線、不渲染教學；直接進編輯模式 + 圖層 chips
+        try { enterEditMode(); } catch(e) { console.warn('[studio] enterEditMode failed:', e); }
+        // enterEditMode 內部的 chartReload 派在 window（到不了 document 監聽器）→ 這裡補派 document 觸發真正重繪，套用清空指標的乾淨狀態
+        document.dispatchEvent(new CustomEvent('chartReload'));
+        _showStudioLayers(true);
+      } else {
+        // 閱讀室：重建圖表，讓副圖在「全視窗尺寸」下重新建立+渲染。
+        // （否則沿用主頁實例只 applyOptions 寬度，LWC 不會正確重繪 → 副圖全黑）
+        document.dispatchEvent(new CustomEvent('chartReload'));
+        try { initFullscreenAnalysis(); } catch(e) { console.warn('[fs-analysis] init failed:', e); }
+      }
+      // 閱讀室全視窗副圖現在看得見 → 保持 active 與主圖連動；工作室副圖隱藏才停掉省 CPU
+      try { setSubChartsActive(mode !== 'studio'); } catch(e) {}
+      // 版面展開後，被裁切過的副圖補一次重繪（修「全黑」殘留）
+      setTimeout(() => { try { window._chartResize?.(); } catch(e) {} }, 260);
     }, 80);
   }
 
   function exitFS() {
-    _isFS = false;
+    const wasStudio = _fsMode === 'studio';
+    _fsMode = null;
     clearSignalLayer();
-    try { destroyFullscreenAnalysis(); } catch(e) {}
+    if (wasStudio) {
+      try { if (isEditing()) exitEditMode(); } catch(e) {}
+      // 🧹 清掉工作室期間若殘留的全視窗教學 tab（fsTabBar/fsDeepZone），避免漏到主畫面下方
+      try { destroyFullscreenAnalysis(); } catch(e) {}
+      // 🛡️ 保險：用沒被動過的按鈕狀態把 AppState 還原回去，避免 _hideIndicators
+      //    的 save/restore 因任何路徑失效，導致「按鈕 on 但 KD/RSI/MACD 沒畫」卡死
+      try { syncStateFromButtons(); } catch(e) {}
+      // 同上：exitEditMode 的 chartReload 派在 window，補派 document 把使用者原本的指標還原重繪
+      document.dispatchEvent(new CustomEvent('chartReload'));
+      _showStudioLayers(false);
+      document.getElementById('chartPanel')?.classList.remove('studio-mode');
+    } else {
+      try { destroyFullscreenAnalysis(); } catch(e) {}
+    }
     document.documentElement.style.removeProperty('--fs-tb-h');
     document.getElementById('chartPanel')?.classList.remove('fullscreen-mode');
     document.getElementById('chartPanel')?.classList.remove('fixed-chart');
     document.body.classList.remove('fullscreen-chart');
-    btn.classList.remove('active');
-    btn.title = '全視窗模式 (ESC 退出)';
-    btn.textContent = '⛶';
-    // 隱藏 Fixed 按鈕，重置狀態
+    _resetFSButtons();
     const fixedBtn = document.getElementById('btnFixedChart');
     if (fixedBtn) { fixedBtn.style.display = 'none'; fixedBtn.classList.remove('active'); }
-    // 還原 chart 的滾輪縮放
     try { setChartFixed(false); } catch(e) {}
-    // 還原副圖 crosshair/scroll
     try { setSubChartsActive(true); } catch(e) {}
     setTimeout(() => { window._chartResize?.(); }, 80);
   }
 
-  btn.addEventListener('click', () => { _isFS ? exitFS() : enterFS(); });
+  function _toggleFS(mode) {
+    if (mode === 'studio' && !AppState.activeCode) { showToast('請先選擇一檔股票'); return; }
+    if (_fsMode === mode) { exitFS(); return; }
+    if (_fsMode) exitFS();      // 模式切換：先退出當前
+    enterFS(mode);
+  }
+
+  // ── 工作室圖層 chips（手繪 / 自動描繪），狀態存 localStorage ──
+  function _studioLayerState() { try { return JSON.parse(localStorage.getItem('studio_layers') || '{}'); } catch { return {}; } }
+  function _saveStudioLayerState(s) { try { localStorage.setItem('studio_layers', JSON.stringify(s)); } catch {} }
+  function _applyStudioLayer(layer, on) {
+    if (layer === 'draw')      { try { setAnnotationsVisible(on); } catch(e) {} }
+    else if (layer === 'auto') { try { on ? autoDraw() : clearAutoDrawings(); } catch(e) {} }
+  }
+  function _injectStudioLayers() {
+    let bar = document.getElementById('studioLayerChips');
+    if (bar) return bar;
+    bar = document.createElement('div');
+    bar.id = 'studioLayerChips';
+    bar.className = 'studio-layer-chips';
+    bar.innerHTML = `<span class="slc-grip" title="拖曳移動圖層列">⠿</span>`
+      + `<span class="slc-label">圖層</span>`
+      + `<button class="slc-chip" data-layer="draw">✏️ 手繪</button>`
+      + `<button class="slc-chip" data-layer="auto">✨ 自動描繪</button>`;
+    document.getElementById('chartPanel')?.appendChild(bar);
+    bar.addEventListener('click', (ev) => {
+      const chip = ev.target.closest('.slc-chip');
+      if (!chip) return;
+      const layer = chip.dataset.layer;
+      const st = _studioLayerState();
+      st[layer] = !st[layer];
+      _saveStudioLayerState(st);
+      _applyStudioLayer(layer, st[layer]);
+      chip.classList.toggle('on', st[layer]);
+    });
+    // 拖移（拖 ⠿ 把手，位置存 localStorage）
+    const grip = bar.querySelector('.slc-grip');
+    let dg = false, sx = 0, sy = 0, sl = 0, st0 = 0;
+    const mv = (e) => {
+      if (!dg) return;
+      const pt = e.touches ? e.touches[0] : e;
+      const par = bar.offsetParent || document.documentElement;
+      const maxL = Math.max(0, (par.clientWidth || window.innerWidth) - bar.offsetWidth);
+      const maxT = Math.max(0, (par.clientHeight || window.innerHeight) - bar.offsetHeight);
+      bar.style.left = Math.max(0, Math.min(sl + (pt.clientX - sx), maxL)) + 'px';
+      bar.style.top  = Math.max(0, Math.min(st0 + (pt.clientY - sy), maxT)) + 'px';
+      bar.style.right = 'auto';
+      if (e.cancelable) e.preventDefault();
+    };
+    const up = () => {
+      if (!dg) return; dg = false;
+      bar.classList.remove('slc-dragging');
+      document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up);
+      document.removeEventListener('touchmove', mv); document.removeEventListener('touchend', up);
+      try { localStorage.setItem('studioChipsPos', JSON.stringify({ left: parseFloat(bar.style.left) || 0, top: parseFloat(bar.style.top) || 0 })); } catch (e2) {}
+    };
+    const dn = (e) => {
+      const pt = e.touches ? e.touches[0] : e;
+      const r = bar.getBoundingClientRect();
+      const pr = (bar.offsetParent || document.documentElement).getBoundingClientRect();
+      sl = r.left - pr.left; st0 = r.top - pr.top; sx = pt.clientX; sy = pt.clientY;
+      dg = true; bar.classList.add('slc-dragging');
+      document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+      document.addEventListener('touchmove', mv, { passive: false }); document.addEventListener('touchend', up);
+      e.preventDefault();
+    };
+    grip?.addEventListener('mousedown', dn);
+    grip?.addEventListener('touchstart', dn, { passive: false });
+    return bar;
+  }
+  function _showStudioLayers(show) {
+    const bar = _injectStudioLayers();
+    bar.style.display = show ? '' : 'none';
+    if (show) {
+      // 還原上次拖移位置（rAF 後尺寸就緒再夾邊）
+      try {
+        const pos = JSON.parse(localStorage.getItem('studioChipsPos') || 'null');
+        if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+          requestAnimationFrame(() => {
+            const par = bar.offsetParent || document.documentElement;
+            const maxL = Math.max(0, (par.clientWidth || window.innerWidth) - bar.offsetWidth);
+            const maxT = Math.max(0, (par.clientHeight || window.innerHeight) - bar.offsetHeight);
+            bar.style.left = Math.max(0, Math.min(pos.left, maxL)) + 'px';
+            bar.style.top  = Math.max(0, Math.min(pos.top, maxT)) + 'px';
+            bar.style.right = 'auto';
+          });
+        }
+      } catch (e) {}
+      const st = _studioLayerState();
+      const drawOn = st.draw !== false;   // 手繪預設 on
+      const autoOn = st.auto === true;    // 自動描繪預設 off
+      _applyStudioLayer('draw', drawOn);
+      bar.querySelector('[data-layer="draw"]')?.classList.toggle('on', drawOn);
+      if (autoOn) _applyStudioLayer('auto', true);
+      bar.querySelector('[data-layer="auto"]')?.classList.toggle('on', autoOn);
+    } else {
+      try { setAnnotationsVisible(true); } catch(e) {}   // 離開工作室還原可見，不動儲存偏好
+    }
+  }
+
+  btn.addEventListener('click', () => _toggleFS('read'));
+  if (studioBtn && !studioBtn.dataset.bound) {
+    studioBtn.dataset.bound = '1';
+    studioBtn.addEventListener('click', () => _toggleFS('studio'));
+  }
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && _isFS) exitFS();
+    if (e.key === 'Escape' && _fsMode) exitFS();
   });
 
   // ── Fixed 凍結按鈕：全視窗時顯示，點擊後 K 線 sticky 固定在頂 ──

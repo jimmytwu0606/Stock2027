@@ -2110,3 +2110,22 @@ body.fullscreen-chart .fullscreen-esc-hint { display: inline-flex; }
   .fs-granville-row-cond,
   .fs-granville-row-desc { font-size: 10.5px; }
 }
+
+/* ---------- 工具列拖移把手 ---------- */
+.ce-drag-handle {
+  cursor: grab;
+  color: var(--hint, #8b949e);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  margin-right: 2px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.ce-drag-handle:hover { color: var(--text, #e6edf3); }
+.ce-toolbar.ce-dragging { cursor: grabbing; opacity: 0.92; box-shadow: 0 8px 26px rgba(0,0,0,0.4); }
+.ce-toolbar.ce-dragging .ce-drag-handle { cursor: grabbing; }

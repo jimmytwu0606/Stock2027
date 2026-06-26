@@ -76,6 +76,12 @@
         </div>
       </div>
       <canvas id="dsGCanvas" style="display:block;max-width:100%;touch-action:none;margin-top:44px"></canvas>
+      <div id="dsRotate" style="
+        position:absolute;bottom:42px;left:50%;transform:translateX(-50%);display:none;
+        padding:6px 16px;border-radius:100px;background:rgba(245,196,0,.12);
+        border:1px solid rgba(245,196,0,.4);color:#f5c400;font-size:12px;
+        letter-spacing:.05em;pointer-events:none;z-index:5;
+      ">↻ 轉成橫向更好玩</div>
       <div id="dsGMsg" style="
         position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
         background:rgba(10,10,24,.95);border:1px solid #2a2a4a;border-radius:10px;
@@ -136,11 +142,9 @@
     ov.style.display = 'flex';
 
     const canvas = document.getElementById('dsGCanvas');
-    const maxW = Math.min(window.innerWidth - 24, 960);
     canvas.width  = 680;
     canvas.height = def.canvasH || 240;
-    canvas.style.width  = maxW + 'px';
-    canvas.style.height = Math.round(maxW * (def.canvasH || 240) / 680) + 'px';
+    fitCanvas();
 
     document.getElementById('dsGTitle').textContent = def.name;
     document.getElementById('dsGHint').textContent  = def.hint || '';
@@ -152,9 +156,30 @@
     currentDestroy = (typeof ret === 'function') ? ret : null;
   }
 
+  /* 手機友善：contain 置中縮放，貼齊「視窗 − 實際 header 高」，轉向/resize 自動重算 */
+  function fitCanvas() {
+    const canvas = document.getElementById('dsGCanvas');
+    if (!canvas || !currentDef) return;
+    const cw = 680, ch = currentDef.canvasH || 240, pad = 8;
+    const hdr = document.getElementById('dsGHdr');
+    const headerH = hdr ? hdr.offsetHeight : 46;
+    const availW = Math.min(window.innerWidth - pad * 2, 960);
+    const availH = window.innerHeight - headerH - pad * 2;
+    const scale = Math.max(0.1, Math.min(availW / cw, availH / ch));
+    canvas.style.width  = Math.round(cw * scale) + 'px';
+    canvas.style.height = Math.round(ch * scale) + 'px';
+    canvas.style.marginTop = headerH + 'px';
+    // 直向、且遊戲為橫向比例 → 提示轉向（橫向時隱藏）
+    const rot = document.getElementById('dsRotate');
+    if (rot) rot.style.display =
+      (window.innerHeight > window.innerWidth && cw > ch) ? 'block' : 'none';
+  }
+
   window.__closeGame = function () {
     const ov = document.getElementById('dsGameOverlay');
     if (ov) ov.style.display = 'none';
+    const rot = document.getElementById('dsRotate');
+    if (rot) rot.style.display = 'none';
     stopGame();
     currentDef = null;
   };
@@ -253,6 +278,9 @@
     ['click','keydown','mousemove','touchstart'].forEach(ev => {
       splash.addEventListener(ev, () => { if (!eggShown) { clearTimeout(idleTimer); startIdle(); } }, { passive: true });
     });
+    let rzT = null;
+    window.addEventListener('resize', () => { clearTimeout(rzT); rzT = setTimeout(fitCanvas, 120); });
+    window.addEventListener('orientationchange', () => setTimeout(fitCanvas, 250));
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

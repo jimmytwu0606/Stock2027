@@ -12,7 +12,7 @@ import {
 } from './portfolio.js';
 import { getChineseName, ensureChineseName, fetchHistoryCached, toYahooSymbol, resolveYahooSymbol, fetchFundamentalsBatch } from './api.js';
 import { getAllGroups, loadHealthCacheBatch, saveHealthCache, deletePortfolioList } from './db.js';
-import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 import { openStockPreview } from './stock-preview.js';
 
 // 自製 prompt — 取代瀏覽器原生 prompt(避免醜陋的瀏覽器彈窗)
@@ -943,7 +943,7 @@ async function _fetchBatch(items) {
               }];
             }
           }
-          const hShort = calcHealth(candlesShort);
+          const hShort = shortHealthScore({ code: item.code, candles: candlesShort });
           const hLong  = calcHealthLong(candles, fund, item.code);
           _healthCache[item.code]     = hShort;
           _healthLongCache[item.code] = hLong;

@@ -426,6 +426,20 @@
   /* 無 animation */
 }
 
+/* 黃亮 — 回檔觀察(v2.9.4)：跌破月線但正常回檔，靜態黃（color 由 inline 給） */
+.wl-yaogu-pullback {
+  /* 無 animation，靜態黃色 */
+}
+
+/* 紫閃 — 重生觀察：exit 後 X 重亮 / 站回 MA20，呼吸 2s */
+.wl-yaogu-rebirth {
+  animation: wl-yp 2s ease-in-out infinite;
+}
+@keyframes wl-yp {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.6); }
+  50%       { box-shadow: 0 0 0 6px rgba(167, 139, 250, 0);   }
+}
+
 /* ─── 群組拖曳中樣式（保留原版） ────────────────────────────── */
 
 .wl-group.drag-over {

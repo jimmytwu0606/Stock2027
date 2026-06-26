@@ -11,7 +11,7 @@ import { getChineseName, fetchHistoryCached } from './api.js';
 import { openLabWithCode } from './strategy-lab.js';
 import { getKlineCache, loadHealthCacheBatch, dbGet, dbGetAll, dbPut, dbDelete } from './db.js';
 import { fsGetShared, fsSetShared } from './firebase.js';
-import { renderHealthBadge, calcHealth, calcHealthLong } from './health.js';
+import { renderHealthBadge, calcHealth, calcHealthLong, shortHealthScore } from './health.js';
 
 const WORKER_BASE = 'https://stock-2027.luffy0606.workers.dev';
 const PROXY_TOKEN = 'e99ecdc813d9a203d1951613de68e7a22f83e5b22ffd458f';  // 同 api.js（Worker 全域 token gate）
@@ -697,7 +697,7 @@ async function _renderMatchPage(cell, row, q, hits, snap, page) {
     const h  = healthMap.get(code);
     const candles = candleMap.get(code);
     // 短線分：IDB 沒有就本機算（命中名單多是沒掃過的股票）
-    const hs = h?.healthShort ?? (candles ? calcHealth(candles) : null);
+    const hs = shortHealthScore({ code, candles }) ?? h?.healthShort ?? null;
     // 長線分：calcHealthLong 內建優先讀 __healthSnapshot，缺才本機算
     const hl = h?.healthLong ?? calcHealthLong(candles, null, code);
 

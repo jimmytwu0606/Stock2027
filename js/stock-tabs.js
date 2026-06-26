@@ -19,7 +19,7 @@ import {
 } from './api.js';
 
 import { getFinMindToken } from './config.js';
-import { matchSignals, getYaoguStatus, updateYaoguTracker, injectYaoguSignals } from './signal-scan.js';
+import { matchSignals, getYaoguStatus, updateYaoguTracker, injectYaoguSignals, isDeepBreakBelowMA20 } from './signal-scan.js';
 import { calcSignalLamps } from './strategy.js';
 import { calcMACD } from './indicators.js';
 import { AppState } from './state.js';
@@ -1434,26 +1434,18 @@ async function _renderYaoguChip(code, signals, candles = null) {
         `</div>`
       : '';
 
-    // close < MA20 直接在渲染層判斷 exit（不依賴 AppState.yaoguStatus 快取）
-    // 原因：AppState.yaoguStatus 由 updateYaoguTracker 寫入，可能是舊狀態
-    // 渲染層直接算，確保跌破月線立即顯示出場確認
-    // candles 由 renderStockSignals 傳入
+    // 渲染層出場安全網（v2.9.4 重構）：
+    //   AppState.yaoguStatus 由全 ctx 的 updateYaoguTracker/scanOneCode 寫入＝canonical 真相；
+    //   但 scanOneCode 只在開股/每日重建跑，盤中新發生的「真崩」可能還沒寫進 AppState。
+    //   所以渲染層只補最小安全網：**單日深破 ≥6%（真崩）才強制 exit，且穿透 rebirth/active**
+    //   （rebirth 深崩=二次死亡、active 深崩=主力棄守，都該立即示警）。
+    //   淺破/連跌不強制 → 信 canonical（不誤殺正常回檔/軋空二波，解 ②⑤/額外1）；
+    //   exited 已出場 → 顯示 ⚫ 看板不蓋；NaN/新股<20 → isDeepBreakBelowMA20 回 false（解額外2/3）。
     let forceExit = false;
-    if (candles?.length >= 20) {
-      const closes   = candles.map(c => c.close);
-      const ma20arr  = closes.map((_, i) => {
-        if (i < 19) return null;
-        return closes.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20;
-      });
-      const lastMA20  = ma20arr[closes.length - 1];
-      const lastClose = closes[closes.length - 1];
-      // v2.9.2 重生豁免：rebirth 期間 close<MA20 是常態，不可蓋成出場確認；
-      // 剛升級的軋空型二波（_rebirthPromo）可能仍在 MA20 下回升中，同樣豁免
-      const ys0 = AppState.yaoguStatus?.[code] ?? null;
-      const rebirthGuard = record?.status === 'rebirth'
-        || record?.status === 'exited'   // 已出場 → 顯示 ⚫ 看板，不重複蓋紅色出場確認
-        || (ys0 && (ys0.status === 'rebirth' || ys0._rebirthPromo));
-      if (lastMA20 && lastClose < lastMA20 && record && !rebirthGuard) forceExit = true;
+    if (candles?.length >= 20 && record
+        && record.status !== 'exited'
+        && isDeepBreakBelowMA20(candles)) {
+      forceExit = true;
     }
 
     if (forceExit) {
@@ -1510,7 +1502,7 @@ async function _renderYaoguChip(code, signals, candles = null) {
     if (ys.status === 'rebirth') {
       const rbLow = record?.rebirthLow ?? ys.rebirthLow ?? null;
       const liveP = window.__priceCache?.[code]?.price ?? candles?.[candles.length - 1]?.close ?? null;
-      const rbLineHtml = (rbLow && liveP)
+      const rbLineHtml = (rbLow && liveP && !ys._rebirthFail)
         ? `<div class="yaogu-chip-row-warning" style="border-top:1px solid rgba(167,139,250,.25)">
              <span class="yaogu-chip-label" style="color:#a78bfa">🛡 重生防線 ${rbLow.toFixed(2)}</span>
              <span class="yaogu-chip-desc" style="color:var(--muted)">距 ${(((liveP - rbLow) / rbLow) * 100).toFixed(1)}%，跌破=死貓跳確認</span>

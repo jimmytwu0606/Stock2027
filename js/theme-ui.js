@@ -7,7 +7,7 @@ import { saveUserTheme, deleteUserTheme, reloadThemes } from './theme.js';
 import { loadHealthCacheBatch, saveHealthCache, getAllSignalsCache, getKlineCache } from './db.js';
 import { resolveYahooSymbol, getChineseName } from './api.js';
 import { openStockPreview } from './stock-preview.js';
-import { calcHealth, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 import { fsGetShared, fsSetShared } from './firebase.js';
 import { scanOneCode } from './signal-scan.js';
 import { currentTier } from './auth-tier.js';
@@ -761,7 +761,7 @@ async function _renderStocks(container, theme, themeIdx, themes, stockThemeMap, 
       }
       const candles = cached?.candles?.length ? cached.candles : null;
       _healthMap.set(code, {
-        healthShort: h?.healthShort ?? (candles ? calcHealth(candles) : null),
+        healthShort: shortHealthScore({ code, candles }) ?? h?.healthShort ?? null,
         // calcHealthLong 內建優先讀 __healthSnapshot，缺才本機算
         healthLong:  h?.healthLong  ?? calcHealthLong(candles, null, code),
         healthSavedAt: h?.healthSavedAt ?? null,
@@ -890,7 +890,7 @@ async function _refreshStockData(theme, themeIdx, themes, stockThemeMap) {
       // 1. 拉 K 線 + 算健康度
       const { candles } = await resolveYahooSymbol(s.code, '1y');
       if (candles?.length) {
-        const hs = calcHealth(candles.slice(-65));
+        const hs = shortHealthScore({ code: s.code, candles: candles.slice(-65) });
         const hl = calcHealthLong(candles);
         await saveHealthCache(s.code, hs, hl, 'afterhours');
       }

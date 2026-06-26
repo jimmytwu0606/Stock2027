@@ -595,22 +595,43 @@ function _longCls(score) {
 // ═══════════════════════════════════════════════════════
 
 /**
+ * 短線強勢分 — 統一入口（已驗證 rsClean 取代舊 calcHealth）
+ *
+ * 優先序：
+ *   1. window.__snapshot.stocks[code].rsclean_v
+ *      （GAS 夜間 _injectRSRating 算的全市場百分位，封存段 IC 0.094 > 舊短線健康度 ≈0、
+ *        十分位 0.879 > 0.842；前端單股算不出橫斷面百分位，必須讀預算值）
+ *   2. row.rsclean_v（若 row 直接帶）
+ *   3. 舊 calcHealth(candles)（snapshot 缺才退回，盤中／假日／非母體股才會走到）
+ *   4. calcHealthFast(row)
+ *
+ * 換引擎不換車殼：badge 容器/顏色/呼叫端全不動，只換這個分數來源。
+ *
+ * @param {{code?:string, row?:Object, candles?:Array, signals?:Array}} opts
+ * @returns {number|null}
+ */
+export function shortHealthScore({ code = null, row = null, candles = null, signals = [] } = {}) {
+  const snapV = code ? window.__snapshot?.stocks?.[code]?.rsclean_v : null;
+  if (snapV != null) return snapV;
+  if (row && row.rsclean_v != null) return row.rsclean_v;
+  if (candles && candles.length >= 20) return calcHealth(candles, signals);
+  if (row) return calcHealthFast(row);
+  return null;
+}
+
+/**
  * 統一健康度計算入口
- * 自動選擇最佳路徑：
- *   1. candles >= 20 → calcHealth（完整技術面）
- *   2. candles < 20  → calcHealthFast（從 row 估算）
- *   signals 為 X 系列訊號陣列（選填），有才加成
+ * 短線走 shortHealthScore（rsClean 優先），長線優先讀 __healthSnapshot
  *
  * @param {Array}       candles  日K陣列（可 null）
- * @param {Object}      row      screener row（calcHealthFast fallback 用）
+ * @param {Object}      row      screener row（fallback 用）
  * @param {Array}       signals  X 系列訊號（選填）
  * @param {Object}      fund     基本面資料（選填，供 calcHealthLong 用）
+ * @param {string}      code     股票代號（讀 rsclean_v / 長線快照用）
  * @returns {{ short: number|null, long: number|null }}
  */
 export function getHealthScore(candles, row = null, signals = [], fund = null, code = null) {
-  const short = (candles && candles.length >= 20)
-    ? calcHealth(candles, signals)
-    : (row ? calcHealthFast(row) : null);
+  const short = shortHealthScore({ code, row, candles, signals });
 
   // 長線健康：優先讀 GAS 預算快照（window.__healthSnapshot），快照缺才本機算
   let long = null;

@@ -301,5 +301,35 @@
     ]},
   };
 
-  window.__BBD={MAPS,PSKILLS,MSKILL,TAUNTS};
+  /* ── 怪物卡個別效果（Slice 3）：鑲入裝備孔生效，同卡疊加 ──
+     fx 加總型(loot/gold/crit/mana/peek/revive)；門檻型(imm/ward/refl 取總值判定) */
+  const CARD_FX={
+    qbee      :{fx:'loot',   v:4, n:'蜂群獻蜜', d:'撿寶 +4%'},
+    gobking   :{fx:'gold',   v:25,n:'哥布靈財袋', d:'奪頭家 +25 元'},
+    orcchief  :{fx:'crit',   v:1, n:'酋長戰吼', d:'暴擊門檻 -1'},
+    poring    :{fx:'gold',   v:40,n:'波利吞金', d:'奪頭家 +40 元'},
+    scorp     :{fx:'loot',   v:5, n:'沙中尋寶', d:'撿寶 +5%'},
+    antq      :{fx:'fearWard',v:1,n:'蟻群無懼', d:'戰吼/恐懼/嚇錢免疫'},
+    phree     :{fx:'quakeWard',v:1,n:'磐石之軀', d:'劇震/瘟疫/天災對你免傷'},
+    osiris    :{fx:'revive', v:1, n:'冥王庇佑', d:'每戰額外免死 1 次'},
+    ninetail  :{fx:'peek',   v:4, n:'妖狐讀心', d:'開局透視王手牌 4 秒'},
+    ghost     :{fx:'fearWard',v:1,n:'武士魂', d:'戰吼/恐懼/嚇錢免疫'},
+    mushking  :{fx:'mana',   v:1, n:'孢子靈氣', d:'魔力上限 +1'},
+    moonlight :{fx:'peek',   v:6, n:'貓眼洞察', d:'開局透視王手牌 6 秒'},
+    skelknight:{fx:'crit',   v:1, n:'邪骸鋒芒', d:'暴擊門檻 -1'},
+    witch     :{fx:'poisonImm',v:1,n:'女巫抗毒', d:'中毒免疫'},
+    deathknight:{fx:'hellRefl',v:1,n:'業火反噬', d:'地獄火反彈 → 王 -1HP'},
+    baph      :{fx:'hellRefl',v:2,n:'羊魔烈焰', d:'地獄火反彈 → 王 -1HP（強化）'},
+    butcher   :{fx:'crit',   v:1, n:'屠刀寒光', d:'暴擊門檻 -1'},
+    andariel  :{fx:'poisonImm',v:1,n:'蛛后抗毒', d:'中毒免疫'},
+    duriel    :{fx:'quakeWard',v:1,n:'甲殼護體', d:'劇震/瘟疫/天災對你免傷'},
+    mephisto  :{fx:'poisonImm',v:2,n:'憎恨之血', d:'中毒/劇毒(venom)全免疫'},
+    izual     :{fx:'mana',   v:1, n:'墮天靈光', d:'魔力上限 +1'},
+    lilith    :{fx:'taxWard', v:1,n:'魅夜庇護', d:'魔王吸魂/抽稅免疫'},
+    flametroll:{fx:'hellRefl',v:1,n:'巨魔火皮', d:'地獄火反彈 → 王 -1HP'},
+    diablo    :{fx:'plunImm', v:1,n:'暗黑威壓', d:'開局掠奪免疫'},
+    baal      :{fx:'crit',    v:2,n:'毀滅之手', d:'暴擊門檻 -2（頭家裁決更易暴擊）'},
+  };
+
+  window.__BBD={MAPS,PSKILLS,MSKILL,TAUNTS,CARD_FX};
 })();

@@ -7,7 +7,7 @@
 import { loadAllResults }                                   from '../screener-result-store.js';
 import { loadHealthCacheBatch, getAllSignalsCache,
          getKlineCache }                                    from '../db.js';
-import { healthBadgeDual }                                  from '../health.js';
+import { healthBadgeDual, shortHealthScore }                from '../health.js';
 
 // ── 初始化（tabWatchlist 頁用）────────────────────────────────────────────
 export async function initMobileWatchlist() {
@@ -202,7 +202,7 @@ function _themeCardHTML(code, name, priceCache, healthMap, yaoguMap) {
   const chgTxt   = chgPct != null ? `${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%` : '—';
 
   const h  = healthMap.get(code);
-  const hs = h?.healthShort ?? null;
+  const hs = shortHealthScore({ code }) ?? h?.healthShort ?? null;
   const hl = h?.healthLong  ?? null;
 
   const yg        = yaoguMap.get(code);
@@ -356,7 +356,7 @@ function _bindCards(body) {
   body.querySelectorAll('.mwl-card').forEach(card => {
     card.addEventListener('click', () => {
       const code = card.dataset.code;
-      if (code) window.__loadStock?.(code);
+      if (code) (window.__mobileOpenPreview||window.__loadStock)?.(code);
     });
   });
 }

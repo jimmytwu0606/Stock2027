@@ -88,7 +88,7 @@ export async function renderResult(body, deps) {
   });
   body.innerHTML = html;
   body.querySelectorAll('.m-rc').forEach(el => {
-    el.addEventListener('click', () => window.__loadStock?.(el.dataset.code));
+    el.addEventListener('click', () => (window.__mobileOpenPreview||window.__loadStock)?.(el.dataset.code));
   });
 }
 

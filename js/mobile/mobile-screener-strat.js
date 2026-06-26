@@ -50,7 +50,7 @@ export function renderResult(body, deps) {
   body.querySelectorAll('.m-rc').forEach((el, i) => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.m-rc-add-btn')) return;
-      window.__loadStock?.(results[i]?.code || el.dataset.code);
+      (window.__mobileOpenPreview||window.__loadStock)?.(results[i]?.code || el.dataset.code);
     });
   });
 

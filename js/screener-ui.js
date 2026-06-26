@@ -15,7 +15,7 @@ import { watchAddCode, createList as pfCreateList } from './portfolio.js';
 
 // fund 快取（結果渲染後批次讀入）
 let _scFundCache = {};
-import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge } from './health.js';
+import { calcHealth, calcHealthFast, calcHealthLong, renderHealthBadge, shortHealthScore } from './health.js';
 import { Config } from './config.js';
 import { getKlineCache, getAllSignalsCache } from './db.js';
 import { openStockPreview } from './stock-preview.js';
@@ -490,8 +490,8 @@ function _sortedRows(rows) {
     let av, bv;
     if (key === 'health') {
       const _s = c => c?.length > 65 ? c.slice(-65) : c;
-      av = (_s(a.candles)?.length >= 20 ? calcHealth(_s(a.candles)) : calcHealthFast(a)) ?? -1;
-      bv = (_s(b.candles)?.length >= 20 ? calcHealth(_s(b.candles)) : calcHealthFast(b)) ?? -1;
+      av = shortHealthScore({ code: a.code, row: a, candles: _s(a.candles) }) ?? -1;
+      bv = shortHealthScore({ code: b.code, row: b, candles: _s(b.candles) }) ?? -1;
       // 排序用短線分數
     } else if (key === 'code') {
       // 代號是字串，數值化排序（含 00 開頭 ETF）
@@ -680,9 +680,7 @@ function _renderResultRow(r) {
 
   // 短線：固定取最後 65 根（≈3mo），沒有 candles 才 fallback 快估
   const _sc = r.candles?.length > 65 ? r.candles.slice(-65) : r.candles;
-  const healthShort = _sc?.length >= 20
-    ? calcHealth(_sc)
-    : calcHealthFast(r);
+  const healthShort = shortHealthScore({ code: r.code, row: r, candles: _sc });
   // 長線：需 ≥120 根（screener 3mo 通常不夠，顯示 —）
   const healthLong  = r.candles?.length >= 120 ? calcHealthLong(r.candles, _scFundCache[r.code] ?? null, r.code) : null;
 

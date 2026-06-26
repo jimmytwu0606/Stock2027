@@ -432,7 +432,6 @@ body.m-stock-open .stock-tabbar         { display: none !important; }
 body.m-stock-open .stock-tabs-bar       { display: none !important; }
 body.m-stock-open .sh-signals           { display: none !important; }
 body.m-stock-open .sh-stats             { display: none !important; }
-body.m-stock-open #stockYaoguChip       { display: none !important; }
 body.m-stock-open #stockSignalBubbles   { display: none !important; }
 body.m-stock-open #stockSignalTags      { display: none !important; }
 body.m-stock-open .sh-add-btn           { display: none !important; }
@@ -459,6 +458,36 @@ body.m-stock-open .sh-price     { font-size: 22px; }
 }
 #tabChart.m-stock-active .stock-panel.active { display: flex; flex-direction: column; }
 #tabChart.m-stock-active #chartPanel.stock-panel.active { overflow: hidden; }
+
+/* ════════════════════════════════════════════════════════════
+   無條件隱藏桌機看盤雜物（不綁 m-stock-open）
+   修：任何路徑落到 tabChart 都不漏 —— 抽屜「看盤」、開機預設
+       _showPage('chart')、各處跳轉。這些元素只存在於 tabChart 內，
+       手機其他頁不受影響；桌機完全不受影響（內層 @media 767px）。
+   ════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+  #tabChart .stock-tabbar,
+  #tabChart .stock-tabs-bar,
+  #tabChart .chart-toolbar,
+  #tabChart .ind-panel,
+  #tabChart .sh-lamps,
+  #tabChart #stockSignalLamps,
+  #tabChart .sh-stats,
+  #tabChart .sh-signals,
+  #tabChart #stockSignalBubbles,
+  #tabChart .stock-signal-tags,
+  #tabChart .sh-add-btn,
+  #tabChart .sh-similar-btn,
+  #tabChart .sh-rs-badge,
+  #tabChart #personasPanel,
+  #tabChart #analysisPanel,
+  #tabChart #stockinfoPanel,
+  #tabChart #resonancePanel { display: none !important; }
+
+  /* 妖股 chip 手機精簡版：保留狀態行 + 出場線警示，砍掉 X 訊號 pill 列 */
+  #tabChart #stockYaoguChip .yaogu-chip-row-x { display: none !important; }
+  #tabChart #stockYaoguChip { margin: 4px 12px 0 !important; }
+}
 
 /* 抽屜 overlay */
 #mDrawerOverlay {

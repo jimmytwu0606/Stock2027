@@ -30,9 +30,9 @@
           sortByRank=BB.sortByRank, sortBySuit=BB.sortBySuit,
           makeDeck=BB.makeDeck, shuffle=BB.shuffle, TYPE_ZH=BB.TYPE_ZH,
           EQ_NAMES=BB.EQ_NAMES, EQ_DESC=BB.EQ_DESC,
-          smartAiPlay=BB.smartAiPlay, rollSlots=BB.rollSlots;
+          smartAiPlay=BB.smartAiPlay, rollSlots=BB.rollSlots, partitionHand=BB.partitionHand;
     const drawCard=BB.makeCardPainter(ctx);
-    const MAPS=BBD.MAPS, PSK=BBD.PSKILLS, MSKILL=BBD.MSKILL, TAUNTS=BBD.TAUNTS;
+    const MAPS=BBD.MAPS, PSK=BBD.PSKILLS, MSKILL=BBD.MSKILL, TAUNTS=BBD.TAUNTS, CARD_FX=BBD.CARD_FX||{};
 
     /* ── 共享存檔（與階級殿堂同一份，persist 合併不互洗）── */
     const S=BB.state||{};
@@ -41,15 +41,17 @@
     S.equip=Object.assign({weapon:0,armor:0,helm:0,ring:0,amulet:0},S.equip);
     S.mats=Object.assign({refine:0,rune:0,refine2:0},S.mats); // refine2=💠華麗精煉石
     if(S.stam==null)S.stam=10; // 💪 體力（打工消耗；戰鬥後回復、提神飲料可買）
-    const adv=S.adv=Object.assign({lv:1,xp:0,sp:0,sk:{},maps:[],cards:{},clears:0},S.adv||{});
-    adv.sk=adv.sk||{}; adv.cards=adv.cards||{};
+    const adv=S.adv=Object.assign({lv:1,xp:0,sp:0,sk:{},maps:[],cards:{},clears:0,abyss:{depth:0,best:0}},S.adv||{});
+    adv.sk=adv.sk||{}; adv.cards=adv.cards||{}; adv.abyss=adv.abyss||{depth:0,best:0};
+    if(!Array.isArray(S.bag))S.bag=[]; // 🎒 倉庫：未穿的裝備件 [{slot,q,lv,slots,cards:[],affixes:[]}]
+    const BAG_MAX=24;
     if(!Array.isArray(adv.maps))adv.maps=[];
     MAPS.forEach(function(m,i){
       if(!Array.isArray(adv.maps[i]))adv.maps[i]=m.stages.map(function(){return 0;});
       while(adv.maps[i].length<m.stages.length)adv.maps[i].push(0);
     });
     function save(){
-      BB.persist({chips:S.chips,items:S.items,equip:S.equip,mats:S.mats,adv:adv});
+      BB.persist({chips:S.chips,items:S.items,equip:S.equip,mats:S.mats,adv:adv,bag:S.bag});
       api.setScore(S.chips);
     }
 
@@ -81,6 +83,69 @@
       return 0;
     }
 
+    /* ── 詞綴系統（Slice 2）：掉裝依稀有度 roll，全身加總生效 ── */
+    const AFFIX={
+      crit :{n:'鋒銳',v:1, c:'#ef9a9a',d:'暴擊門檻 -1'},
+      loot :{n:'貪婪',v:5, c:'#f5d36a',d:'撿寶 +5%'},
+      mana :{n:'通靈',v:1, c:'#8ab4ff',d:'魔力上限 +1'},
+      block:{n:'堅壁',v:5, c:'#9fe0c0',d:'格擋 +5%（需防具）'},
+      plun :{n:'守財',v:1, c:'#c0a060',d:'王開局掠奪 -1 張'},
+      gold :{n:'生財',v:30,c:'#f5c400',d:'奪頭家 +30 元'},
+      regen:{n:'回春',v:1, c:'#ef5350',d:'每局結算 +1HP'},
+    };
+    const AFFIX_KEYS=Object.keys(AFFIX);
+    const AFFIX_N=[0,1,1,2,3]; // 白藍黃金暗金各 roll 幾條
+    function rollAffixes(q){
+      const n=AFFIX_N[q==null?2:q]||0; if(!n)return [];
+      const pool=AFFIX_KEYS.slice(), out=[];
+      for(let i=0;i<n&&pool.length;i++){
+        const t=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
+        out.push({t:t,v:AFFIX[t].v});
+      }
+      return out;
+    }
+    function affixSum(t){
+      return ['weapon','armor','helm','ring','amulet'].reduce(function(s,k){
+        const e=S.equip[k]; if(!e||!e.affixes)return s;
+        return s+e.affixes.reduce(function(a,af){return a+(af.t===t?af.v:0);},0);
+      },0);
+    }
+    /* 怪物卡效加總（Slice 3）：掃所有穿戴件的鑲嵌卡，同卡疊加 */
+    function cardFx(fx){
+      return ['weapon','armor','helm','ring','amulet'].reduce(function(s,k){
+        const e=S.equip[k]; if(!e||!e.cards)return s;
+        return s+e.cards.reduce(function(a,cid){
+          const f=CARD_FX[cid];return a+(f&&f.fx===fx?f.v:0);},0);
+      },0);
+    }
+    /* 套裝（Batch D）：詞綴型 set bonus，2/3 件啟用，併入 affixSum 掛點 */
+    const SETS={
+      dark :{n:'暗黑',c:'#b8860b',b2:{crit:1}, b3:{loot:15}},
+      holy :{n:'聖殿',c:'#9fe0c0',b2:{regen:1},b3:{mana:2}},
+      greed:{n:'貪狼',c:'#fff176',b2:{gold:30},b3:{loot:20}},
+    };
+    const SET_KEYS=Object.keys(SETS);
+    function mkItem(slot,q,setChance){
+      const it={slot:slot,lv:0,q:q,slots:rollSlots(sk('sock')),cards:[],affixes:rollAffixes(q)};
+      if(Math.random()<(setChance||0))it.set=SET_KEYS[Math.floor(Math.random()*SET_KEYS.length)];
+      return it;
+    }
+    function setCount(){
+      const c={};
+      ['weapon','armor','helm','ring','amulet'].forEach(function(k){
+        const e=S.equip[k]; if(e&&e.set)c[e.set]=(c[e.set]||0)+1;});
+      return c;
+    }
+    function setSum(t){
+      const c=setCount(); let s=0;
+      Object.keys(c).forEach(function(id){
+        const st=SETS[id]; if(!st)return;
+        if(c[id]>=2&&st.b2&&st.b2[t])s+=st.b2[t];
+        if(c[id]>=3&&st.b3&&st.b3[t])s+=st.b3[t];
+      });
+      return s;
+    }
+
     /* ── 衍生數值 ── */
     const sk=function(id){return adv.sk[id]||0;};
     const refLv=function(k){return (S.equip[k]&&S.equip[k].lv)||0;};
@@ -89,10 +154,10 @@
         return s+((S.equip[k]&&S.equip[k].cards)?S.equip[k].cards.length:0);},0);
     };
     const maxHp=function(){return Math.min(8,3+Math.floor(adv.lv/3));};
-    const maxMana=function(){return 3+sk('medit');};
-    const critTh=function(){return Math.max(5,10-sk('hit')-Math.floor(refLv('weapon')/3)-(S.equip.weapon?RAR.weaponCrit[eqQ('weapon')]:0));};
-    const lootPct=function(){return sk('loot')*10+(refLv('helm')+refLv('amulet'))*2+sockN()*3+(S.equip.helm?RAR.helmLoot[eqQ('helm')]:0);};
-    const blockPct=function(){return S.equip.armor?Math.min(0.85,RAR.armor[eqQ('armor')]+refLv('armor')*0.05):0;};
+    const maxMana=function(){return 3+sk('medit')+affixSum('mana')+cardFx('mana')+setSum('mana');};
+    const critTh=function(){return Math.max(5,10-sk('hit')-Math.floor(refLv('weapon')/3)-(S.equip.weapon?RAR.weaponCrit[eqQ('weapon')]:0)-affixSum('crit')-cardFx('crit')-setSum('crit'));};
+    const lootPct=function(){return sk('loot')*10+(refLv('helm')+refLv('amulet'))*2+(S.equip.helm?RAR.helmLoot[eqQ('helm')]:0)+affixSum('loot')+cardFx('loot')+setSum('loot');};
+    const blockPct=function(){return S.equip.armor?Math.min(0.85,RAR.armor[eqQ('armor')]+refLv('armor')*0.05+(affixSum('block')+setSum('block'))/100):0;};
     const needXp=function(){return adv.lv*80;};
     const branchPts=function(key){
       return PSK[key].list.reduce(function(s,n){return s+(adv.sk[n.id]||0);},0);
@@ -252,6 +317,8 @@
       ctx.fillText(m.icon+' '+m.name+'　— 討伐名單 —',22,sy+24);
       ctx.fillStyle='#888';ctx.font='10px -apple-system,sans-serif';
       ctx.fillText('小怪兵：'+m.mobIcon+' '+m.mob+' ×2 隨王赴宴',22,sy+40);
+      if(abyssUnlocked())
+        btn(W-168,sy+8,150,30,'🕳 無盡深淵'+(adv.abyss.best?'・最深'+adv.abyss.best:''),confirmAbyss,'red');
       const vis=m.stages.filter(function(st){
         return !st.hidden||adv.maps[selMap][bossIdx(selMap)]>0;});
       const nw=112,nh=H-sy-62,ng=12;
@@ -292,9 +359,81 @@
                               :'（沒有特殊技能，純粹想打牌）')
         +'\n\n戰敗損失：'+lossOf(mi)+' 元　淨化金：'+st.purify+' 元';
       api.showMsg(st.icon+' '+st.name,lines,[
-        {label:'⚔ 開戰',red:true,fn:function(){api.hideMsg();startBattle(mi,si);}},
+        {label:'⚔ 開戰',red:true,fn:function(){api.hideMsg();maybeEvent(mi,si);}},
         {label:'↩ 再想想',fn:function(){api.hideMsg();}},
       ]);
+    }
+    /* 進關前隨機事件（Batch D）：不改地圖，選關後 25% 偶發 */
+    function maybeEvent(mi,si){
+      const go=function(){startBattle(mi,si);};
+      if(Math.random()<0.25){
+        const evs=[evMerchant,evChest,evGamble,evSmith];
+        evs[Math.floor(Math.random()*evs.length)](go);
+      } else go();
+    }
+    function evMerchant(go){
+      const q=Math.random()<0.5?3:2, price=q===3?700:450;
+      api.showMsg('🧳 流浪商人','「赴宴前…要不要看看我的好貨？」\n\n💰 你的籌碼：'+S.chips,[
+        {label:'🛍 買〔'+RAR.name[q]+'〕裝備 $'+price,fn:function(){
+          if(S.chips<price)addFloat(W/2,H/2,'❌ 錢不夠','#ef9a9a');
+          else{S.chips-=price;const slot=SLOT_KEYS[Math.floor(Math.random()*SLOT_KEYS.length)];
+            const it=mkItem(slot,q,0.3);
+            if(!S.equip[slot])S.equip[slot]=it; else if(S.bag.length<BAG_MAX)S.bag.push(it); else S.mats.refine+=salvageYield(it);
+            addFloat(W/2,H/2,'🧳 入手〔'+RAR.name[q]+'〕'+eqName(slot),'#f5d36a');}
+          save();api.hideMsg();go();}},
+        {label:'ᚱ 買符文×2 $300',fn:function(){
+          if(S.chips<300)addFloat(W/2,H/2,'❌ 錢不夠','#ef9a9a');
+          else{S.chips-=300;S.mats.rune+=2;addFloat(W/2,H/2,'ᚱ 符文×2','#c9b6f0');}
+          save();api.hideMsg();go();}},
+        {label:'↩ 不買，開戰',fn:function(){api.hideMsg();go();}},
+      ]);
+    }
+    function evChest(go){
+      api.showMsg('📦 神秘寶箱','路邊有個沒上鎖的箱子…\n（80% 有寶／20% 是陷阱）',[
+        {label:'🔓 打開',red:true,fn:function(){
+          api.hideMsg();
+          if(Math.random()<0.8){
+            const r=Math.random();
+            if(r<0.4){S.mats.refine+=3;addFloat(W/2,H/2,'💠 精煉石×3','#b0c4de');}
+            else if(r<0.7){S.mats.rune+=2;addFloat(W/2,H/2,'ᚱ 符文×2','#c9b6f0');}
+            else{S.items.hp+=2;addFloat(W/2,H/2,'🧪 補血瓶×2','#80cbc4');}
+          } else {const lose=Math.min(S.chips,150);S.chips-=lose;addFloat(W/2,H/2,'💥 陷阱！-'+lose+'元','#ef9a9a');}
+          save();go();}},
+        {label:'🚶 不碰，開戰',fn:function(){api.hideMsg();go();}},
+      ]);
+    }
+    function evGamble(go){
+      const bet=200;
+      api.showMsg('🎲 賭徒之骰','「敢不敢賭一把？押 $'+bet+'，擲骰定生死。」\n\n💰 籌碼：'+S.chips,[
+        {label:'🎲 賭！（50% 雙倍 / 50% 全失）',red:true,fn:function(){
+          api.hideMsg();
+          if(S.chips<bet)addFloat(W/2,H/2,'❌ 籌碼不足','#ef9a9a');
+          else if(Math.random()<0.5){S.chips+=bet;addFloat(W/2,H/2,'🎉 中了！+'+bet+'元','#f5d36a');}
+          else{S.chips-=bet;addFloat(W/2,H/2,'💸 槓龜…-'+bet+'元','#ef9a9a');}
+          save();go();}},
+        {label:'🙅 不賭，開戰',fn:function(){api.hideMsg();go();}},
+      ]);
+    }
+    function evSmith(go){
+      const worn=SLOT_KEYS.filter(function(k){return S.equip[k];});
+      if(!worn.length){go();return;}
+      api.showMsg('⚒ 旅途鐵匠','「免費幫你敲一下，要精煉還是鑿孔？」',[
+        {label:'⚒ 免費精煉一件（+1 必成）',fn:function(){
+          const k=worn[Math.floor(Math.random()*worn.length)];
+          if(S.equip[k].lv<10){S.equip[k].lv++;addFloat(W/2,H/2,'⚒ '+eqName(k)+' +'+S.equip[k].lv,'#ffd54f');}
+          save();api.hideMsg();go();}},
+        {label:'🔩 免費鑿孔一件（+1 孔，上限6）',fn:function(){
+          const cand=worn.filter(function(k){return (S.equip[k].slots||0)<6;});
+          if(cand.length){const k=cand[Math.floor(Math.random()*cand.length)];S.equip[k].slots=(S.equip[k].slots||0)+1;addFloat(W/2,H/2,'🔩 '+eqName(k)+' 孔+1','#b9a4e8');}
+          save();api.hideMsg();go();}},
+        {label:'↩ 不用，開戰',fn:function(){api.hideMsg();go();}},
+      ]);
+    }
+    function confirmAbyss(){
+      api.showMsg('🕳 無盡深淵',
+        '六界魔王已淨化，深淵之門開啟。\n\n單王連戰，越深越強（HP／閃避／詞綴隨層成長）。\n每 5 層保底高稀有裝備 + 符文。\n戰敗僅止步、不扣錢，紀錄你的最深層數。\n\n最深紀錄：'+adv.abyss.best+' 層',
+        [{label:'⬇ 潛入第 1 層',red:true,fn:function(){api.hideMsg();startAbyss(1);}},
+         {label:'↩ 再想想',fn:function(){api.hideMsg();}}]);
     }
     function leaveAdventure(){
       save();
@@ -303,15 +442,68 @@
     }
 
     /* ══════════════ 戰鬥 ══════════════ */
+    /* ── 菁英／變異王（Batch A）：怪物詞綴，battle 內生成、clone 套用 ── */
+    const MON_AFFIX={
+      rage2:{n:'暴怒',c:'#ef5350',d:'掠奪+1',  ap:function(m){m.plunder=(m.plunder||0)+1;}},
+      tough:{n:'堅韌',c:'#a5d6a7',d:'HP+1',     ap:function(m){m.hp=(m.hp||1)+1;}},
+      swift:{n:'迅捷',c:'#90caf9',d:'出手更快', ap:function(m){m.sup=Math.min(0.95,(m.sup||0.6)+0.08);}},
+      toxic:{n:'淬毒',c:'#ce93d8',d:'附帶毒',   ap:function(m){m.skills=Object.assign({},m.skills,{poison:1});}},
+      thorn:{n:'反震',c:'#ffb74d',d:'你奪頭家30%反彈-1HP', ap:function(m){m._thorn=1;}},
+      greed:{n:'貪婪',c:'#fff176',d:'你的罰金×1.5', ap:function(m){m._greed=1;}},
+    };
+    const MON_AFFIX_KEYS=Object.keys(MON_AFFIX);
+    const ELITE_RATE=[0.10,0.13,0.18,0.24,0.30,0.35]; // 各地圖菁英出現率
+    function rollEliteAffixes(mi,base){
+      if(base.boss)return []; // 大魔王不菁英化
+      if(Math.random()>=(ELITE_RATE[mi]||0.1))return [];
+      const keys=MON_AFFIX_KEYS.slice(), n=mi>=4?2:1, out=[];
+      for(let i=0;i<n&&keys.length;i++)out.push(keys.splice(Math.floor(Math.random()*keys.length),1)[0]);
+      return out;
+    }
+    function applyElite(base,keys){
+      const m=Object.assign({},base);
+      keys.forEach(function(k){if(MON_AFFIX[k])MON_AFFIX[k].ap(m);});
+      m.elite=true;return m;
+    }
+
     function startBattle(mi,si){
-      const mon=MAPS[mi].stages[si];
+      const base=MAPS[mi].stages[si];
+      const elite=rollEliteAffixes(mi,base);
+      const mon=elite.length?applyElite(base,elite):base;
+      _enterBattle(mi,si,mon,elite,0);
+    }
+    /* ── 無盡深淵（Batch C）── */
+    const ABYSS_TPL=MAPS.map(function(m,i){return m.stages[bossIdx(i)];}); // 6 大魔王當模板
+    function abyssUnlocked(){return MAPS.every(function(m,i){return adv.maps[i][bossIdx(i)]>0;});}
+    function genAbyssBoss(L){
+      const tpl=ABYSS_TPL[(L-1)%ABYSS_TPL.length];
+      const m=Object.assign({},tpl);
+      m.hp=tpl.hp+Math.floor(L/2);
+      m.sup=Math.min(0.95,(tpl.sup||0.7)+L*0.01);
+      m.dodge=Math.min(0.5,(tpl.dodge||0)+L*0.02);
+      m.plunder=(tpl.plunder||0)+Math.floor(L/4);
+      m.skills=Object.assign({},tpl.skills);
+      m.drops=['equip','refine','rune','card'];
+      m.purify=120+L*30;
+      m.name='深淵·'+tpl.name+' L'+L;
+      m.boss=true;m.hidden=false;m.id=tpl.id;
+      const eliteN=Math.min(3,Math.floor(L/3)), keys=MON_AFFIX_KEYS.slice(), el=[];
+      for(let i=0;i<eliteN&&keys.length;i++)el.push(keys.splice(Math.floor(Math.random()*keys.length),1)[0]);
+      el.forEach(function(k){MON_AFFIX[k].ap(m);});
+      return {mon:m,elite:el};
+    }
+    function startAbyss(L){
+      const g=genAbyssBoss(L), mi=(L-1)%MAPS.length;
+      _enterBattle(mi,bossIdx(mi),g.mon,g.elite,L);
+    }
+    function _enterBattle(mi,si,mon,elite,abyss){
       const m=MAPS[mi];
       B={
-        mi:mi,si:si,mon:mon,
+        mi:mi,si:si,mon:mon,elite:elite,abyss:abyss||0,
         names:['玩家',mon.name,m.mob+'甲',m.mob+'乙'],
         icons:['😺',mon.icon,m.mobIcon,m.mobIcon],
         bhp:mon.hp, php:maxHp(), pmana:maxMana(),
-        round:0, hurt:0, resUsed:false, phUsed:false, lastWin:-1,
+        round:0, hurt:0, resUsed:false, phUsed:false, lastWin:-1, cardRevive:cardFx('revive'), momentum:0,
         hands:[[],[],[],[]], finished:[], cur:0, played:null, playedBy:-1,
         passCnt:0, mustFirst:true, sel:[], phase:'deal', dealT:0, aiT:0,
         lastAct:['','','',''], seen:new Set(), log:[], anim:[], fade:null,
@@ -320,10 +512,12 @@
         stunArmed:false, quakeAt:-1, quakeT:0, plagueAt:-1, plague:null, plagueImm:false,
         poisoned:false, clearStreak:0, comboUsed:false,
         scryT:0, sealCharge:0, tstop:false, bombUsed:false, subShield:false,
-        bubble:null, idleT:480,
+        bubble:null, idleT:480, enraged:false,
       };
       api.setHp(B.php);
       scene='battle';
+      if(abyss)bLog('🕳 深淵第 '+abyss+' 層降臨！'+(elite.length?'（✦'+elite.map(function(k){return MON_AFFIX[k].n;}).join('·')+'）':''));
+      else if(elite.length)bLog('✦ 菁英'+mon.name+'現身！詞綴：'+elite.map(function(k){return MON_AFFIX[k].n;}).join('·'));
       bLog('⚔ 討伐 '+mon.name+' 開始！');
       taunt('start');
       bDeal();
@@ -349,6 +543,7 @@
       B.seen=new Set();B.anim=[];B.fade=null;
       B.hellUsed=false;B.sandIds.clear();B.sealedId=null;B.lockedPot=null;
       B.stunArmed=false;B.clearStreak=0;B.comboUsed=false;
+      B.stunBoss=false;B.dodgeOff=0;B.fxFour=false;B.fxFull=false;
       B.quakeAt=-1;B.plagueAt=-1;B.quakeT=0;B.plague=null;B.plagueImm=false;
       B.phase='deal';B.dealT=0;
     }
@@ -363,6 +558,35 @@
       if(to===0||from===0)sortP();
     }
     function bActive(){return [0,1,2,3].filter(function(i){return !B.finished.includes(i);});}
+    /* 掠奪 AI：以「最佳拆組組數」評牌力（越少＝越接近出完＝越強）── */
+    function handScore(cards){
+      if(!cards.length)return 0;
+      try{ return partitionHand(cards).length; }catch(e){ return cards.length; }
+    }
+    function lexLt(a,b){ for(let i=0;i<a.length;i++){ if(a[i]<b[i])return true; if(a[i]>b[i])return false; } return false; }
+    // 拿哪張：最能融入王牌組(加入後組數最少)；同分優先高點數(奪控場)，再優先重創玩家
+    function bestTake(playerHand,bossHand){
+      let best=null,bk=null;
+      const pBase=handScore(playerHand);
+      playerHand.forEach(function(c){
+        const fit=handScore(bossHand.concat([c]));                 // 越小越好
+        const hurt=handScore(playerHand.filter(function(x){return cardId(x)!==cardId(c);}))-pBase; // 越大越好(玩家變弱)
+        const key=[fit,-(c.v*4+c.sv),-hurt];
+        if(!best||lexLt(key,bk)){best=c;bk=key;}
+      });
+      return best;
+    }
+    // 丟哪張：拿掉後王最強(組數最少)的最沒用牌；同分丟最小點數
+    function bestGive(bossHand,takeId){
+      let best=null,bk=null;
+      bossHand.forEach(function(c){
+        if(cardId(c)===takeId)return;
+        const after=handScore(bossHand.filter(function(x){return cardId(x)!==cardId(c);}));
+        const key=[after,(c.v*4+c.sv)];
+        if(!best||lexLt(key,bk)){best=c;bk=key;}
+      });
+      return best;
+    }
     function bOppLens(self){
       return bActive().filter(function(i){return i!==self;})
         .map(function(i){return B.hands[i].length;});
@@ -373,15 +597,27 @@
       const sks=B.mon.skills||{};
       // 掠奪（rage：越殘血搶越多；面具：改搶最小）
       let n=sks.rage?Math.min(3,Math.max(1,B.mon.hp+1-B.bhp)):(B.mon.plunder||0);
+      if(B.enraged)n+=1; // 狂暴：掠奪 +1
+      n=Math.max(0,n-affixSum('plun')-setSum('plun'));
+      if(cardFx('plunImm')>0)n=0;
       if(n>0){
-        const taken=[];
+        const taken=[], given=[];
         for(let k=0;k<n&&B.hands[0].length>1;k++){
-          const sorted=[...B.hands[0]].sort(function(a,b){return (a.v*4+a.sv)-(b.v*4+b.sv);});
-          const take=S.equip.helm?sorted[0]:sorted[sorted.length-1];
+          let take;
+          if(S.equip.helm){ // 面具：王只偷你最小張（防禦效果）
+            take=[...B.hands[0]].sort(function(a,b){return (a.v*4+a.sv)-(b.v*4+b.sv);})[0];
+          } else {
+            take=bestTake(B.hands[0],B.hands[1]); // 算對王最有利的牌
+          }
+          if(!take)break;
           mvCard(0,1,take);taken.push(take.r+take.s);
+          // 拿1丟1：丟回王手上最沒用的牌（排除剛拿走的）
+          const give=bestGive(B.hands[1],cardId(take));
+          if(give){mvCard(1,0,give);given.push(give.r+give.s);}
         }
         if(taken.length)
-          bLog(B.mon.icon+' 掠奪你的 '+taken.join(' ')+(S.equip.helm?'（👹面具：只搶到最小）':'！'));
+          bLog(B.mon.icon+' 掠奪你的 '+taken.join(' ')+'，丟回 '+(given.join(' ')||'無')
+            +(S.equip.helm?'（👹面具：只搶最小）':''));
       }
       // 幻象：偷最大塞最小
       if(sks.illusion){
@@ -393,12 +629,15 @@
           bLog('🦊 幻象！你的 '+take.r+take.s+' 被換成 '+give.r+give.s);
         }
       }
-      if(sks.freshmeat&&B.round===1){pDmg(1,'Fresh meat!!');taunt('win');}
+      if(sks.freshmeat&&B.round===1){pDmg(1,'Fresh meat!!');taunt('win');if(B.php<=0){bSettleDeath();if(!B)return;}}
       // 下毒
       if((sks.poison||sks.venom)&&!B.poisoned&&Math.random()<0.5){
+        const pim=cardFx('poisonImm');
         const amuletBlocks=S.equip.amulet&&(!sks.venom||eqQ('amulet')===4); // 暗金護符連劇毒都擋
-        if(amuletBlocks){
-          bLog('📿 '+(sks.venom?'暗金護符灼灼生輝，劇毒退散！':'護符閃耀，毒素無效！'));
+        const cardBlocks=pim>=1&&(!sks.venom||pim>=2);                      // 卡：普通毒v>=1、劇毒需v>=2
+        if(amuletBlocks||cardBlocks){
+          bLog(cardBlocks&&!amuletBlocks?'🃏 抗毒卡效，毒素無效！'
+            :('📿 '+(sks.venom?'暗金護符灼灼生輝，劇毒退散！':'護符閃耀，毒素無效！')));
         } else {
           B.poisoned=true;
           bLog('☠ 你中了'+(sks.venom?'劇毒（護符無效）':'毒')+'！每局結束 -1HP');
@@ -411,7 +650,7 @@
         if(B.sandIds.size)bLog('🌪 沙暴蓋住你 '+B.sandIds.size+' 張牌（出過一手後散去）');
       }
       // 戰吼：封最大單張（避開梅花3）
-      if(sks.warcry){
+      if(sks.warcry&&cardFx('fearWard')<=0){
         const cands=B.hands[0].filter(function(c){return !(c.r==='3'&&c.s==='♣');});
         if(cands.length){
           const top=cands.sort(function(a,b){return (b.v*4+b.sv)-(a.v*4+a.sv);})[0];
@@ -433,7 +672,10 @@
         B.pmana=Math.min(maxMana(),B.pmana+back);
         bLog('💍 喬丹之石：回復'+back+'魔');
       }
+      if(B.enraged&&B.pmana>0){B.pmana--;bLog('🔥 狂暴威壓！你被奪去 1 點魔力');}
       B.phase='play';
+      const pk=cardFx('peek');
+      if(pk>0){B.scryT=Math.max(B.scryT,pk*60);bLog('👁 讀心卡效：開局看穿'+B.mon.name+'手牌 '+pk+' 秒');}
       B.cur=B.hands.findIndex(function(h){return h.some(function(c){return c.r==='3'&&c.s==='♣';});});
       bLog(B.names[B.cur]+' 先出（持有梅花3）');
       if(B.cur!==0)bAiTimer();
@@ -471,6 +713,22 @@
       // 弒神：同花順直擊
       if(pidx===0&&cl.type==='straightFlush'&&sk('godslay')&&B.bhp>0)
         bossDmg(1,'⚔ 弒神一閃！');
+      if(!B)return true;
+      // 牌型觸發效果（玩家）
+      if(pidx===0){
+        if(cl.type==='fourOfAKind'&&!B.fxFour){
+          B.fxFour=true;B.stunBoss=true;
+          bLog('💫 鐵支威壓！'+B.mon.name+' 下一手將被眩暈');
+          addFloat(W/2,H/2,'💫 王眩暈！','#ffe082');
+        } else if(cl.type==='fullHouse'&&!B.fxFull){
+          B.fxFull=true;B.scryT=Math.max(B.scryT,180);
+          bLog('🔎 葫蘆窺探：看穿'+B.mon.name+'手牌 3 秒');
+        } else if(cl.type==='straight'&&B.pmana<maxMana()){
+          B.pmana=Math.min(maxMana(),B.pmana+1);bLog('🌀 順子凝魔 +1');
+        } else if(cl.type==='triple'&&!B.dodgeOff){
+          B.dodgeOff=0.2;bLog('🎯 三條破勢！'+B.mon.name+' 本局閃避 -20%');
+        }
+      }
       if(pidx===0&&(cl.type==='fourOfAKind'||cl.type==='straightFlush'))taunt('bomb');
       // 搶劫：玩家出五張牌型
       if(pidx===0&&cl.cards.length===5&&(B.mon.skills||{}).steal){
@@ -481,7 +739,11 @@
       // 地獄火：本局第一個壓過王的玩家
       if(beatBoss&&pidx===0&&!B.hellUsed&&(B.mon.skills||{}).hellfire){
         B.hellUsed=true;
-        if(S.equip.weapon){
+        if(cardFx('hellRefl')>0){
+          bLog('🛡🔥 業火反噬！地獄火被彈回 '+B.mon.name);
+          bossDmg(1,'🔥 業火反噬！');
+          if(!B)return true;
+        } else if(S.equip.weapon){
           bLog('🗡 弒神之刃格擋了地獄火！');
         } else if(B.hands[0].length){
           const sorted=[...B.hands[0]].sort(function(a,b){return (a.v*4+a.sv)-(b.v*4+b.sv);});
@@ -490,6 +752,7 @@
           sortP();
           bLog('🔥 地獄火！你的 '+burn.r+burn.s+' 被燒毀');
           pDmg(1,'被地獄火灼傷');
+          if(B.php<=0){bSettleDeath();if(!B)return true;}
         }
       }
       const FROM=[[W/2,H-150],[W/2,120],[70,H/2],[W-70,H/2]][pidx];
@@ -527,7 +790,7 @@
       B.passCnt++;
       B.lastAct[pidx]='Pass';
       bLog(B.names[pidx]+' Pass');
-      if(pidx===0&&(B.mon.skills||{}).fear&&Math.random()<0.2){
+      if(pidx===0&&(B.mon.skills||{}).fear&&cardFx('fearWard')<=0&&Math.random()<0.2){
         S.chips=Math.max(0,S.chips-20);
         addFloat(W/2,H/2+90,'👻 嚇掉 20元','#b39ddb');
       }
@@ -543,7 +806,7 @@
         B.cur=lead;
         bLog('🔄 一圈Pass，'+B.names[lead]+' 自由出牌');
         // 憎恨：王清桌奪權 → 吸 1 魔
-        if(lead===1&&(B.mon.skills||{}).hatred&&B.pmana>0){
+        if(lead===1&&(B.mon.skills||{}).hatred&&cardFx('fearWard')<=0&&B.pmana>0){
           B.pmana--;
           bLog('👿 憎恨吞噬，你被吸走 1 點魔力');
           taunt('win');
@@ -554,6 +817,7 @@
           if(B.clearStreak>=2&&sk('combo2')&&!B.comboUsed&&B.bhp>0){
             B.comboUsed=true;
             bossDmg(1,'🗡 連斬！');
+            if(!B)return;
           }
         } else B.clearStreak=0;
         if(B.cur!==0)bAiTimer();
@@ -567,8 +831,9 @@
       B.cur=next;
       if(B.cur!==0)bAiTimer();
     }
-    function bossDmg(n,why){
-      const dodge=(B.mon.dodge||0)*(1-0.5*sk('pierce'));
+    function bossDmg(n,why,instant){
+      if(instant===undefined)instant=true;
+      const dodge=Math.max(0,(B.mon.dodge||0)*(1-0.5*sk('pierce'))-(B.dodgeOff||0));
       if(dodge>0&&Math.random()<dodge){
         bLog('💨 '+B.mon.name+' 閃避了攻擊！');
         addFloat(W/2,96,'MISS','#90a4ae');
@@ -583,6 +848,16 @@
         S.chips+=g;addFloat(W/2,118,'+'+g+'元','#ffd54f');
       }
       taunt('hit');
+      // 場中即死：炸裂卡/連斬/弒神打到 0 血直接結算（結算路徑 instant=false 交給 bSettle 處理復活與勝負）
+      if(instant&&B.bhp<=0){
+        const sks=B.mon.skills||{};
+        if(sks.resurrect&&!B.resUsed){
+          B.resUsed=true;B.bhp=B.mon.hp;
+          bLog('⚰ '+B.mon.name+' 滿血復活了！！');taunt('start');
+        } else {
+          victory([(why||'致命一擊')+'　'+B.mon.name+' 被打到沒血了！']);
+        }
+      }
     }
     function pDmg(n,why){
       if(B.subShield){
@@ -605,30 +880,40 @@
       B.phase='between';
       const winner=B.finished[0];
       B.lastWin=winner;
+      if(winner!==0)B.momentum=0;
       const sks=B.mon.skills||{};
       const lines=[];
       // 金流（只有玩家籌碼是真的）
       if(winner===0){
         let pot=0;
         for(let r=1;r<4;r++)pot+=handPenalty(B.hands[B.finished[r]]);
+        const gbonus=affixSum('gold')+cardFx('gold')+setSum('gold');
+        if(gbonus)pot+=gbonus;
         S.chips+=pot;
-        lines.push('🥇 你奪下頭家！收下怪物們的罰金 +'+pot+'元');
+        lines.push('🥇 你奪下頭家！收下怪物們的罰金 +'+pot+'元'+(gbonus?'（含生財 +'+gbonus+'）':''));
       } else {
         let pen=handPenalty(B.hands[0]);
         if(winner===1&&sks.gold){pen=Math.floor(pen*1.5);lines.push('🪙 吞金獸加倍索賠！');}
+        if(B.mon._greed){pen=Math.floor(pen*1.5);lines.push('💰 貪婪菁英敲詐！罰金加重');}
         S.chips=Math.max(0,S.chips-pen);
         lines.push('💸 你的剩牌罰金 -'+pen+'元');
       }
       // 戰況裁決
       if(winner===0){
         const crit=B.hands[1].length>=critTh();
-        const dmg=1+(crit?1:0);
+        let dmg=1+(crit?1:0);
         if(crit)lines.push('💥 暴擊！'+B.mon.name+' 剩 '+B.hands[1].length+' 張（門檻 '+critTh()+'）');
+        if(B.momentum>=100){dmg*=2;B.momentum=0;lines.push('🔥 氣勢爆發！頭家裁決傷害翻倍！');}
+        else B.momentum=Math.min(100,B.momentum+34);
         const before=B.bhp;
-        bossDmg(dmg,'⚔ 頭家裁決！');
+        bossDmg(dmg,'⚔ 頭家裁決！',false);
         if(B.bhp<before)
           lines.push('⚔ '+B.mon.name+' -'+(before-B.bhp)+'HP（'+B.bhp+'/'+B.mon.hp+'）');
         else lines.push('💨 '+B.mon.name+' 閃避了頭家裁決！');
+        if(B.mon._thorn&&cardFx('quakeWard')<=0&&Math.random()<0.3){
+          pDmg(1,'菁英反震');
+          lines.push('🌵 反震！菁英尖刺扎了你 -1HP（'+B.php+'/'+maxHp()+'）');
+        }
         if(Math.random()<0.25){
           const k=['hp','mana','anti'][Math.floor(Math.random()*3)];
           S.items[k]++;
@@ -639,7 +924,7 @@
         lines.push('💔 魔王奪冠，你 -1HP（'+B.php+'/'+maxHp()+'）');
         {
           taunt('win');
-          if(sks.tax){
+          if(sks.tax&&cardFx('taxWard')<=0){
             S.chips=Math.max(0,S.chips-50);
             B.bhp=Math.min(B.mon.hp,B.bhp+1);
             lines.push('💀 吸魂！-50元，'+B.mon.name+' 回復至 '+B.bhp+'/'+B.mon.hp);
@@ -653,6 +938,12 @@
         } else {
           lines.push('😮‍💨 '+B.names[winner]+'搶了頭香，你逃過一劫');
         }
+      }
+      // 狂暴階段：大魔王血量首次跌破半血（abyss 也算 boss）
+      if(B.mon.boss&&!B.enraged&&B.bhp>0&&B.bhp<=Math.ceil(B.mon.hp*0.5)){
+        B.enraged=true;
+        lines.push('🔥🔥 '+B.mon.name+' 狂暴了！出手更兇、掠奪加劇、每局奪你 1 魔！');
+        taunt('hit');
       }
       if(B.poisoned&&B.php>0){
         pDmg(1,'毒發');
@@ -673,10 +964,19 @@
         } else { victory(lines); return; }
       }
       if(B.php<=0){
-        if(sk('phoenix')&&!B.phUsed&&Math.random()<0.3){
+        if(B.cardRevive>0){
+          B.cardRevive--;B.php=1;api.setHp(1);
+          lines.push('⚰ 冥王庇佑！你以 1HP 撐住（剩 '+B.cardRevive+' 次）');
+        } else if(sk('phoenix')&&!B.phUsed&&Math.random()<0.3){
           B.phUsed=true;B.php=1;api.setHp(1);
           lines.push('🪽 不死鳥之力！你以 1HP 浴火重生');
         } else { defeat(lines); return; }
+      }
+      const rg=affixSum('regen')+setSum('regen');
+      if(rg&&B.php<maxHp()){
+        const heal=Math.min(rg,maxHp()-B.php);
+        B.php+=heal;api.setHp(B.php);
+        lines.push('🌱 回春 +'+heal+'HP（'+B.php+'/'+maxHp()+'）');
       }
       api.showMsg('第 '+B.round+' 局結算',
         lines.join('\n')+'\n\n'+B.mon.icon+' '+B.mon.name+'　'
@@ -687,6 +987,7 @@
     }
 
     function victory(prevLines){
+      if(B.abyss){abyssVictory(prevLines);return;}
       const mon=B.mon, mi=B.mi, si=B.si;
       taunt('die');
       let stars=1;
@@ -700,7 +1001,7 @@
         '⭐'.repeat(stars)+'（通關'+(B.hurt===0?'・無傷':'')+(fast?'・速殺':'')+'）']);
       S.chips+=mon.purify;
       lines.push('💰 淨化金 +'+mon.purify+'元');
-      let rolls=1+(mon.boss?1:0)+((sk('exec')&&B.lastWin===0)?1:0);
+      let rolls=1+(mon.boss?1:0)+((sk('exec')&&B.lastWin===0)?1:0)+((B.elite&&B.elite.length)?1:0);
       if(Math.random()<lootPct()/100)rolls++;
       for(let i=0;i<rolls;i++)lines.push(dropOne(mon));
       if(Math.random()<0.35+lootPct()/200){
@@ -731,6 +1032,7 @@
       ]);
     }
     function defeat(prevLines){
+      if(B.abyss){abyssDefeat(prevLines);return;}
       taunt('win');
       const loss=lossOf(B.mi);
       S.chips=Math.max(0,S.chips-loss);
@@ -759,23 +1061,61 @@
       api.showMsg('🏳 戰術性撤退','留得青山在…\n💸 跑路費 -'+loss+'元',
         [{label:'🗺 回地圖',fn:function(){api.hideMsg();}}]);
     }
+    function abyssVictory(prevLines){
+      taunt('die');
+      const L=B.abyss, mon=B.mon;
+      adv.abyss.depth=L;
+      const newBest=L>adv.abyss.best; if(newBest)adv.abyss.best=L;
+      const lines=(prevLines||[]).concat(['','🕳 深淵第 '+L+' 層・'+mon.name+' 被擊破！'+(newBest?'（新紀錄！）':'')]);
+      const gold=mon.purify; S.chips+=gold; lines.push('💰 深淵金 +'+gold+'元');
+      lines.push(dropOne(mon));
+      if(L%5===0){ // 每 5 層保底高稀有 + 符文
+        S.mats.rune++;
+        const q=Math.min(4,2+Math.floor(L/5));
+        const slot=SLOT_KEYS[Math.floor(Math.random()*SLOT_KEYS.length)];
+        const it=mkItem(slot,q,0.5);
+        if(!S.equip[slot])S.equip[slot]=it; else if(S.bag.length<BAG_MAX)S.bag.push(it); else S.mats.refine+=salvageYield(it);
+        lines.push('🎁 深淵寶藏：〔'+RAR.name[q]+'〕'+EQ_NAMES[slot].slice(2)+'　ᚱ符文×1');
+      }
+      const xp=20+L*6; adv.xp+=xp; lines.push('✦ XP +'+xp);
+      while(adv.xp>=needXp()){adv.xp-=needXp();adv.lv++;adv.sp++;lines.push('🆙 升級！Lv '+adv.lv);}
+      save();
+      B=null;scene='world';
+      api.showMsg('🕳 深淵　突破第 '+L+' 層',lines.join('\n')+'\n\n最深紀錄：'+adv.abyss.best+' 層',[
+        {label:'⬇ 下潛第 '+(L+1)+' 層',red:true,fn:function(){api.hideMsg();startAbyss(L+1);}},
+        {label:'🗺 帶寶離場',fn:function(){api.hideMsg();}},
+      ]);
+    }
+    function abyssDefeat(prevLines){
+      taunt('win');
+      const L=B.abyss, name=B.mon.name;
+      adv.abyss.depth=0;
+      const reward=L*30; S.chips+=reward;
+      const xp=L*5; adv.xp+=xp;
+      let lvLine='';
+      while(adv.xp>=needXp()){adv.xp-=needXp();adv.lv++;adv.sp++;lvLine+='\n🆙 升級！Lv '+adv.lv;}
+      save();
+      B=null;scene='world';
+      api.showMsg('🕳 深淵・止步第 '+L+' 層',
+        (prevLines||[]).join('\n')+'\n\n你倒在 '+name+' 面前…\n💰 深淵結算 +'+reward+'元　✦ XP +'+xp+lvLine
+        +'\n\n最深紀錄：'+adv.abyss.best+' 層',
+        [{label:'🗺 回地圖',red:true,fn:function(){api.hideMsg();}},
+         {label:'🕳 再戰深淵（第1層）',fn:function(){api.hideMsg();startAbyss(1);}}]);
+    }
     function dropOne(mon){
       const pool=(mon.drops&&mon.drops.length)?mon.drops:['refine'];
       const kind=pool[Math.floor(Math.random()*pool.length)];
       if(kind==='equip'){
         const q=rollRarity(B?B.mi:0,!!mon.boss);
-        const empty=Object.keys(S.equip).filter(function(k){return !S.equip[k];});
-        let slot;
-        if(empty.length)slot=empty[Math.floor(Math.random()*empty.length)];
-        else{
-          // 已滿：擲到更高稀有度才替換（保留精煉等級歸零的取捨 → 直接換新件 lv0）
-          const ks=Object.keys(S.equip).filter(function(k){return eqQ(k)<q;});
-          if(!ks.length){S.mats.refine++;return '💠 掉落精煉石×1（裝備已滿且無更高階）';}
-          slot=ks[Math.floor(Math.random()*ks.length)];
-        }
-        const slots=rollSlots(sk('sock'));
-        S.equip[slot]={lv:0,q:q,slots:slots,cards:[]};
-        return '✨ 掉落〔'+RAR.name[q]+'〕【'+EQ_NAMES[slot]+(slots?'〔'+slots+'孔〕':'')+'】！已自動裝備';
+        const empty=SLOT_KEYS.filter(function(k){return !S.equip[k];});
+        const slot=empty.length?empty[Math.floor(Math.random()*empty.length)]
+                               :SLOT_KEYS[Math.floor(Math.random()*SLOT_KEYS.length)];
+        const item=mkItem(slot,q,mon.boss?0.22:0.12);
+        const tag='〔'+RAR.name[q]+'〕【'+EQ_NAMES[slot]+(item.slots?'〔'+item.slots+'孔〕':'')+'】'+(item.set?'〔'+SETS[item.set].n+'套〕':'');
+        if(!S.equip[slot]){S.equip[slot]=item;return '✨ 掉落'+tag+'！已自動裝備';}
+        if(S.bag.length<BAG_MAX){S.bag.push(item);return '✨ 掉落'+tag+' → 進倉庫（可換裝）';}
+        const g=salvageYield(item);S.mats.refine+=g;
+        return '🎒 倉庫已滿，'+tag+' 自動分解為 💠×'+g;
       }
       if(kind==='refine'){
         if(mon.boss&&Math.random()<0.35){S.mats.refine2++;return '💠✨ 掉落華麗精煉石×1（共'+S.mats.refine2+'）';}
@@ -909,9 +1249,11 @@
       });
       ctx.restore();
       // 底部戰況標
-      const tag=B.mon.icon+' 第'+B.round+'局　'
+      const eliteTag=(B.elite&&B.elite.length)?'✦菁英〔'+B.elite.map(function(k){return MON_AFFIX[k].n;}).join('·')+'〕　':'';
+      const tag=eliteTag+B.mon.icon+' 第'+B.round+'局　'
         +'❤'.repeat(Math.max(B.bhp,0))+'🖤'.repeat(Math.max(B.mon.hp-B.bhp,0))
-        +'　暴擊門檻 '+critTh()+'張';
+        +'　暴擊門檻 '+critTh()+'張'
+        +'　⚡氣勢 '+(B.momentum||0)+'%'+((B.momentum||0)>=100?'🔥':'');
       ctx.font='bold 11px -apple-system,sans-serif';
       const tgw=ctx.measureText(tag).width;
       ctx.fillStyle='rgba(70,5,5,.85)';rr(W/2-tgw/2-12,H-24,tgw+24,20,10);ctx.fill();
@@ -1305,6 +1647,11 @@
         ctx.fillStyle='#bbb';
         ctx.fillText(l,28,212+i*23,132);
       });
+      const sc=setCount(), sActive=Object.keys(sc).filter(function(id){return sc[id]>=2;});
+      if(sActive.length){
+        ctx.font='10px -apple-system,sans-serif';ctx.fillStyle='#d0b84e';
+        ctx.fillText('🔗 '+sActive.map(function(id){return SETS[id].n+sc[id]+'/3';}).join('  '),28,212+statLines.length*23,132);
+      }
 
       // 中：5 槽位（2欄）
       const px0=182,pw=232,ph=88,gp=10;
@@ -1339,8 +1686,19 @@
             ctx.font='11px sans-serif';
             ctx.fillText(cardTxt,x+10+(e.slots||0)*14+8,y+67);
           }
-          ctx.fillStyle='#777';ctx.font='8px -apple-system,sans-serif';
-          ctx.fillText(refineDesc(k),x+10,y+81);
+          if(e.affixes&&e.affixes.length){
+            let ax=x+10;ctx.font='bold 9px -apple-system,sans-serif';
+            e.affixes.forEach(function(a){
+              const af=AFFIX[a.t];if(!af)return;
+              const tag=af.n;const tw=ctx.measureText(tag).width+10;
+              ctx.fillStyle='rgba(255,255,255,.06)';rr(ax,y+73,tw,12,3);ctx.fill();
+              ctx.fillStyle=af.c;ctx.fillText(tag,ax+5,y+82);
+              ax+=tw+4;
+            });
+          } else {
+            ctx.fillStyle='#777';ctx.font='8px -apple-system,sans-serif';
+            ctx.fillText(refineDesc(k),x+10,y+81);
+          }
         } else {
           ctx.fillStyle='#555';ctx.font='12px -apple-system,sans-serif';
           ctx.fillText('—— 未取得 ——',x+10,y+40);
@@ -1363,10 +1721,10 @@
       ctx.fillText('💠×'+S.mats.refine+'　💠✨×'+S.mats.refine2+'　ᚱ×'+S.mats.rune,420,iy+44);
       const cardTotal=Object.keys(adv.cards).reduce(function(s,k){return s+adv.cards[k];},0);
       ctx.fillStyle='#9aa';ctx.font='11px -apple-system,sans-serif';
-      ctx.fillText('🎴 怪物卡×'+cardTotal+'（鑲入裝備孔每張 撿寶+3%）',196,iy+65);
+      ctx.fillText('🎴 怪物卡×'+cardTotal+'（鑲入裝備孔觸發專屬效果，卡冊可查）',196,iy+65);
 
-      // 底部操作列
-      const by=H-52;
+      // 底部操作列（兩列）
+      const by2=H-94, by=H-52;
       const selE=bagSel&&S.equip[bagSel];
       const canRef=selE&&selE.lv<10&&(S.mats.refine>=2||((selE.lv||0)+1>safeOf(bagSel)&&S.mats.refine2>0));
       const canSock=selE&&(selE.slots||0)>(selE.cards||[]).length&&cardTotal>0;
@@ -1374,13 +1732,16 @@
         ?'⚒ 精煉 +'+((selE.lv||0)+1)+'（💠×2・安定內必成）'
         :(S.mats.refine2>0?'⚒ 精煉 +'+((selE.lv||0)+1)+'（💠✨×1・85%）'
                           :'⚒ 精煉 +'+((selE.lv||0)+1)+'（💠×2・65%）'));
-      btn(14,by,210,36,refTag,canRef?function(){doRefine();}:null,'gold');
-      btn(232,by,162,36,'🔧 鑲嵌怪物卡',canSock?function(){doSocket();}:null);
-      btn(404,by,120,36,'🎴 卡冊',openAlbum);
-      btn(534,by,120,36,'🛒 商店',openShop);
+      btn(14,by2,210,36,refTag,canRef?function(){doRefine();}:null,'gold');
+      btn(232,by2,210,36,'🔧 鑲嵌怪物卡',canSock?function(){socketMenu(S.equip[bagSel],function(){api.hideMsg();});}:null);
+      btn(456,by2,198,36,selE?'📦 管理（卸下/分解/拆卡）':'📦 管理',selE?function(){manageEquip(bagSel);}:null);
+      btn(14,by,210,36,'🎒 倉庫（'+S.bag.length+'）',function(){stashPage=0;scene='stash';});
+      btn(232,by,120,36,'🎴 卡冊',openAlbum);
+      btn(362,by,120,36,'🛒 商店',openShop);
+      btn(492,by,162,36,'↩ 回地圖',function(){scene='world';});
       if(!bagSel){
         ctx.fillStyle='#666';ctx.font='10px -apple-system,sans-serif';ctx.textAlign='left';
-        ctx.fillText('點選一件裝備以精煉/鑲嵌',14,by-8);
+        ctx.fillText('點選一件裝備以精煉/鑲嵌/管理',14,by2-8);
       }
     }
     function findMon(id){
@@ -1446,15 +1807,154 @@
       });
       const sockKeys=Object.keys(inSock);
       const body=(keys.length?keys.map(function(k){
-          const mm=findMon(k);
-          return (mm?mm.icon+' '+mm.name:k)+'卡 ×'+adv.cards[k];
+          const mm=findMon(k);const f=CARD_FX[k];
+          return (mm?mm.icon+' '+mm.name:k)+'卡 ×'+adv.cards[k]+(f?'　'+f.n+'：'+f.d:'');
         }).join('\n'):'（尚未收集到怪物卡）')
         +(sockKeys.length?'\n\n— 已鑲嵌 —\n'+sockKeys.map(function(k){
-          const mm=findMon(k);
-          return (mm?mm.icon+' '+mm.name:k)+'卡 ×'+inSock[k];
+          const mm=findMon(k);const f=CARD_FX[k];
+          return (mm?mm.icon+' '+mm.name:k)+'卡 ×'+inSock[k]+(f?'　'+f.d:'');
         }).join('\n'):'')
-        +'\n\n每張鑲嵌中的卡：撿寶 +3%';
+        +'\n\n鑲入裝備孔即觸發專屬效果，同卡可疊加';
       api.showMsg('🎴 怪物卡冊',body,[{label:'↩ 返回',fn:function(){api.hideMsg();}}]);
+    }
+
+    /* ══════════════ 倉庫 / 換裝 / 分解 / 拆卡（Slice 1）══════════════ */
+    let stashPage=0;
+    const SALV=[1,2,3,5,8]; // 分解💠：白藍黃金暗金
+    function salvageYield(e){return SALV[(e.q==null?2:e.q)]+(e.lv||0);}
+    function eqName(k){return EQ_NAMES[k]?EQ_NAMES[k].slice(2):k;}
+    function itemLabel(e){
+      const q=(e.q==null?2:e.q);
+      return '〔'+RAR.name[q]+'〕'+eqName(e.slot)+(e.lv?' +'+e.lv:'')
+        +((e.slots||0)?'　'+(e.cards||[]).map(function(c){var m=findMon(c);return m?m.icon:'🎴';}).join('')
+            +'◇'.repeat((e.slots||0)-(e.cards||[]).length):'')
+        +(e.affixes&&e.affixes.length?'　⟨'+e.affixes.map(function(a){return AFFIX[a.t]?AFFIX[a.t].n:a.t;}).join('·')+'⟩':'')
+        +(e.set&&SETS[e.set]?'　🔗'+SETS[e.set].n+'套':'');
+    }
+    function returnCards(e){ // 分解/拆卸時把孔內卡退回卡庫
+      (e.cards||[]).forEach(function(cid){adv.cards[cid]=(adv.cards[cid]||0)+1;});
+    }
+    function equipFromBag(idx){
+      const it=S.bag[idx]; if(!it)return;
+      const k=it.slot; const cur=S.equip[k];
+      S.equip[k]=it; S.bag.splice(idx,1);
+      if(cur){if(!cur.slot)cur.slot=k; S.bag.push(cur);}
+      addFloat(W/2,H/2,'⚔ 已裝備 '+eqName(k),'#f5c400'); save();
+    }
+    function unequip(k){
+      const e=S.equip[k]; if(!e)return false;
+      if(S.bag.length>=BAG_MAX){addFloat(W/2,H/2,'❌ 倉庫已滿','#ef9a9a');return false;}
+      if(!e.slot)e.slot=k; S.bag.push(e); S.equip[k]=0;
+      addFloat(W/2,H/2,'📤 已卸下 '+eqName(k),'#9aa'); save(); return true;
+    }
+    function salvageItem(e){returnCards(e); const g=salvageYield(e); S.mats.refine+=g;
+      addFloat(W/2,H/2,'💠 分解為精煉石×'+g,'#b0c4de'); save(); return g;}
+    /* 鑲嵌：選要鑲哪張卡 */
+    function socketMenu(e,re){
+      const keys=Object.keys(adv.cards).filter(function(k){return adv.cards[k]>0;});
+      if((e.slots||0)<=(e.cards||[]).length){api.showMsg('🔧 鑲嵌','此件已無空孔',[{label:'↩',fn:re}]);return;}
+      if(!keys.length){api.showMsg('🔧 鑲嵌','沒有可鑲的怪物卡',[{label:'↩',fn:re}]);return;}
+      const btns=keys.map(function(k){const mm=findMon(k);
+        return {label:(mm?mm.icon+mm.name:k)+'卡 ×'+adv.cards[k],fn:function(){
+          adv.cards[k]--; if(adv.cards[k]<=0)delete adv.cards[k];
+          e.cards=e.cards||[]; e.cards.push(k);
+          addFloat(W/2,H/2,'🔧 鑲入'+(mm?mm.icon:'')+'卡','#b9a4e8'); save(); re();}};});
+      btns.push({label:'↩ 返回',fn:re});
+      api.showMsg('🔧 選擇要鑲嵌的卡','剩餘空孔 '+((e.slots||0)-(e.cards||[]).length),btns);
+    }
+    /* 拆卡：選要拆哪張，免費回卡庫 */
+    function unsocketMenu(e,re){
+      if(!(e.cards||[]).length){api.showMsg('🃏 拆卡','此件沒有鑲嵌的卡',[{label:'↩',fn:re}]);return;}
+      const btns=e.cards.map(function(cid,ci){const mm=findMon(cid);
+        return {label:'拆下 '+(mm?mm.icon+mm.name:cid)+'卡',fn:function(){
+          e.cards.splice(ci,1); adv.cards[cid]=(adv.cards[cid]||0)+1;
+          addFloat(W/2,H/2,'🃏 已拆回卡庫','#b9a4e8'); save(); re();}};});
+      btns.push({label:'↩ 返回',fn:re});
+      api.showMsg('🃏 拆卸怪物卡（免費，回卡庫）','',btns);
+    }
+    /* 穿戴件管理選單（裝備頁「管理」鈕）*/
+    /* 符文用途（Batch D）：重洗詞綴 ᚱ×2 / 鑿孔 ᚱ×3 */
+    function runeBtns(e,re){
+      const out=[], q=(e.q==null?2:e.q);
+      if(S.mats.rune>=2)out.push({label:'ᚱ 重洗詞綴（ᚱ×2，現'+S.mats.rune+'）',fn:function(){
+        S.mats.rune-=2; e.affixes=rollAffixes(q);
+        addFloat(W/2,H/2,'ᚱ 詞綴已重洗','#c9b6f0'); save(); re();}});
+      if(S.mats.rune>=3&&(e.slots||0)<6)out.push({label:'ᚱ 鑿孔 +1（ᚱ×3，現'+(e.slots||0)+'孔）',fn:function(){
+        S.mats.rune-=3; e.slots=(e.slots||0)+1;
+        addFloat(W/2,H/2,'ᚱ 鑿出新孔位','#c9b6f0'); save(); re();}});
+      return out;
+    }
+    function manageEquip(k){
+      const e=S.equip[k]; if(!e)return;
+      const re=function(){api.hideMsg();manageEquip(k);};
+      const close=function(){api.hideMsg();};
+      const btns=[
+        {label:'📤 卸下進倉庫',fn:function(){if(unequip(k))bagSel=null;close();}},
+        {label:'💠 分解（'+salvageYield(e)+'💠'+((e.cards||[]).length?'＋退卡':'')+'）',fn:function(){
+          salvageItem(e); S.equip[k]=0; bagSel=null; close();}},
+      ];
+      if((e.slots||0)>(e.cards||[]).length)btns.push({label:'🔧 鑲嵌怪物卡',fn:function(){socketMenu(e,re);}});
+      if((e.cards||[]).length)btns.push({label:'🃏 拆卸怪物卡',fn:function(){unsocketMenu(e,re);}});
+      runeBtns(e,re).forEach(function(b){btns.push(b);});
+      btns.push({label:'↩ 返回',fn:close});
+      api.showMsg('📦 '+eqName(k)+' 管理',itemLabel(e),btns);
+    }
+    /* 倉庫件操作選單 */
+    function bagItemMenu(idx){
+      const it=S.bag[idx]; if(!it)return;
+      const close=function(){api.hideMsg();};
+      const re=function(){api.hideMsg();bagItemMenu(idx);};
+      const btns=[
+        {label:'⚔ 裝備（換下現件回倉庫）',fn:function(){equipFromBag(idx);close();}},
+        {label:'💠 分解（'+salvageYield(it)+'💠'+((it.cards||[]).length?'＋退卡':'')+'）',fn:function(){
+          salvageItem(it); S.bag.splice(idx,1); close();}},
+      ];
+      if((it.slots||0)>(it.cards||[]).length)btns.push({label:'🔧 鑲嵌怪物卡',fn:function(){socketMenu(it,re);}});
+      if((it.cards||[]).length)btns.push({label:'🃏 拆卸怪物卡',fn:function(){unsocketMenu(it,re);}});
+      runeBtns(it,re).forEach(function(b){btns.push(b);});
+      btns.push({label:'↩ 返回',fn:close});
+      api.showMsg('🎒 '+eqName(it.slot)+'（倉庫）',itemLabel(it),btns);
+    }
+    /* 倉庫頁 */
+    const STASH_ROWS=7;
+    function drawStash(){
+      const bg=ctx.createLinearGradient(0,0,0,H);
+      bg.addColorStop(0,'#171320');bg.addColorStop(1,'#070509');
+      ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#f5c400';ctx.font='bold 17px -apple-system,sans-serif';ctx.textAlign='left';
+      ctx.fillText('🎒 倉庫　'+S.bag.length+'/'+BAG_MAX,20,34);
+      btn(W-84,14,68,30,'↩ 返回',function(){scene='bag';});
+      const pages=Math.max(1,Math.ceil(S.bag.length/STASH_ROWS));
+      if(stashPage>=pages)stashPage=pages-1;
+      if(!S.bag.length){
+        ctx.fillStyle='#777';ctx.font='13px -apple-system,sans-serif';ctx.textAlign='center';
+        ctx.fillText('倉庫是空的 — 討伐魔王掉的裝備會放這裡',W/2,H/2);
+        ctx.textAlign='left';return;
+      }
+      const x=20,w=W-40,rh=58,y0=60;
+      for(let r=0;r<STASH_ROWS;r++){
+        const idx=stashPage*STASH_ROWS+r; if(idx>=S.bag.length)break;
+        const it=S.bag[idx], q=(it.q==null?2:it.q), y=y0+r*rh;
+        ctx.fillStyle='rgba(24,28,40,.95)';rr(x,y,w,rh-8,9);ctx.fill();
+        ctx.strokeStyle=RAR.col[q];ctx.globalAlpha=q>=3?0.9:0.5;ctx.lineWidth=q>=3?2:1;
+        rr(x,y,w,rh-8,9);ctx.stroke();ctx.globalAlpha=1;
+        const ICON={weapon:'🗡',armor:'🛡',helm:'👹',ring:'💍',amulet:'📿'}[it.slot];
+        ctx.font='22px sans-serif';ctx.textAlign='left';ctx.fillText(ICON,x+14,y+33);
+        ctx.fillStyle=RAR.col[q];ctx.font='bold 13px -apple-system,sans-serif';
+        ctx.fillText('〔'+RAR.name[q]+'〕'+eqName(it.slot)+(it.lv?' +'+it.lv:''),x+48,y+22);
+        ctx.fillStyle='#9aa';ctx.font='10px -apple-system,sans-serif';
+        let so='';for(let s2=0;s2<(it.slots||0);s2++)so+=(s2<(it.cards||[]).length?'◆':'◇');
+        const ctxt=(it.cards||[]).map(function(c){var m=findMon(c);return m?m.icon:'';}).join('');
+        ctx.fillText((it.slots?'孔 '+so+' '+ctxt:'無孔')+'　分解 💠'+salvageYield(it),x+48,y+40);
+        btn(x+w-104,y+10,92,30,'操作',(function(i){return function(){bagItemMenu(i);};})(idx));
+      }
+      if(pages>1){
+        btn(W/2-110,H-46,90,34,'◀ 上一頁',stashPage>0?function(){stashPage--;}:null);
+        ctx.fillStyle='#bbb';ctx.font='12px monospace';ctx.textAlign='center';
+        ctx.fillText((stashPage+1)+' / '+pages,W/2,H-25);
+        btn(W/2+20,H-46,90,34,'下一頁 ▶',stashPage<pages-1?function(){stashPage++;}:null);
+      }
+      ctx.textAlign='left';
     }
 
     /* ══════════════ 技能樹頁 ══════════════ */
@@ -1778,17 +2278,28 @@
     }
 
     /* ══════════════ 主迴圈 / 點擊 ══════════════ */
+    var LAND=false; // 橫向旋轉模式（host 視覺旋轉就緒後設 true，輸入跟著反轉）
+    function resolvePoint(e){
+      const r=canvas.getBoundingClientRect();
+      const src=(e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0])||e;
+      let mx=(src.clientX-r.left)*(W/r.width);
+      let my=(src.clientY-r.top)*(H/r.height);
+      if(LAND){ const t=mx; mx=H-my; my=t; } // 逆時針 90° 視覺旋轉對應的輸入反轉
+      return {mx:mx,my:my};
+    }
     function onClick(e){
       if(!alive)return;
-      const r=canvas.getBoundingClientRect();
-      const mx=(e.clientX-r.left)*(W/r.width);
-      const my=(e.clientY-r.top)*(H/r.height);
+      if(e.cancelable)e.preventDefault();
+      const p=resolvePoint(e);
       for(let i=hot.length-1;i>=0;i--){
         const z=hot[i];
-        if(mx>=z.x&&mx<=z.x+z.w&&my>=z.y&&my<=z.y+z.h){z.fn();return;}
+        if(p.mx>=z.x&&p.mx<=z.x+z.w&&p.my>=z.y&&p.my<=z.y+z.h){z.fn();return;}
       }
     }
-    canvas.addEventListener('click',onClick);
+    if(canvas.style)canvas.style.touchAction='manipulation'; // 去除雙擊縮放/延遲
+    // pointerdown 涵蓋滑鼠+觸控，去掉手機 ~300ms click 延遲；不支援 pointer 的舊瀏覽器退回 click
+    if(window.PointerEvent)canvas.addEventListener('pointerdown',onClick);
+    else { canvas.addEventListener('touchstart',onClick,{passive:false}); canvas.addEventListener('click',onClick); }
 
     function loop(){
       if(!alive)return;
@@ -1814,9 +2325,8 @@
             B.quakeAt--;
             if(B.quakeAt<=0){
               B.quakeT=55;
-              bLog('🌋 大地劇震！你 -1HP');
-              pDmg(1,'被震飛');
-              if(B.php<=0){bSettleDeath();}
+              if(cardFx('quakeWard')>0){bLog('🛡 磐石之軀！劇震無傷');}
+              else{bLog('🌋 大地劇震！你 -1HP');pDmg(1,'被震飛');if(B.php<=0){bSettleDeath();}}
             }
           }
           if(B.quakeT>0)B.quakeT--;
@@ -1833,7 +2343,7 @@
             B.plague.t--;B.plague.tick--;
             if(B.plague.tick<=0){
               B.plague.tick=180;
-              if(!B.plagueImm){
+              if(!B.plagueImm&&cardFx('quakeWard')<=0){
                 pDmg(1,'毒霧侵蝕');
                 if(B.php<=0){bSettleDeath();}
               }
@@ -1869,6 +2379,15 @@
                   bLog('🔒 封印被自由出牌權破解了…');
                 }
               }
+              // 鐵支眩暈：王被迫 Pass（自由出牌權無法 Pass → 眩暈散去）
+              if(p===1&&B.stunBoss){
+                B.stunBoss=false;
+                if(B.played!==null&&B.playedBy!==1){
+                  bLog('💫 鐵支威壓！'+B.mon.name+' 眩暈，被迫 Pass');
+                  bPass(1);bAiTimer();
+                  draw();api.raf(loop);return;
+                } else bLog('💫 '+B.mon.name+' 甩了甩頭，眩暈散去');
+              }
               const seen=new Set([...B.seen]);
               B.hands[p].forEach(function(c){seen.add(cardId(c));});
               let result=smartAiPlay({
@@ -1879,7 +2398,7 @@
               // 壓制：玩家進入殘局（剩牌≤5）→ 怪方以 sup 機率改出最大合法牌封鎖
               // ⚠ 不可用 playedBy===0 當觸發（玩家每手都被三家圍毆 → 永遠搶不到牌權，91局0勝實測）
               if(result&&B.hands[0].length<=5
-                 &&Math.random()<(B.mon.sup||0.6)){
+                 &&Math.random()<Math.min(0.97,(B.mon.sup||0.6)+(B.enraged?0.1:0))){
                 const combos=legalCombos(B.hands[p],B.played,mustC3);
                 const pool=B.hands[0].length<=4?combos
                   :combos.filter(function(c){
@@ -1899,6 +2418,11 @@
     /* 事件致死（劇震/毒霧把玩家打到 0）走正式敗北 */
     function bSettleDeath(){
       if(!B)return;
+      if(B.cardRevive>0){
+        B.cardRevive--;B.php=1;api.setHp(1);
+        bLog('⚰ 冥王庇佑！你以 1HP 撐住（剩 '+B.cardRevive+' 次）');
+        return;
+      }
       if(sk('phoenix')&&!B.phUsed&&Math.random()<0.3){
         B.phUsed=true;B.php=1;api.setHp(1);
         bLog('🪽 不死鳥之力！你以 1HP 浴火重生');
@@ -1911,12 +2435,15 @@
       else if(scene==='battle'&&B)drawBattle();
       else if(scene==='work'&&Wk)drawWork();
       else if(scene==='bag')drawBag();
+      else if(scene==='stash')drawStash();
       else if(scene==='tree')drawTree();
       else drawWorld();
     }
 
     function destroy(){
       alive=false;
+      canvas.removeEventListener('pointerdown',onClick);
+      canvas.removeEventListener('touchstart',onClick);
       canvas.removeEventListener('click',onClick);
     }
     api.setScore(S.chips);

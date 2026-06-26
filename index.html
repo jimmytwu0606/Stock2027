@@ -344,57 +344,53 @@
       <!-- 個股面板：K線圖 -->
       <div class="stock-panel active" id="chartPanel">
         <div class="chart-toolbar">
-          <button class="tb-btn"        data-period="5d" >5日</button>
-          <button class="tb-btn active" data-period="1mo">1月</button>
-          <button class="tb-btn"        data-period="3mo">3月</button>
-          <button class="tb-btn"        data-period="6mo">6月</button>
-          <button class="tb-btn"        data-period="1y" >1年</button>
-          <button class="tb-btn"        data-period="2y" >2年</button>
-          <div class="tb-sep"></div>
-          <button class="ind-toggle on" data-ind="MA5"  data-ma="5" >MA5</button>
-          <button class="ind-toggle on" data-ind="MA10" data-ma="10">MA10</button>
-          <button class="ind-toggle on" data-ind="MA20" data-ma="20">MA20</button>
-          <button class="ind-toggle"    data-ind="MA60" data-ma="60">MA60</button>
-          <div class="tb-sep"></div>
-          <button class="ind-toggle on" data-ind="KD"   data-indicator="KD"  >KD</button>
-          <button class="ind-toggle on" data-ind="RSI"  data-indicator="RSI" >RSI</button>
-          <button class="ind-toggle on" data-ind="MACD" data-indicator="MACD">MACD</button>
-          <div class="tb-sep"></div>
-          <!-- 主圖疊加指標（橫向展開） -->
-          <button class="ind-toggle" data-ind="ICHI" data-indicator="ICHI" title="一目均衡表（五條線+雲帶，勾選時自動關其他指標）">☁️ Ichimoku</button>
-          <button class="ind-toggle" data-ind="EMA"  data-indicator="EMA">EMA</button>
-          <button class="ind-toggle" data-ind="BB"   data-indicator="BB">BB</button>
-          <button class="ind-toggle" data-ind="ENV"  data-indicator="ENV">ENV</button>
-          <button class="ind-toggle" data-ind="SAR"  data-indicator="SAR">SAR</button>
-          <button class="ind-toggle" data-ind="SUPERTREND" data-indicator="SUPERTREND" title="Supertrend：ATR 通道翻轉線（多頭紅線貼底/空頭綠線貼頂，可當移動停損）">🛡️ Supertrend</button>
-          <button class="ind-toggle" data-ind="AVWAP" data-indicator="AVWAP" title="錨定VWAP：妖股自動掛啟動日成本線（跌破=主升段進場者全面套牢），其餘股以可見區間起算">⚓ AVWAP</button>
-          <button class="ind-toggle" data-ind="GMMA" data-indicator="GMMA" title="顧比均線（12條，效能較重）">GMMA⚡</button>
-          <button class="ind-toggle" data-ind="PVD"  data-indicator="PVD" title="分價量表（右側 canvas）">📊 分價量</button>
-          <div class="tb-sep"></div>
-          <!-- 副圖指標（橫向展開） -->
-          <button class="ind-toggle" data-ind="DMI"  data-indicator="DMI">DMI</button>
-          <button class="ind-toggle" data-ind="PSY"  data-indicator="PSY">PSY</button>
-          <button class="ind-toggle" data-ind="RCI"  data-indicator="RCI">RCI</button>
-          <button class="ind-toggle" data-ind="HV"   data-indicator="HV">HV</button>
-          <button class="ind-toggle" data-ind="TTM"  data-indicator="TTM" title="TTM Squeeze：布林帶縮進 Keltner=壓縮蓄勢（紅點），釋放+動能柱定方向">🔋 TTM</button>
-          <button class="ind-toggle" data-ind="OBV"  data-indicator="OBV" title="OBV 能量潮：累計量能線，與價格背離常領先反轉">🌊 OBV</button>
-          <button class="ind-toggle" data-ind="CONV" data-indicator="CONV" title="確信度 C 曲線（動能×量能流×勝率合成，疊自身股性 P20-P80 帶）">⚡ 確信度</button>
-          <div class="tb-sep"></div>
-          <!-- 說明書 -->
-          <button class="ce-enter-btn" id="indHelpBtn" title="開啟指標完整說明書">📖 說明書</button>
-          <div class="tb-sep"></div>
-          <!-- K 線編輯模式 -->
-          <button class="ce-enter-btn" id="btnChartEdit" title="K 線編輯模式(畫線/標註)">✎ 編輯</button>
-          <!-- || 分隔線 -->
-          <span class="tb-pipe">||</span>
-          <!-- Fixed 凍結：全視窗時顯示 -->
-          <button class="ce-enter-btn" id="btnFixedChart" title="凍結 K 線（捲動說明文字時 K 線固定在頂部）" style="display:none">📌 Fixed</button>
-          <!-- 蒙地卡羅模擬器 -->
-          <button class="ce-enter-btn" id="btnMonteCarlo" title="蒙地卡羅 K 線模擬" style="display:none">📈 模擬</button>
-          <!-- 強制刷新 K 線 -->
-          <button class="ce-enter-btn" id="btnRefreshKline" title="強制刷新 K 線(跳過快取,重新從 Yahoo 抓)">⟳ 重整</button>
-          <!-- 全視窗 -->
-          <button class="ce-enter-btn" id="btnFullscreen" title="全視窗模式(ESC 退出)">⛶ 全視窗</button>
+          <div class="tb-row">
+            <button class="tb-btn"        data-period="5d" >5日</button>
+            <button class="tb-btn active" data-period="1mo">1月</button>
+            <button class="tb-btn"        data-period="3mo">3月</button>
+            <button class="tb-btn"        data-period="6mo">6月</button>
+            <button class="tb-btn"        data-period="1y" >1年</button>
+            <button class="tb-btn"        data-period="2y" >2年</button>
+            <div class="tb-spacer"></div>
+            <button class="ce-enter-btn" id="indHelpBtn" title="開啟指標完整說明書">📖 說明書</button>
+            <button class="ce-enter-btn" id="btnFixedChart" title="凍結 K 線（捲動說明文字時 K 線固定在頂部）" style="display:none">📌 Fixed</button>
+            <button class="ce-enter-btn" id="btnMonteCarlo" title="蒙地卡羅 K 線模擬" style="display:none">📈 模擬</button>
+            <button class="ce-enter-btn" id="btnRefreshKline" title="強制刷新 K 線(跳過快取,重新從 Yahoo 抓)">⟳ 重整</button>
+            <button class="ce-enter-btn" id="btnStudio" title="工作室（乾淨 K 線，畫線/細緻技術分析，ESC 退出）">🎨 工作室</button>
+            <button class="ce-enter-btn" id="btnFullscreen" title="全視窗模式(ESC 退出)">⛶ 全視窗</button>
+          </div>
+          <div class="tb-row">
+            <span class="tb-row-label">疊圖</span>
+            <button class="ind-toggle on" data-ind="MA5"  data-ma="5" >MA5</button>
+            <button class="ind-toggle on" data-ind="MA10" data-ma="10">MA10</button>
+            <button class="ind-toggle on" data-ind="MA20" data-ma="20">MA20</button>
+            <button class="ind-toggle"    data-ind="MA60" data-ma="60">MA60</button>
+            <div class="tb-sep"></div>
+            <button class="ind-toggle" data-ind="EMA"  data-indicator="EMA">EMA</button>
+            <button class="ind-toggle" data-ind="GMMA" data-indicator="GMMA" title="顧比均線（12條，效能較重）">GMMA⚡</button>
+            <button class="ind-toggle" data-ind="BB"   data-indicator="BB">BB</button>
+            <button class="ind-toggle" data-ind="ENV"  data-indicator="ENV">ENV</button>
+            <button class="ind-toggle" data-ind="SAR"  data-indicator="SAR">SAR</button>
+            <button class="ind-toggle" data-ind="ICHI" data-indicator="ICHI" title="一目均衡表（五條線+雲帶，勾選時自動關其他指標）">☁️ Ichimoku</button>
+            <button class="ind-toggle" data-ind="SUPERTREND" data-indicator="SUPERTREND" title="Supertrend：ATR 通道翻轉線（多頭紅線貼底/空頭綠線貼頂，可當移動停損）">🛡️ Supertrend</button>
+            <button class="ind-toggle" data-ind="AVWAP" data-indicator="AVWAP" title="錨定VWAP：妖股自動掛啟動日成本線（跌破=主升段進場者全面套牢），其餘股以可見區間起算">⚓ AVWAP</button>
+            <button class="ind-toggle" data-ind="PVD"  data-indicator="PVD" title="分價量表（右側 canvas）">📊 分價量</button>
+          </div>
+          <div class="tb-row">
+            <span class="tb-row-label">副圖</span>
+            <button class="ind-toggle on" data-ind="KD"   data-indicator="KD"  >KD</button>
+            <button class="ind-toggle on" data-ind="RSI"  data-indicator="RSI" >RSI</button>
+            <button class="ind-toggle on" data-ind="MACD" data-indicator="MACD">MACD</button>
+            <div class="tb-sep"></div>
+            <button class="ind-toggle" data-ind="DMI"  data-indicator="DMI">DMI</button>
+            <button class="ind-toggle" data-ind="PSY"  data-indicator="PSY">PSY</button>
+            <button class="ind-toggle" data-ind="RCI"  data-indicator="RCI">RCI</button>
+            <button class="ind-toggle" data-ind="HV"   data-indicator="HV">HV</button>
+            <button class="ind-toggle" data-ind="TTM"  data-indicator="TTM" title="TTM Squeeze：布林帶縮進 Keltner=壓縮蓄勢（紅點），釋放+動能柱定方向">🔋 TTM</button>
+            <button class="ind-toggle" data-ind="OBV"  data-indicator="OBV" title="OBV 能量潮：累計量能線，與價格背離常領先反轉">🌊 OBV</button>
+            <button class="ind-toggle" data-ind="RS"   data-indicator="RS" title="RS 相對強度線：個股/大盤(0050)，價未創高而 RS 線先創高=領先大盤的最強前兆">🏅 RS線</button>
+            <button class="ind-toggle" data-ind="CONV" data-indicator="CONV" title="確信度 C 曲線（動能×量能流×勝率合成，疊自身股性 P20-P80 帶）">⚡ 確信度</button>
+          </div>
         </div>
 
         <!-- Phase 7.3：全視窗 AI 解說工具列 — 已移除（由全視窗 Golden Board 取代） -->
@@ -429,6 +425,9 @@
           <div id="patternSelectRect" style="display:none;position:absolute;
                pointer-events:none;background:rgba(59,130,246,.15);
                border:1px solid rgba(59,130,246,.5);z-index:11"></div>
+
+          <!-- 拖曳上下調整 K 線高度 -->
+          <div class="chart-resize-handle" id="chartResizeHandle" title="拖曳上下調整 K 線高度"><span class="crh-grip"></span></div>
 
           <div class="ind-panel" id="kdPanel">
             <div class="ind-panel-label">
@@ -509,6 +508,13 @@
               <span style="color:var(--hint);margin-left:4px">能量潮（EMA3 平滑）</span>
             </div>
             <div id="obvChart" style="height:135px"></div>
+          </div>
+          <div class="ind-panel" id="rsPanel" style="display:none">
+            <div class="ind-panel-label">
+              <span style="color:#e3b341">● RS 相對強度線</span>
+              <span style="color:var(--hint);margin-left:4px">個股/大盤(0050)，正規化100 · 創高=領先大盤</span>
+            </div>
+            <div id="rsChart" style="height:135px"></div>
           </div>
           <!-- Phase 7.3 v3 — 全視窗模式專用：mini badges + 可拖拽圖例卡 -->
           <div id="fsMiniBadges" class="fs-mini-badges"></div>
@@ -2129,6 +2135,7 @@
 <script type="module" src="js/modules/analysis-mod-ttm.js"></script>
 <script type="module" src="js/modules/analysis-mod-supertrend.js"></script>
 <script type="module" src="js/modules/analysis-mod-obv.js"></script>
+<script type="module" src="js/modules/analysis-mod-rs.js"></script>
 <script type="module" src="js/modules/analysis-mod-gmma.js"></script>
 <script type="module" src="js/modules/analysis-mod-pattern.js"></script>
   <script type="module" src="js/pattern-image.js"></script>

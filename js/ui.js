@@ -371,6 +371,21 @@ function _exitIchimokuMode() {
 }
 
 // ─────────────────────────────────────────────
+// 用按鈕目前的 .on 視覺狀態反推回 AppState（按鈕是使用者意圖的可靠真相）
+// 用途：離開工作室時，即使 _hideIndicators 的 save/restore 因任何原因失效，
+//       也能用沒被動過的按鈕把 AppState 還原回去，杜絕「按鈕 on 但指標沒畫」的卡死
+// ─────────────────────────────────────────────
+export function syncStateFromButtons() {
+  document.querySelectorAll('.ind-toggle[data-indicator]').forEach(btn => {
+    AppState.indicators[btn.dataset.indicator] = btn.classList.contains('on');
+  });
+  document.querySelectorAll('.ind-toggle[data-ma]').forEach(btn => {
+    const n = Number(btn.dataset.ma);
+    AppState.ma[n] = btn.classList.contains('on');
+  });
+}
+
+// ─────────────────────────────────────────────
 // 統一事件綁定（DOMContentLoaded 後呼叫）
 // ─────────────────────────────────────────────
 export function initUIEvents() {
